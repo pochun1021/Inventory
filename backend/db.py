@@ -95,6 +95,13 @@ def get_item_by_id(item_id: int) -> sqlite3.Row | None:
 
 
 def create_item(item_data: dict[str, Any]) -> int:
+    property_number = str(item_data.get("property_number", "")).strip()
+    if not property_number:
+        order_sn_name = item_data.get("kind") if item_data.get("kind") in {"assets", "supplies", "other"} else "other"
+        order_sn_row = get_order_sn(order_sn_name)
+        if order_sn_row is not None:
+            property_number = order_sn_row["tmp_no"]
+
     with closing(get_connection()) as conn:
         cursor = conn.execute(
             """
@@ -176,4 +183,3 @@ def get_order_sn(name: str) -> list[sqlite3.Row] | None:
             """,
             (name,),
         ).fetchone()
-

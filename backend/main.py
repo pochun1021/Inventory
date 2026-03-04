@@ -4,7 +4,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from db import init_db, get_items_count, list_items, get_item_by_id, create_item, update_item, get_order_sn
+from db import init_db, get_items_count, list_items, get_item_by_id, create_item, update_item
 from xlsx_import import import_inventory_items_from_xlsx_content
 
 app = FastAPI()
