@@ -55,6 +55,7 @@ def list_items() -> list[sqlite3.Row]:
         return conn.execute(
             """
             SELECT
+                id,
                 kind,
                 specification,
                 property_number,
@@ -68,6 +69,7 @@ def list_items() -> list[sqlite3.Row]:
             ORDER BY id DESC
             """
         ).fetchall()
+
 
 def get_item_by_id(item_id: int) -> sqlite3.Row | None:
     with closing(get_connection()) as conn:
@@ -90,6 +92,7 @@ def get_item_by_id(item_id: int) -> sqlite3.Row | None:
             """,
             (item_id,),
         ).fetchone()
+
 
 def create_item(item_data: dict[str, Any]) -> int:
     with closing(get_connection()) as conn:
@@ -125,13 +128,14 @@ def create_item(item_data: dict[str, Any]) -> int:
         conn.commit()
         return cursor.lastrowid
 
+
 def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
     with closing(get_connection()) as conn:
         cursor = conn.execute(
             """
             UPDATE inventory_items
             SET
-                memo = ?,
+                kind = ?,
                 specification = ?,
                 property_number = ?,
                 name = ?,
@@ -144,7 +148,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
             WHERE id = ?
             """,
             (
-                item_data["note"],
+                item_data["kind"],
                 item_data["specification"],
                 item_data["property_number"],
                 item_data["name"],
@@ -152,14 +156,16 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                 item_data["unit"],
                 item_data["purchase_date"],
                 item_data["location"],
-                item_data["custodian_unit"],
+                item_data["keeper"],
+                item_data["memo"],
                 item_id,
             ),
         )
         conn.commit()
         return cursor.rowcount > 0
 
-def get_order_sn(name: str) -> list[sqlite3.Row]:
+
+def get_order_sn(name: str) -> list[sqlite3.Row] | None:
     with closing(get_connection()) as conn:
         return conn.execute(
             """
@@ -168,6 +174,6 @@ def get_order_sn(name: str) -> list[sqlite3.Row]:
             WHERE name = ?
             RETURNING 'tmp-' || strftime('%Y%m%d', 'now', 'localtime') || '-' || printf('%04d', current_value) AS tmp_no
             """,
-            (name, )
+            (name,),
         ).fetchone()
 
