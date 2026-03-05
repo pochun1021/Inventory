@@ -68,6 +68,21 @@ def get_items_count() -> int:
         return conn.execute("SELECT COUNT(*) FROM inventory_items WHERE deleted_at IS NULL").fetchone()[0]
 
 
+def get_pending_fix_count() -> int:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM inventory_items
+            WHERE deleted_at IS NULL
+              AND (
+                    TRIM(property_number) = ''
+                    OR property_number GLOB '*[一-龥]*'
+              )
+            """
+        ).fetchone()[0]
+
+
 def list_items() -> list[sqlite3.Row]:
     with closing(get_connection()) as conn:
         return conn.execute(

@@ -7,6 +7,7 @@ type DashboardPayload = {
   status: string
   data: string
   items: number
+  pendingFix: number
 }
 
 function DashboardPage() {
@@ -46,6 +47,12 @@ function DashboardPage() {
         <article className="stat-card">
           <h2>資產總數</h2>
           <p className="stat-value">{dashboardData?.items ?? '--'}</p>
+        </article>
+
+        <article className="stat-card">
+            <h2>待修改資料</h2>
+            <p className="stat-value">{dashboardData?.pendingFix ?? '--'}</p>
+            <p className="stat-note">財產編號空值或包含中文</p>
         </article>
 
         <article className="stat-card">

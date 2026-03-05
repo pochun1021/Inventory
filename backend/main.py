@@ -11,6 +11,7 @@ from db import (
     delete_item,
     get_item_by_id,
     get_items_count,
+    get_pending_fix_count,
     init_db,
     list_items,
     log_inventory_action,
@@ -144,6 +145,7 @@ def on_startup() -> None:
             action="purge",
             entity="inventory_item",
             detail={"deleted_count": purged_count, "policy": "soft-deleted over 6 months"},
+        )
 
 
 @app.get("/{full_path:path}")
@@ -161,7 +163,7 @@ def serve_frontend(full_path: str):
 
 @app.get("/api/data")
 def get_dashboard_data():
-    return {"status": "success", "data": "這是管理系統的後端數據", "items": get_items_count()}
+    return {"status": "success", "data": "這是管理系統的後端數據", "items": get_items_count(), "pendingFix": get_pending_fix_count()}
 
 
 @app.get("/api/items", response_model=list[InventoryItem])
