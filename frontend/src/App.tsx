@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import { UploadPanel } from './components/UploadPanel'
+import { apiUrl } from './api'
 
 type DashboardPayload = {
   status: string
@@ -15,7 +16,7 @@ function DashboardPage() {
   useEffect(() => {
     const loadDashboard = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/data')
+        const response = await fetch(apiUrl('/api/data'))
         if (!response.ok) {
           throw new Error('無法載入儀表板資料')
         }

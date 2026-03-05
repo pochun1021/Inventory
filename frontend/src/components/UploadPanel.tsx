@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
+import { apiUrl } from '../api'
 
 type ImportErrorDetail = {
   row: number
@@ -55,7 +56,7 @@ export function UploadPanel() {
       formData.append('kind', kind)
       formData.append('file', file)
 
-      const response = await fetch('http://localhost:8000/api/items/import', {
+      const response = await fetch(apiUrl('/api/items/import'), {
         method: 'POST',
         body: formData,
       })
