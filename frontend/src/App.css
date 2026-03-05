@@ -43,7 +43,8 @@ body {
 
 .dashboard-header,
 .upload-card,
-.stat-card {
+.stat-card,
+.list-card {
   background: #fff;
   border-radius: 16px;
   box-shadow: 0 12px 30px rgba(31, 41, 55, 0.12);
@@ -98,6 +99,36 @@ h4 {
   margin-top: 1.5rem;
 }
 
+.list-card {
+  padding: 1.4rem;
+}
+
+.list-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  margin-bottom: 0.9rem;
+}
+
+.search-label {
+  font-weight: 700;
+}
+
+.list-count {
+  margin: 0.2rem 0 0;
+  color: #475569;
+  font-size: 0.95rem;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.empty-row {
+  text-align: center;
+  color: #64748b;
+}
+
 label {
   display: grid;
   gap: 0.35rem;
@@ -106,6 +137,7 @@ label {
 
 select,
 input[type='file'],
+input[type='search'],
 button {
   font: inherit;
   padding: 0.65rem 0.75rem;
@@ -113,7 +145,8 @@ button {
 }
 
 select,
-input[type='file'] {
+input[type='file'],
+input[type='search'] {
   border: 1px solid #cbd5e1;
   background: #fff;
 }
@@ -171,6 +204,7 @@ table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 0.5rem;
+  background: #fff;
 }
 
 th,
@@ -178,6 +212,7 @@ td {
   border: 1px solid #e2e8f0;
   text-align: left;
   padding: 0.55rem;
+  white-space: nowrap;
 }
 
 th {

@@ -94,6 +94,7 @@ def list_items() -> list[sqlite3.Row]:
                 property_number,
                 name,
                 model,
+                unit,
                 purchase_date,
                 location,
                 keeper,

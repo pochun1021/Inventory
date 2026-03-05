@@ -148,19 +148,6 @@ def on_startup() -> None:
         )
 
 
-@app.get("/{full_path:path}")
-def serve_frontend(full_path: str):
-    frontend_asset = _resolve_frontend_asset(full_path)
-    if frontend_asset is not None:
-        return FileResponse(frontend_asset)
-
-    frontend_index = _resolve_frontend_index()
-    if frontend_index is not None:
-        return FileResponse(frontend_index)
-
-    raise HTTPException(status_code=404, detail="Frontend index.html not found")
-
-
 @app.get("/api/data")
 def get_dashboard_data():
     return {"status": "success", "data": "這是管理系統的後端數據", "items": get_items_count(), "pendingFix": get_pending_fix_count()}
@@ -277,3 +264,16 @@ async def import_inventory_items_from_xlsx(
         status="success" if result["failed"] == 0 else "partial_success",
     )
     return ImportResponse(**result)
+
+
+@app.get("/{full_path:path}")
+def serve_frontend(full_path: str):
+    frontend_asset = _resolve_frontend_asset(full_path)
+    if frontend_asset is not None:
+        return FileResponse(frontend_asset)
+
+    frontend_index = _resolve_frontend_index()
+    if frontend_index is not None:
+        return FileResponse(frontend_index)
+
+    raise HTTPException(status_code=404, detail="Frontend index.html not found")
