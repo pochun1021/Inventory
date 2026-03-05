@@ -15,7 +15,6 @@ body {
 .dashboard-page {
   min-height: 100vh;
   width: min(980px, 100%);
-  margin: 0 auto;
   padding: 2rem 1rem 3rem;
   display: grid;
   gap: 1.2rem;

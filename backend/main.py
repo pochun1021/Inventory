@@ -153,14 +153,14 @@ def get_dashboard_data():
     return {"status": "success", "data": "這是管理系統的後端數據", "items": get_items_count(), "pendingFix": get_pending_fix_count()}
 
 
-@app.get("/api/items", response_model=list[InventoryItem])
+@app.get("/api/items", response_model=list[InventoryItem], response_model_by_alias=False)
 def get_inventory_items():
     rows = list_items()
     log_inventory_action(action="read", entity="inventory_item", detail={"count": len(rows), "mode": "list"})
     return [row_to_item(row) for row in rows]
 
 
-@app.post("/api/items", response_model=InventoryItem)
+@app.post("/api/items", response_model=InventoryItem, response_model_by_alias=False)
 def create_inventory_item_api(item: InventoryItemCreate):
     item_data = to_db_payload(item)
     item_id = create_item(item_data)
@@ -179,7 +179,7 @@ def create_inventory_item_api(item: InventoryItemCreate):
     return row_to_item(row)
 
 
-@app.put("/api/items/{item_id}", response_model=InventoryItem)
+@app.put("/api/items/{item_id}", response_model=InventoryItem, response_model_by_alias=False)
 def update_inventory_item_api(item_id: int, item: InventoryItemCreate):
     item_data = to_db_payload(item)
     updated = update_item(item_id, item_data)
