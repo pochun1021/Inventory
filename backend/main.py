@@ -160,6 +160,16 @@ def get_inventory_items():
     return [row_to_item(row) for row in rows]
 
 
+@app.get("/api/items/{item_id}", response_model=InventoryItem, response_model_by_alias=False)
+def get_inventory_item_api(item_id: int):
+    row = get_item_by_id(item_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    log_inventory_action(action="read", entity="inventory_item", entity_id=item_id, detail={"mode": "single"})
+    return row_to_item(row)
+
+
 @app.post("/api/items", response_model=InventoryItem, response_model_by_alias=False)
 def create_inventory_item_api(item: InventoryItemCreate):
     item_data = to_db_payload(item)

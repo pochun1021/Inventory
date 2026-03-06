@@ -6,6 +6,7 @@ export function TopNav({ pathname }: TopNavProps) {
   const isUploadPage = pathname === '/upload'
   const isDashboardPage = pathname === '/'
   const isInventoryPage = pathname === '/inventory'
+  const isCreatePage = pathname === '/inventory/new'
 
   return (
     <nav className="top-nav">
@@ -15,10 +16,12 @@ export function TopNav({ pathname }: TopNavProps) {
       <a className={isInventoryPage ? 'nav-link active' : 'nav-link'} href="/inventory">
         財產清單
       </a>
+      <a className={isCreatePage ? 'nav-link active' : 'nav-link'} href="/inventory/new">
+        新增庫存
+      </a>
       <a className={isUploadPage ? 'nav-link active' : 'nav-link'} href="/upload">
         上傳頁面
       </a>
     </nav>
   )
 }
-

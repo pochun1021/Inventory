@@ -245,7 +245,7 @@ export function InventoryListPage() {
                   ) : (
                     paginatedItems.map((item) => (
                       <tr key={item.id}>
-                        <td>{item.id || '--'}</td>
+                        <td>{item.id ? <a className="edit-link" href={`/inventory/edit/${item.id}`}>{item.id}</a> : '--'}</td>
                         <td>{toKindLabel(item.kind)}</td>
                         <td>{item.property_number || '--'}</td>
                         <td>{item.name || '--'}</td>
