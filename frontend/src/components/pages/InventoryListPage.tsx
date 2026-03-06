@@ -10,6 +10,7 @@ const KIND_LABEL_MAP: Record<string, string> = {
 }
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+const CHINESE_CHARACTER_REGEX = /[\u4e00-\u9fff]/
 
 export function InventoryListPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
@@ -18,6 +19,7 @@ export function InventoryListPage() {
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState('')
   const [selectedKind, setSelectedKind] = useState('all')
+  const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>('all')
   const [pageSize, setPageSize] = useState(10)
   const [customPageSize, setCustomPageSize] = useState('10')
   const [currentPage, setCurrentPage] = useState(1)
@@ -61,10 +63,19 @@ export function InventoryListPage() {
   const filteredItems = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase()
     const normalizeSearchValue = (value: unknown) => (typeof value === 'string' ? value : '').toLowerCase()
+    const isNeedsFix = (item: InventoryItem) => {
+      const propertyNumber = item.property_number?.trim() ?? ''
+      return propertyNumber.length === 0 || CHINESE_CHARACTER_REGEX.test(propertyNumber)
+    }
 
     return items.filter((item) => {
       const passesKindFilter = selectedKind === 'all' || item.kind === selectedKind
       if (!passesKindFilter) {
+        return false
+      }
+
+      const passesCorrectionStatusFilter = selectedCorrectionStatus === 'all' || isNeedsFix(item)
+      if (!passesCorrectionStatusFilter) {
         return false
       }
 
@@ -75,7 +86,7 @@ export function InventoryListPage() {
       const searchFields = [item.property_number, item.name, item.model, item.location, item.keeper]
       return searchFields.some((field) => normalizeSearchValue(field).includes(normalizedKeyword))
     })
-  }, [items, keyword, selectedKind])
+  }, [items, keyword, selectedKind, selectedCorrectionStatus])
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize))
   const paginatedItems = useMemo(() => {
@@ -85,7 +96,7 @@ export function InventoryListPage() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [keyword, selectedKind, pageSize])
+  }, [keyword, selectedKind, selectedCorrectionStatus, pageSize])
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -176,6 +187,18 @@ export function InventoryListPage() {
                 {kindValue === 'all' ? '全部類別' : toKindLabel(kindValue)}
               </option>
             ))}
+          </select>
+
+          <label htmlFor="correction-filter" className="search-label">
+            待修正篩選
+          </label>
+          <select
+            id="correction-filter"
+            value={selectedCorrectionStatus}
+            onChange={(event) => setSelectedCorrectionStatus(event.target.value as 'all' | 'needs_fix')}
+          >
+            <option value="all">全部資料</option>
+            <option value="needs_fix">僅顯示待修正資料</option>
           </select>
 
           <div className="pagination-size-row">
