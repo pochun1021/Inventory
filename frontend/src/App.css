@@ -109,6 +109,48 @@ h4 {
   margin-bottom: 0.9rem;
 }
 
+.pagination-size-row {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.pagination-size-options {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.page-size-button {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+  padding: 0.45rem 0.75rem;
+}
+
+.page-size-button[data-active='true'] {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+
+.pagination-custom-input {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pagination-custom-input input[type='number'] {
+  width: 6.5rem;
+}
+
+.pagination-controls {
+  margin-top: 0.85rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .search-label {
   font-weight: 700;
 }
