@@ -205,6 +205,14 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.danger-button {
+  background: #dc2626;
+}
+
+.danger-button:disabled {
+  background: #fca5a5;
+}
+
 .file-name {
   margin: 0;
   color: #334155;

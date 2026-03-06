@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import type { InventoryItem } from './types'
 
@@ -13,12 +14,14 @@ const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 export function InventoryListPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [loadError, setLoadError] = useState('')
+  const [actionMessage, setActionMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState('')
   const [selectedKind, setSelectedKind] = useState('all')
   const [pageSize, setPageSize] = useState(10)
   const [customPageSize, setCustomPageSize] = useState('10')
   const [currentPage, setCurrentPage] = useState(1)
+  const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
 
 
   useEffect(() => {
@@ -104,6 +107,46 @@ export function InventoryListPage() {
     setPageSize(nextSize)
   }
 
+  const handleDeleteItem = async (item: InventoryItem) => {
+    if (!item.id) {
+      return
+    }
+
+    const result = await Swal.fire({
+      title: '確認刪除',
+      text: `確定要刪除財產「${item.name || item.property_number || item.id}」嗎？`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: '刪除',
+      cancelButtonText: '取消',
+    })
+
+    if (!result.isConfirmed) {
+      return
+    }
+
+    setLoadError('')
+    setActionMessage('')
+    setDeletingItemId(item.id)
+
+    try {
+      const response = await fetch(apiUrl(`/api/items/${item.id}`), {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        throw new Error('刪除失敗')
+      }
+
+      setItems((previousItems) => previousItems.filter((existingItem) => existingItem.id !== item.id))
+      setActionMessage('財產資料已刪除。')
+    } catch {
+      setLoadError('刪除財產資料失敗，請稍後再試。')
+    } finally {
+      setDeletingItemId(null)
+    }
+  }
+
   return (
     <>
       <section className="dashboard-header">
@@ -171,6 +214,7 @@ export function InventoryListPage() {
 
         {loading ? <p className="message">資料載入中...</p> : null}
         {loadError ? <p className="message error">{loadError}</p> : null}
+        {actionMessage ? <p className="message success">{actionMessage}</p> : null}
 
         {!loading && !loadError ? (
           <>
@@ -188,12 +232,13 @@ export function InventoryListPage() {
                     <th>購置日期</th>
                     <th>放置地點</th>
                     <th>保管人</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedItems.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="empty-row">
+                      <td colSpan={11} className="empty-row">
                         查無符合條件的財產資料
                       </td>
                     </tr>
@@ -210,6 +255,16 @@ export function InventoryListPage() {
                         <td>{item.purchase_date ?? '--'}</td>
                         <td>{item.location || '--'}</td>
                         <td>{item.keeper || '--'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            onClick={() => void handleDeleteItem(item)}
+                            disabled={deletingItemId === item.id}
+                          >
+                            {deletingItemId === item.id ? '刪除中...' : '刪除'}
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}
