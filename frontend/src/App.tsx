@@ -1,4 +1,3 @@
-import './App.css'
 import { TopNav } from './components/TopNav'
 import { DashboardPage } from './components/pages/DashboardPage'
 import { InventoryFormPage } from './components/pages/InventoryFormPage'
