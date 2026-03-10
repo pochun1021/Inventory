@@ -2,6 +2,9 @@ type TopNavProps = {
   pathname: string
 }
 
+const navLinkClass = 'rounded-full bg-blue-100 px-3.5 py-2 text-sm font-bold text-blue-700 no-underline'
+const activeNavLinkClass = 'bg-blue-600 text-white'
+
 export function TopNav({ pathname }: TopNavProps) {
   const isUploadPage = pathname === '/upload'
   const isDashboardPage = pathname === '/'
@@ -9,17 +12,17 @@ export function TopNav({ pathname }: TopNavProps) {
   const isCreatePage = pathname === '/inventory/new'
 
   return (
-    <nav className="top-nav">
-      <a className={isDashboardPage ? 'nav-link active' : 'nav-link'} href="/">
+    <nav className="flex items-start gap-3">
+      <a className={isDashboardPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/">
         Dashboard
       </a>
-      <a className={isInventoryPage ? 'nav-link active' : 'nav-link'} href="/inventory">
+      <a className={isInventoryPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory">
         財產清單
       </a>
-      <a className={isCreatePage ? 'nav-link active' : 'nav-link'} href="/inventory/new">
+      <a className={isCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory/new">
         新增庫存
       </a>
-      <a className={isUploadPage ? 'nav-link active' : 'nav-link'} href="/upload">
+      <a className={isUploadPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/upload">
         上傳頁面
       </a>
     </nav>
