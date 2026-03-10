@@ -8,6 +8,10 @@ const activeNavLinkClass = 'bg-blue-600 text-white'
 export function TopNav({ pathname }: TopNavProps) {
   const isUploadPage = pathname === '/upload'
   const isDashboardPage = pathname === '/'
+  const isIssueListPage = pathname === '/issues'
+  const isIssueCreatePage = pathname === '/issues/new'
+  const isBorrowListPage = pathname === '/borrows'
+  const isBorrowCreatePage = pathname === '/borrows/new'
   const isInventoryPage = pathname === '/inventory'
   const isCreatePage = pathname === '/inventory/new'
 
@@ -15,6 +19,18 @@ export function TopNav({ pathname }: TopNavProps) {
     <nav className="flex items-start gap-3">
       <a className={isDashboardPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/">
         Dashboard
+      </a>
+      <a className={isIssueListPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/issues">
+        領用清單
+      </a>
+      <a className={isIssueCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/issues/new">
+        新增領用
+      </a>
+      <a className={isBorrowListPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/borrows">
+        借用清單
+      </a>
+      <a className={isBorrowCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/borrows/new">
+        新增借用
       </a>
       <a className={isInventoryPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory">
         財產清單

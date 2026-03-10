@@ -19,3 +19,43 @@ export type InventoryItem = {
   keeper: string
 }
 
+export type IssueItem = {
+  id: number
+  item_id: number
+  quantity: number
+  note: string
+  item_name?: string | null
+  item_model?: string | null
+}
+
+export type IssueRequest = {
+  id: number
+  requester: string
+  department: string
+  purpose: string
+  request_date: string | null
+  memo: string
+  items: IssueItem[]
+}
+
+export type BorrowItem = {
+  id: number
+  item_id: number
+  quantity: number
+  note: string
+  item_name?: string | null
+  item_model?: string | null
+}
+
+export type BorrowRequest = {
+  id: number
+  borrower: string
+  department: string
+  purpose: string
+  borrow_date: string | null
+  due_date: string | null
+  return_date: string | null
+  status: string
+  memo: string
+  items: BorrowItem[]
+}
