@@ -23,6 +23,9 @@ const KIND_OPTIONS = {
 type KindValue = (typeof KIND_OPTIONS)[keyof typeof KIND_OPTIONS]
 const KIND_ENTRIES = Object.entries(KIND_OPTIONS) as Array<[string, KindValue]>
 
+const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
+const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
+
 export function UploadPanel() {
   const [kind, setKind] = useState(KIND_ENTRIES[0][1])
   const [file, setFile] = useState<File | null>(null)
@@ -84,14 +87,14 @@ export function UploadPanel() {
   }
 
   return (
-    <section className="upload-card">
-      <h2>資產資料上傳</h2>
-      <p className="subtitle">請選擇類別並上傳 Excel（.xlsx）檔案，系統會自動匯入資料。</p>
+    <section className="rounded-2xl bg-white p-8 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+      <h2 className="mt-0">資產資料上傳</h2>
+      <p className="mt-2 text-slate-500">請選擇類別並上傳 Excel（.xlsx）檔案，系統會自動匯入資料。</p>
 
-      <form className="upload-form" onSubmit={handleSubmit}>
-        <label>
+      <form className="mt-6 grid gap-4" onSubmit={handleSubmit}>
+        <label className="grid gap-1.5 font-semibold">
           資產類別
-          <select value={kind} onChange={(event) => setKind(event.target.value as KindValue)}>
+          <select className={fieldClass} value={kind} onChange={(event) => setKind(event.target.value as KindValue)}>
             {KIND_ENTRIES.map(([label, value]) => (
               <option key={value} value={value}>
                 {label}
@@ -100,55 +103,54 @@ export function UploadPanel() {
           </select>
         </label>
 
-        <label>
+        <label className="grid gap-1.5 font-semibold">
           上傳檔案
-          <input type="file" accept=".xlsx" onChange={handleFileChange} />
+          <input className={fieldClass} type="file" accept=".xlsx" onChange={handleFileChange} />
         </label>
 
-        {file ? <p className="file-name">已選擇：{file.name}</p> : null}
+        {file ? <p className="text-slate-700">已選擇：{file.name}</p> : null}
 
-        <button type="submit" disabled={isSubmitting}>
+        <button className={buttonClass} type="submit" disabled={isSubmitting}>
           {isSubmitting ? '上傳中...' : '開始上傳'}
         </button>
       </form>
 
-      {errorMessage ? <p className="message error">{errorMessage}</p> : null}
+      {errorMessage ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{errorMessage}</p> : null}
 
       {result ? (
-        <section className="result">
-          <h3>匯入結果</h3>
-          <ul>
+        <section className="mt-7 border-t border-slate-200 pt-5">
+          <h3 className="mt-0">匯入結果</h3>
+          <ul className="mb-0 pl-5">
             <li>總筆數：{result.total}</li>
             <li>成功筆數：{result.created}</li>
             <li>失敗筆數：{result.failed}</li>
           </ul>
 
           {hasErrors ? (
-            <div className="error-list">
-              <h4>錯誤明細</h4>
-              <table>
+            <div className="mt-4">
+              <h4 className="mt-0">錯誤明細</h4>
+              <table className="mt-2 w-full border-collapse bg-white">
                 <thead>
                   <tr>
-                    <th>列號</th>
-                    <th>原因</th>
+                    <th className="whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left">列號</th>
+                    <th className="whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left">原因</th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.errors.map((item) => (
                     <tr key={`${item.row}-${item.message}`}>
-                      <td>{item.row}</td>
-                      <td>{item.message}</td>
+                      <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.row}</td>
+                      <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.message}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           ) : (
-            <p className="message success">全部資料已成功匯入。</p>
+            <p className="mt-0.5 rounded-[10px] bg-emerald-50 px-3.5 py-3 text-emerald-700">全部資料已成功匯入。</p>
           )}
         </section>
       ) : null}
     </section>
   )
 }
-

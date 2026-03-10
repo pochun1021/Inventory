@@ -11,6 +11,8 @@ const KIND_LABEL_MAP: Record<string, string> = {
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const CHINESE_CHARACTER_REGEX = /[\u4e00-\u9fff]/
+const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
+const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 
 export function InventoryListPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
@@ -24,7 +26,6 @@ export function InventoryListPage() {
   const [customPageSize, setCustomPageSize] = useState('10')
   const [currentPage, setCurrentPage] = useState(1)
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
-
 
   useEffect(() => {
     const loadItems = async () => {
@@ -160,17 +161,18 @@ export function InventoryListPage() {
 
   return (
     <>
-      <section className="dashboard-header">
-        <h1>財產清單</h1>
-        <p className="subtitle">可依財產編號、品名、型號、放置地點或保管人快速查詢。</p>
+      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+        <h1 className="mt-0">財產清單</h1>
+        <p className="mt-2 text-slate-500">可依財產編號、品名、型號、放置地點或保管人快速查詢。</p>
       </section>
 
-      <section className="list-card">
-        <div className="list-toolbar">
-          <label htmlFor="search-input" className="search-label">
+      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+        <div className="mb-4 grid grid-cols-1 gap-2">
+          <label htmlFor="search-input" className="font-bold">
             關鍵字搜尋
           </label>
           <input
+            className={fieldClass}
             id="search-input"
             type="search"
             placeholder="輸入財產編號、品名、型號..."
@@ -178,10 +180,10 @@ export function InventoryListPage() {
             onChange={(event) => setKeyword(event.target.value)}
           />
 
-          <label htmlFor="kind-filter" className="search-label">
+          <label htmlFor="kind-filter" className="font-bold">
             類別篩選
           </label>
-          <select id="kind-filter" value={selectedKind} onChange={(event) => setSelectedKind(event.target.value)}>
+          <select className={fieldClass} id="kind-filter" value={selectedKind} onChange={(event) => setSelectedKind(event.target.value)}>
             {kindOptions.map((kindValue) => (
               <option key={kindValue} value={kindValue}>
                 {kindValue === 'all' ? '全部類別' : toKindLabel(kindValue)}
@@ -189,10 +191,11 @@ export function InventoryListPage() {
             ))}
           </select>
 
-          <label htmlFor="correction-filter" className="search-label">
+          <label htmlFor="correction-filter" className="font-bold">
             待修正篩選
           </label>
           <select
+            className={fieldClass}
             id="correction-filter"
             value={selectedCorrectionStatus}
             onChange={(event) => setSelectedCorrectionStatus(event.target.value as 'all' | 'needs_fix')}
@@ -201,87 +204,81 @@ export function InventoryListPage() {
             <option value="needs_fix">僅顯示待修正資料</option>
           </select>
 
-          <div className="pagination-size-row">
-            <span className="search-label">每頁筆數</span>
-            <div className="pagination-size-options">
+          <div className="grid gap-2">
+            <span className="font-bold">每頁筆數</span>
+            <div className="flex flex-wrap gap-2">
               {DEFAULT_PAGE_SIZE_OPTIONS.map((size) => (
                 <button
                   key={size}
                   type="button"
-                  className="page-size-button"
-                  data-active={size === pageSize}
+                  className={`cursor-pointer rounded-[10px] border px-3 py-2 font-bold ${size === pageSize ? 'border-blue-600 bg-blue-600 text-white' : 'border-blue-300 bg-blue-100 text-blue-700'}`}
                   onClick={() => handlePresetPageSize(size)}
                 >
                   {size}
                 </button>
               ))}
             </div>
-            <div className="pagination-custom-input">
+            <div className="flex items-center gap-2">
               <input
+                className={`${fieldClass} w-26`}
                 type="number"
                 min={1}
                 value={customPageSize}
                 onChange={(event) => setCustomPageSize(event.target.value)}
               />
-              <button type="button" onClick={handleCustomPageSize}>
+              <button className={buttonClass} type="button" onClick={handleCustomPageSize}>
                 套用
               </button>
             </div>
           </div>
 
-          <p className="list-count">共 {filteredItems.length} 筆資料</p>
-          <p className="list-count">
+          <p className="mt-1 text-[0.95rem] text-slate-600">共 {filteredItems.length} 筆資料</p>
+          <p className="mt-1 text-[0.95rem] text-slate-600">
             第 {currentPage} / {totalPages} 頁
           </p>
         </div>
 
-        {loading ? <p className="message">資料載入中...</p> : null}
-        {loadError ? <p className="message error">{loadError}</p> : null}
-        {actionMessage ? <p className="message success">{actionMessage}</p> : null}
+        {loading ? <p className="mt-0.5 rounded-[10px] px-3.5 py-3">資料載入中...</p> : null}
+        {loadError ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{loadError}</p> : null}
+        {actionMessage ? <p className="mt-0.5 rounded-[10px] bg-emerald-50 px-3.5 py-3 text-emerald-700">{actionMessage}</p> : null}
 
         {!loading && !loadError ? (
           <>
-            <div className="table-wrapper">
-              <table>
+            <div className="overflow-x-auto">
+              <table className="mt-2 w-full border-collapse bg-white">
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>類別</th>
-                    <th>財產編號</th>
-                    <th>品名</th>
-                    <th>型號</th>
-                    <th>規格</th>
-                    <th>單位</th>
-                    <th>購置日期</th>
-                    <th>放置地點</th>
-                    <th>保管人</th>
-                    <th>操作</th>
+                    {['#', '類別', '財產編號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '操作'].map((header) => (
+                      <th key={header} className="whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left">{header}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedItems.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="empty-row">
+                      <td colSpan={11} className="border border-slate-200 p-2 text-center text-slate-500">
                         查無符合條件的財產資料
                       </td>
                     </tr>
                   ) : (
                     paginatedItems.map((item) => (
                       <tr key={item.id}>
-                        <td>{item.id ? <a className="edit-link" href={`/inventory/edit/${item.id}`}>{item.id}</a> : '--'}</td>
-                        <td>{toKindLabel(item.kind)}</td>
-                        <td>{item.property_number || '--'}</td>
-                        <td>{item.name || '--'}</td>
-                        <td>{item.model || '--'}</td>
-                        <td>{item.specification || '--'}</td>
-                        <td>{item.unit || '--'}</td>
-                        <td>{item.purchase_date ?? '--'}</td>
-                        <td>{item.location || '--'}</td>
-                        <td>{item.keeper || '--'}</td>
-                        <td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">
+                          {item.id ? <a className="font-bold text-blue-700 no-underline hover:underline" href={`/inventory/edit/${item.id}`}>{item.id}</a> : '--'}
+                        </td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{toKindLabel(item.kind)}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.property_number || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.name || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.model || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.specification || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.unit || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.purchase_date ?? '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.location || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.keeper || '--'}</td>
+                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">
                           <button
                             type="button"
-                            className="danger-button"
+                            className="cursor-pointer rounded-[10px] border-none bg-red-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-red-300"
                             onClick={() => void handleDeleteItem(item)}
                             disabled={deletingItemId === item.id}
                           >
@@ -296,8 +293,9 @@ export function InventoryListPage() {
             </div>
 
             {filteredItems.length > 0 ? (
-              <div className="pagination-controls">
+              <div className="mt-3.5 flex items-center justify-end gap-3">
                 <button
+                  className={buttonClass}
                   type="button"
                   onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                   disabled={currentPage === 1}
@@ -308,6 +306,7 @@ export function InventoryListPage() {
                   目前第 {currentPage} 頁，共 {totalPages} 頁
                 </span>
                 <button
+                  className={buttonClass}
                   type="button"
                   onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                   disabled={currentPage === totalPages}
