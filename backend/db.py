@@ -49,8 +49,8 @@ def init_db() -> None:
             );
 
             INSERT OR IGNORE INTO order_sn
-            VALUES ('assets', 0),
-                   ('supplies', 0),
+            VALUES ('asset', 0),
+                   ('item', 0),
                    ('other', 0);
             """
         )
@@ -133,7 +133,7 @@ def get_item_by_id(item_id: int) -> sqlite3.Row | None:
 def create_item(item_data: dict[str, Any]) -> int:
     property_number = str(item_data.get("property_number", "")).strip()
     if not property_number:
-        order_sn_name = item_data.get("kind") if item_data.get("kind") in {"assets", "supplies", "other"} else "other"
+        order_sn_name = item_data.get("kind") if item_data.get("kind") in {"asset", "item", "other"} else "other"
         order_sn_row = get_order_sn(order_sn_name)
         if order_sn_row is not None:
             property_number = order_sn_row["tmp_no"]

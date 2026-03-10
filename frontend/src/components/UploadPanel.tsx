@@ -15,8 +15,8 @@ type ImportResponse = {
 }
 
 const KIND_OPTIONS = {
-  物品: 'assets',
-  財產: 'supplies',
+  物品: 'item',
+  財產: 'asset',
   其他: 'other',
 } as const
 

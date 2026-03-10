@@ -20,8 +20,8 @@ type InventoryFormData = {
 }
 
 const KIND_OPTIONS = [
-  { value: 'assets', label: '物品' },
-  { value: 'supplies', label: '財產' },
+  { value: 'asset', label: '財產' },
+  { value: 'item', label: '物品' },
   { value: 'other', label: '其他' },
 ]
 

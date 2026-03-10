@@ -4,8 +4,8 @@ import { apiUrl } from '../../api'
 import type { InventoryItem } from './types'
 
 const KIND_LABEL_MAP: Record<string, string> = {
-  assets: '物品',
-  supplies: '財產',
+  asset: '財產',
+  item: '物品',
   other: '其他',
 }
 
