@@ -11,6 +11,7 @@ DB_PATH = BASE_DIR / "inventory.db"
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -46,6 +47,47 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'success',
                 detail TEXT DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS issue_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                requester TEXT NOT NULL DEFAULT '',
+                department TEXT NOT NULL DEFAULT '',
+                purpose TEXT NOT NULL DEFAULT '',
+                request_date TEXT NOT NULL DEFAULT '',
+                memo TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS issue_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                note TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (request_id) REFERENCES issue_requests(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS borrow_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                borrower TEXT NOT NULL DEFAULT '',
+                department TEXT NOT NULL DEFAULT '',
+                purpose TEXT NOT NULL DEFAULT '',
+                borrow_date TEXT NOT NULL DEFAULT '',
+                due_date TEXT NOT NULL DEFAULT '',
+                return_date TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'borrowed',
+                memo TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS borrow_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                note TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (request_id) REFERENCES borrow_requests(id) ON DELETE CASCADE
             );
 
             INSERT OR IGNORE INTO order_sn
@@ -268,3 +310,278 @@ def get_order_sn(name: str) -> list[sqlite3.Row] | None:
             """,
             (name,),
         ).fetchone()
+
+
+def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
+    with closing(get_connection()) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO issue_requests (
+                requester,
+                department,
+                purpose,
+                request_date,
+                memo
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                request_data["requester"],
+                request_data["department"],
+                request_data["purpose"],
+                request_data["request_date"],
+                request_data["memo"],
+            ),
+        )
+        request_id = cursor.lastrowid
+        conn.executemany(
+            """
+            INSERT INTO issue_items (request_id, item_id, quantity, note)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    request_id,
+                    item["item_id"],
+                    item["quantity"],
+                    item.get("note", ""),
+                )
+                for item in items
+            ],
+        )
+        conn.commit()
+        return request_id
+
+
+def list_issue_requests() -> list[sqlite3.Row]:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT id, requester, department, purpose, request_date, memo, created_at
+            FROM issue_requests
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+
+def get_issue_request(request_id: int) -> sqlite3.Row | None:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT id, requester, department, purpose, request_date, memo, created_at
+            FROM issue_requests
+            WHERE id = ?
+            """,
+            (request_id,),
+        ).fetchone()
+
+
+def list_issue_items(request_id: int) -> list[sqlite3.Row]:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT
+                issue_items.id,
+                issue_items.request_id,
+                issue_items.item_id,
+                issue_items.quantity,
+                issue_items.note,
+                inventory_items.name AS item_name,
+                inventory_items.model AS item_model
+            FROM issue_items
+            LEFT JOIN inventory_items ON inventory_items.id = issue_items.item_id
+            WHERE issue_items.request_id = ?
+            ORDER BY issue_items.id ASC
+            """,
+            (request_id,),
+        ).fetchall()
+
+
+def update_issue_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    with closing(get_connection()) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE issue_requests
+            SET requester = ?, department = ?, purpose = ?, request_date = ?, memo = ?
+            WHERE id = ?
+            """,
+            (
+                request_data["requester"],
+                request_data["department"],
+                request_data["purpose"],
+                request_data["request_date"],
+                request_data["memo"],
+                request_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return False
+
+        conn.execute("DELETE FROM issue_items WHERE request_id = ?", (request_id,))
+        conn.executemany(
+            """
+            INSERT INTO issue_items (request_id, item_id, quantity, note)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    request_id,
+                    item["item_id"],
+                    item["quantity"],
+                    item.get("note", ""),
+                )
+                for item in items
+            ],
+        )
+        conn.commit()
+        return True
+
+
+def delete_issue_request(request_id: int) -> bool:
+    with closing(get_connection()) as conn:
+        cursor = conn.execute("DELETE FROM issue_requests WHERE id = ?", (request_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
+    with closing(get_connection()) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO borrow_requests (
+                borrower,
+                department,
+                purpose,
+                borrow_date,
+                due_date,
+                return_date,
+                status,
+                memo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request_data["borrower"],
+                request_data["department"],
+                request_data["purpose"],
+                request_data["borrow_date"],
+                request_data["due_date"],
+                request_data["return_date"],
+                request_data["status"],
+                request_data["memo"],
+            ),
+        )
+        request_id = cursor.lastrowid
+        conn.executemany(
+            """
+            INSERT INTO borrow_items (request_id, item_id, quantity, note)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    request_id,
+                    item["item_id"],
+                    item["quantity"],
+                    item.get("note", ""),
+                )
+                for item in items
+            ],
+        )
+        conn.commit()
+        return request_id
+
+
+def list_borrow_requests() -> list[sqlite3.Row]:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT id, borrower, department, purpose, borrow_date, due_date, return_date, status, memo, created_at
+            FROM borrow_requests
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+
+def get_borrow_request(request_id: int) -> sqlite3.Row | None:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT id, borrower, department, purpose, borrow_date, due_date, return_date, status, memo, created_at
+            FROM borrow_requests
+            WHERE id = ?
+            """,
+            (request_id,),
+        ).fetchone()
+
+
+def list_borrow_items(request_id: int) -> list[sqlite3.Row]:
+    with closing(get_connection()) as conn:
+        return conn.execute(
+            """
+            SELECT
+                borrow_items.id,
+                borrow_items.request_id,
+                borrow_items.item_id,
+                borrow_items.quantity,
+                borrow_items.note,
+                inventory_items.name AS item_name,
+                inventory_items.model AS item_model
+            FROM borrow_items
+            LEFT JOIN inventory_items ON inventory_items.id = borrow_items.item_id
+            WHERE borrow_items.request_id = ?
+            ORDER BY borrow_items.id ASC
+            """,
+            (request_id,),
+        ).fetchall()
+
+
+def update_borrow_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    with closing(get_connection()) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE borrow_requests
+            SET borrower = ?, department = ?, purpose = ?, borrow_date = ?, due_date = ?, return_date = ?, status = ?, memo = ?
+            WHERE id = ?
+            """,
+            (
+                request_data["borrower"],
+                request_data["department"],
+                request_data["purpose"],
+                request_data["borrow_date"],
+                request_data["due_date"],
+                request_data["return_date"],
+                request_data["status"],
+                request_data["memo"],
+                request_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return False
+
+        conn.execute("DELETE FROM borrow_items WHERE request_id = ?", (request_id,))
+        conn.executemany(
+            """
+            INSERT INTO borrow_items (request_id, item_id, quantity, note)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    request_id,
+                    item["item_id"],
+                    item["quantity"],
+                    item.get("note", ""),
+                )
+                for item in items
+            ],
+        )
+        conn.commit()
+        return True
+
+
+def delete_borrow_request(request_id: int) -> bool:
+    with closing(get_connection()) as conn:
+        cursor = conn.execute("DELETE FROM borrow_requests WHERE id = ?", (request_id,))
+        conn.commit()
+        return cursor.rowcount > 0

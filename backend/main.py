@@ -8,15 +8,27 @@ from pydantic import BaseModel, Field
 
 from db import (
     create_item,
+    create_issue_request,
+    create_borrow_request,
     delete_item,
+    delete_issue_request,
+    delete_borrow_request,
     get_item_by_id,
     get_items_count,
+    get_issue_request,
+    get_borrow_request,
     get_pending_fix_count,
     init_db,
+    list_issue_items,
+    list_issue_requests,
+    list_borrow_items,
+    list_borrow_requests,
     list_items,
     log_inventory_action,
     purge_soft_deleted_items,
     update_item,
+    update_issue_request,
+    update_borrow_request,
 )
 from xlsx_import import import_inventory_items_from_xlsx_content
 
@@ -56,6 +68,61 @@ class InventoryItemCreate(BaseModel):
 
 class InventoryItem(InventoryItemCreate):
     id: int
+
+
+class IssueItemCreate(BaseModel):
+    item_id: int
+    quantity: int = 1
+    note: str = ""
+
+
+class IssueItem(IssueItemCreate):
+    id: int
+    item_name: str | None = None
+    item_model: str | None = None
+
+
+class IssueRequestCreate(BaseModel):
+    requester: str = ""
+    department: str = ""
+    purpose: str = ""
+    request_date: date | None = None
+    memo: str = ""
+    items: list[IssueItemCreate] = Field(default_factory=list)
+
+
+class IssueRequest(IssueRequestCreate):
+    id: int
+    items: list[IssueItem]
+
+
+class BorrowItemCreate(BaseModel):
+    item_id: int
+    quantity: int = 1
+    note: str = ""
+
+
+class BorrowItem(BorrowItemCreate):
+    id: int
+    item_name: str | None = None
+    item_model: str | None = None
+
+
+class BorrowRequestCreate(BaseModel):
+    borrower: str = ""
+    department: str = ""
+    purpose: str = ""
+    borrow_date: date | None = None
+    due_date: date | None = None
+    return_date: date | None = None
+    status: str = "borrowed"
+    memo: str = ""
+    items: list[BorrowItemCreate] = Field(default_factory=list)
+
+
+class BorrowRequest(BorrowRequestCreate):
+    id: int
+    items: list[BorrowItem]
 
 
 class ImportErrorDetail(BaseModel):
@@ -118,6 +185,10 @@ def to_db_payload(item: InventoryItemCreate) -> dict:
     }
 
 
+def _format_date(value: date | None) -> str:
+    return value.strftime("%Y/%m/%d") if value else ""
+
+
 def row_to_item(row) -> InventoryItem:
     purchase_date_value = row["purchase_date"]
     parsed_date = _parse_purchase_date(purchase_date_value) if purchase_date_value else None
@@ -133,6 +204,82 @@ def row_to_item(row) -> InventoryItem:
         location=row["location"],
         memo=row["memo"],
         keeper=row["keeper"],
+    )
+
+
+def row_to_issue_item(row) -> IssueItem:
+    return IssueItem(
+        id=row["id"],
+        item_id=row["item_id"],
+        quantity=row["quantity"],
+        note=row["note"],
+        item_name=row["item_name"],
+        item_model=row["item_model"],
+    )
+
+
+def row_to_borrow_item(row) -> BorrowItem:
+    return BorrowItem(
+        id=row["id"],
+        item_id=row["item_id"],
+        quantity=row["quantity"],
+        note=row["note"],
+        item_name=row["item_name"],
+        item_model=row["item_model"],
+    )
+
+
+def issue_request_to_db_payload(request: IssueRequestCreate) -> dict:
+    return {
+        "requester": request.requester,
+        "department": request.department,
+        "purpose": request.purpose,
+        "request_date": _format_date(request.request_date),
+        "memo": request.memo,
+    }
+
+
+def borrow_request_to_db_payload(request: BorrowRequestCreate) -> dict:
+    return {
+        "borrower": request.borrower,
+        "department": request.department,
+        "purpose": request.purpose,
+        "borrow_date": _format_date(request.borrow_date),
+        "due_date": _format_date(request.due_date),
+        "return_date": _format_date(request.return_date),
+        "status": request.status,
+        "memo": request.memo,
+    }
+
+
+def issue_request_row_to_model(row, items: list[IssueItem]) -> IssueRequest:
+    request_date = _parse_purchase_date(row["request_date"]) if row["request_date"] else None
+    return IssueRequest(
+        id=row["id"],
+        requester=row["requester"],
+        department=row["department"],
+        purpose=row["purpose"],
+        request_date=request_date,
+        memo=row["memo"],
+        items=items,
+    )
+
+
+def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
+    borrow_date = _parse_purchase_date(row["borrow_date"]) if row["borrow_date"] else None
+    due_date = _parse_purchase_date(row["due_date"]) if row["due_date"] else None
+    return_date = _parse_purchase_date(row["return_date"]) if row["return_date"] else None
+    return BorrowRequest(
+        id=row["id"],
+        borrower=row["borrower"],
+        department=row["department"],
+        purpose=row["purpose"],
+        borrow_date=borrow_date,
+        due_date=due_date,
+        return_date=return_date,
+        status=row["status"],
+        memo=row["memo"],
+        items=items,
     )
 
 
@@ -238,6 +385,190 @@ def delete_inventory_item_api(item_id: int):
         raise HTTPException(status_code=404, detail="Item not found")
 
     log_inventory_action(action="soft_delete", entity="inventory_item", entity_id=item_id)
+    return {"success": True}
+
+
+@app.get("/api/issues", response_model=list[IssueRequest], response_model_by_alias=False)
+def list_issue_requests_api():
+    rows = list_issue_requests()
+    results = []
+    for row in rows:
+        items = [row_to_issue_item(item) for item in list_issue_items(row["id"])]
+        results.append(issue_request_row_to_model(row, items))
+    log_inventory_action(action="read", entity="issue_request", detail={"count": len(results), "mode": "list"})
+    return results
+
+
+@app.get("/api/issues/{request_id}", response_model=IssueRequest, response_model_by_alias=False)
+def get_issue_request_api(request_id: int):
+    row = get_issue_request(request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Issue request not found")
+    items = [row_to_issue_item(item) for item in list_issue_items(request_id)]
+    log_inventory_action(action="read", entity="issue_request", entity_id=request_id, detail={"mode": "single"})
+    return issue_request_row_to_model(row, items)
+
+
+@app.post("/api/issues", response_model=IssueRequest, response_model_by_alias=False)
+def create_issue_request_api(request: IssueRequestCreate):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items is required")
+    for item in request.items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    request_id = create_issue_request(issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    row = get_issue_request(request_id)
+    if row is None:
+        log_inventory_action(
+            action="create",
+            entity="issue_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Issue request created but cannot be loaded"},
+        )
+        raise HTTPException(status_code=500, detail="Issue request created but cannot be loaded")
+    items = [row_to_issue_item(item) for item in list_issue_items(request_id)]
+    log_inventory_action(action="create", entity="issue_request", entity_id=request_id)
+    return issue_request_row_to_model(row, items)
+
+
+@app.put("/api/issues/{request_id}", response_model=IssueRequest, response_model_by_alias=False)
+def update_issue_request_api(request_id: int, request: IssueRequestCreate):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items is required")
+    for item in request.items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    updated = update_issue_request(request_id, issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    if not updated:
+        log_inventory_action(
+            action="update",
+            entity="issue_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Issue request not found"},
+        )
+        raise HTTPException(status_code=404, detail="Issue request not found")
+    row = get_issue_request(request_id)
+    if row is None:
+        log_inventory_action(
+            action="update",
+            entity="issue_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Issue request not found after update"},
+        )
+        raise HTTPException(status_code=404, detail="Issue request not found")
+    items = [row_to_issue_item(item) for item in list_issue_items(request_id)]
+    log_inventory_action(action="update", entity="issue_request", entity_id=request_id)
+    return issue_request_row_to_model(row, items)
+
+
+@app.delete("/api/issues/{request_id}")
+def delete_issue_request_api(request_id: int):
+    deleted = delete_issue_request(request_id)
+    if not deleted:
+        log_inventory_action(
+            action="delete",
+            entity="issue_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Issue request not found"},
+        )
+        raise HTTPException(status_code=404, detail="Issue request not found")
+    log_inventory_action(action="delete", entity="issue_request", entity_id=request_id)
+    return {"success": True}
+
+
+@app.get("/api/borrows", response_model=list[BorrowRequest], response_model_by_alias=False)
+def list_borrow_requests_api():
+    rows = list_borrow_requests()
+    results = []
+    for row in rows:
+        items = [row_to_borrow_item(item) for item in list_borrow_items(row["id"])]
+        results.append(borrow_request_row_to_model(row, items))
+    log_inventory_action(action="read", entity="borrow_request", detail={"count": len(results), "mode": "list"})
+    return results
+
+
+@app.get("/api/borrows/{request_id}", response_model=BorrowRequest, response_model_by_alias=False)
+def get_borrow_request_api(request_id: int):
+    row = get_borrow_request(request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    log_inventory_action(action="read", entity="borrow_request", entity_id=request_id, detail={"mode": "single"})
+    return borrow_request_row_to_model(row, items)
+
+
+@app.post("/api/borrows", response_model=BorrowRequest, response_model_by_alias=False)
+def create_borrow_request_api(request: BorrowRequestCreate):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items is required")
+    for item in request.items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    request_id = create_borrow_request(borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    row = get_borrow_request(request_id)
+    if row is None:
+        log_inventory_action(
+            action="create",
+            entity="borrow_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Borrow request created but cannot be loaded"},
+        )
+        raise HTTPException(status_code=500, detail="Borrow request created but cannot be loaded")
+    items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    log_inventory_action(action="create", entity="borrow_request", entity_id=request_id)
+    return borrow_request_row_to_model(row, items)
+
+
+@app.put("/api/borrows/{request_id}", response_model=BorrowRequest, response_model_by_alias=False)
+def update_borrow_request_api(request_id: int, request: BorrowRequestCreate):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items is required")
+    for item in request.items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    updated = update_borrow_request(request_id, borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    if not updated:
+        log_inventory_action(
+            action="update",
+            entity="borrow_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Borrow request not found"},
+        )
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    row = get_borrow_request(request_id)
+    if row is None:
+        log_inventory_action(
+            action="update",
+            entity="borrow_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Borrow request not found after update"},
+        )
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    log_inventory_action(action="update", entity="borrow_request", entity_id=request_id)
+    return borrow_request_row_to_model(row, items)
+
+
+@app.delete("/api/borrows/{request_id}")
+def delete_borrow_request_api(request_id: int):
+    deleted = delete_borrow_request(request_id)
+    if not deleted:
+        log_inventory_action(
+            action="delete",
+            entity="borrow_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Borrow request not found"},
+        )
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    log_inventory_action(action="delete", entity="borrow_request", entity_id=request_id)
     return {"success": True}
 
 
