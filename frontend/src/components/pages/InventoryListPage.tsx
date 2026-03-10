@@ -13,6 +13,8 @@ const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const CHINESE_CHARACTER_REGEX = /[\u4e00-\u9fff]/
 const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
+const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
+const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
 
 export function InventoryListPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
@@ -244,12 +246,12 @@ export function InventoryListPage() {
 
         {!loading && !loadError ? (
           <>
-            <div className="overflow-x-auto">
-              <table className="mt-2 w-full border-collapse bg-white">
+            <div className="w-full overflow-x-auto">
+              <table className="mt-2 w-full table-fixed border-collapse bg-white">
                 <thead>
                   <tr>
                     {['#', '類別', '財產編號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '操作'].map((header) => (
-                      <th key={header} className="whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left">{header}</th>
+                      <th key={header} className={tableHeaderClass}>{header}</th>
                     ))}
                   </tr>
                 </thead>
@@ -263,19 +265,19 @@ export function InventoryListPage() {
                   ) : (
                     paginatedItems.map((item) => (
                       <tr key={item.id}>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">
+                        <td className={`${tableCellClass} whitespace-nowrap`}>
                           {item.id ? <a className="font-bold text-blue-700 no-underline hover:underline" href={`/inventory/edit/${item.id}`}>{item.id}</a> : '--'}
                         </td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{toKindLabel(item.kind)}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.property_number || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.name || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.model || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.specification || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.unit || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.purchase_date ?? '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.location || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.keeper || '--'}</td>
-                        <td className="whitespace-nowrap border border-slate-200 p-2 text-left">
+                        <td className={tableCellClass}>{toKindLabel(item.kind)}</td>
+                        <td className={tableCellClass}>{item.property_number || '--'}</td>
+                        <td className={tableCellClass}>{item.name || '--'}</td>
+                        <td className={tableCellClass}>{item.model || '--'}</td>
+                        <td className={tableCellClass}>{item.specification || '--'}</td>
+                        <td className={tableCellClass}>{item.unit || '--'}</td>
+                        <td className={`${tableCellClass} whitespace-nowrap`}>{item.purchase_date ?? '--'}</td>
+                        <td className={tableCellClass}>{item.location || '--'}</td>
+                        <td className={tableCellClass}>{item.keeper || '--'}</td>
+                        <td className={`${tableCellClass} whitespace-nowrap`}>
                           <button
                             type="button"
                             className="cursor-pointer rounded-[10px] border-none bg-red-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-red-300"
