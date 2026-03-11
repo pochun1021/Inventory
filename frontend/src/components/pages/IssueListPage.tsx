@@ -95,7 +95,11 @@ export function IssueListPage() {
                 ) : (
                   filteredRequests.map((request) => (
                     <tr key={request.id}>
-                      <td className={tableCellClass}>{request.id}</td>
+                      <td className={tableCellClass}>
+                        <a className="font-bold text-blue-700 no-underline" href={`/issues/${request.id}`}>
+                          {request.id}
+                        </a>
+                      </td>
                       <td className={tableCellClass}>{request.request_date || '--'}</td>
                       <td className={tableCellClass}>
                         <div className="font-bold">{request.requester || '--'}</div>

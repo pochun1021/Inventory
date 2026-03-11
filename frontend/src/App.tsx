@@ -18,6 +18,26 @@ function parseEditItemId(pathname: string): number | null {
   return Number.isInteger(parsedId) ? parsedId : null
 }
 
+function parseIssueRequestId(pathname: string): number | null {
+  const matchedParts = pathname.match(/^\/issues\/(\d+)$/)
+  if (!matchedParts) {
+    return null
+  }
+
+  const parsedId = Number(matchedParts[1])
+  return Number.isInteger(parsedId) ? parsedId : null
+}
+
+function parseBorrowRequestId(pathname: string): number | null {
+  const matchedParts = pathname.match(/^\/borrows\/(\d+)$/)
+  if (!matchedParts) {
+    return null
+  }
+
+  const parsedId = Number(matchedParts[1])
+  return Number.isInteger(parsedId) ? parsedId : null
+}
+
 function App() {
   const pathname = window.location.pathname
   const isUploadPage = pathname === '/upload'
@@ -29,6 +49,8 @@ function App() {
   const isInventoryPage = pathname === '/inventory'
   const isCreateInventoryPage = pathname === '/inventory/new'
   const editItemId = parseEditItemId(pathname)
+  const editIssueRequestId = parseIssueRequestId(pathname)
+  const editBorrowRequestId = parseBorrowRequestId(pathname)
 
   return (
     <main className="mx-auto grid min-h-screen w-full max-w-[980px] gap-5 px-4 pb-12 pt-8">
@@ -37,8 +59,10 @@ function App() {
       {isDashboardPage ? <DashboardPage /> : null}
       {isIssueListPage ? <IssueListPage /> : null}
       {isIssueCreatePage ? <IssuePage /> : null}
+      {editIssueRequestId ? <IssuePage requestId={editIssueRequestId} /> : null}
       {isBorrowListPage ? <BorrowListPage /> : null}
       {isBorrowCreatePage ? <BorrowPage /> : null}
+      {editBorrowRequestId ? <BorrowPage requestId={editBorrowRequestId} /> : null}
       {isInventoryPage ? <InventoryListPage /> : null}
       {isUploadPage ? <UploadPage /> : null}
       {isCreateInventoryPage ? <InventoryFormPage /> : null}
@@ -49,6 +73,8 @@ function App() {
       !isIssueCreatePage &&
       !isBorrowListPage &&
       !isBorrowCreatePage &&
+      !editIssueRequestId &&
+      !editBorrowRequestId &&
       !isUploadPage &&
       !isInventoryPage &&
       !isCreateInventoryPage &&

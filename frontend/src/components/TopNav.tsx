@@ -6,11 +6,13 @@ const navLinkClass = 'rounded-full bg-blue-100 px-3.5 py-2 text-sm font-bold tex
 const activeNavLinkClass = 'bg-blue-600 text-white'
 
 export function TopNav({ pathname }: TopNavProps) {
+  const isIssueEditPage = /^\/issues\/\d+$/.test(pathname)
+  const isBorrowEditPage = /^\/borrows\/\d+$/.test(pathname)
   const isUploadPage = pathname === '/upload'
   const isDashboardPage = pathname === '/'
-  const isIssueListPage = pathname === '/issues'
+  const isIssueListPage = pathname === '/issues' || isIssueEditPage
   const isIssueCreatePage = pathname === '/issues/new'
-  const isBorrowListPage = pathname === '/borrows'
+  const isBorrowListPage = pathname === '/borrows' || isBorrowEditPage
   const isBorrowCreatePage = pathname === '/borrows/new'
   const isInventoryPage = pathname === '/inventory'
   const isCreatePage = pathname === '/inventory/new'

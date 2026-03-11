@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
+import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
-import type { InventoryItem } from './types'
+import type { InventoryItem, IssueRequest } from './types'
 
 type IssueLine = {
   item_id: number | ''
@@ -11,11 +12,21 @@ type IssueLine = {
 const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 const emptyLine = (): IssueLine => ({ item_id: '', quantity: 1, note: '' })
+const toast = Swal.mixin({
+  toast: true,
+  position: 'top-end',
+  showConfirmButton: false,
+  timer: 2600,
+  timerProgressBar: true,
+})
 
-export function IssuePage() {
+type IssuePageProps = {
+  requestId?: number
+}
+
+export function IssuePage({ requestId }: IssuePageProps) {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
   const [loadError, setLoadError] = useState('')
-  const [actionMessage, setActionMessage] = useState('')
 
   const [requester, setRequester] = useState('')
   const [department, setDepartment] = useState('')
@@ -24,6 +35,7 @@ export function IssuePage() {
   const [memo, setMemo] = useState('')
   const [lines, setLines] = useState<IssueLine[]>([emptyLine()])
   const [submitting, setSubmitting] = useState(false)
+  const isEditing = Number.isInteger(requestId)
 
   useEffect(() => {
     const loadData = async () => {
@@ -42,6 +54,42 @@ export function IssuePage() {
 
     void loadData()
   }, [])
+
+  useEffect(() => {
+    if (!isEditing || !requestId) {
+      return
+    }
+
+    const loadRequest = async () => {
+      setLoadError('')
+      try {
+        const response = await fetch(apiUrl(`/api/issues/${requestId}`))
+        if (!response.ok) {
+          throw new Error('無法載入領用單')
+        }
+
+        const payload = (await response.json()) as IssueRequest
+        setRequester(payload.requester ?? '')
+        setDepartment(payload.department ?? '')
+        setPurpose(payload.purpose ?? '')
+        setRequestDate(payload.request_date ?? '')
+        setMemo(payload.memo ?? '')
+        setLines(
+          payload.items.length > 0
+            ? payload.items.map((item) => ({
+              item_id: item.item_id,
+              quantity: item.quantity,
+              note: item.note ?? '',
+            }))
+            : [emptyLine()]
+        )
+      } catch {
+        setLoadError('目前無法讀取領用單資料，請稍後重試。')
+      }
+    }
+
+    void loadRequest()
+  }, [isEditing, requestId])
 
   const itemOptions = useMemo(() => {
     return inventoryItems.map((item) => ({
@@ -71,18 +119,16 @@ export function IssuePage() {
 
   const handleSubmit = async () => {
     if (!validateLines()) {
-      setActionMessage('')
-      setLoadError('請確認每筆領用品項已選擇品項且數量大於 0。')
+      void toast.fire({ icon: 'error', title: '請確認每筆領用品項已選擇品項且數量大於 0。' })
       return
     }
 
     setSubmitting(true)
     setLoadError('')
-    setActionMessage('')
 
     try {
-      const response = await fetch(apiUrl('/api/issues'), {
-        method: 'POST',
+      const response = await fetch(apiUrl(isEditing && requestId ? `/api/issues/${requestId}` : '/api/issues'), {
+        method: isEditing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requester,
@@ -103,15 +149,19 @@ export function IssuePage() {
       }
 
       await response.json()
-      setRequester('')
-      setDepartment('')
-      setPurpose('')
-      setRequestDate('')
-      setMemo('')
-      setLines([emptyLine()])
-      setActionMessage('領用單已建立。')
+      if (isEditing) {
+        void toast.fire({ icon: 'success', title: '領用單已更新。' })
+      } else {
+        setRequester('')
+        setDepartment('')
+        setPurpose('')
+        setRequestDate('')
+        setMemo('')
+        setLines([emptyLine()])
+        void toast.fire({ icon: 'success', title: '領用單已建立。' })
+      }
     } catch {
-      setLoadError('建立領用單失敗，請稍後再試。')
+      void toast.fire({ icon: 'error', title: isEditing ? '更新領用單失敗，請稍後再試。' : '建立領用單失敗，請稍後再試。' })
     } finally {
       setSubmitting(false)
     }
@@ -125,7 +175,7 @@ export function IssuePage() {
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h2 className="mt-0 text-lg font-bold">新增領用單</h2>
+        <h2 className="mt-0 text-lg font-bold">{isEditing ? '編輯領用單' : '新增領用單'}</h2>
         <div className="mt-4 grid gap-3">
           <div className="grid gap-2 md:grid-cols-2">
             <label className="grid gap-2 font-bold">
@@ -209,10 +259,9 @@ export function IssuePage() {
               新增品項
             </button>
             <button className={buttonClass} type="button" onClick={handleSubmit} disabled={submitting}>
-              {submitting ? '建立中...' : '建立領用單'}
+              {submitting ? (isEditing ? '更新中...' : '建立中...') : (isEditing ? '更新領用單' : '建立領用單')}
             </button>
             {loadError ? <span className="text-sm text-red-600">{loadError}</span> : null}
-            {actionMessage ? <span className="text-sm text-emerald-600">{actionMessage}</span> : null}
           </div>
         </div>
       </section>
