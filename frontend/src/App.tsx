@@ -53,7 +53,7 @@ function App() {
   const editBorrowRequestId = parseBorrowRequestId(pathname)
 
   return (
-    <main className="mx-auto grid min-h-screen w-full max-w-[980px] gap-5 px-4 pb-12 pt-8">
+    <main className="mx-auto grid max-h-screen w-full max-w-[980px] gap-5 px-4 pb-12 pt-8">
       <TopNav pathname={pathname} />
 
       {isDashboardPage ? <DashboardPage /> : null}
