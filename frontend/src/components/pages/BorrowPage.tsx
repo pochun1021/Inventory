@@ -123,6 +123,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     return lines.every((line) => line.item_id !== '' && line.quantity > 0)
   }
 
+  const normalizeDate = (value: string) => (value ? value : null)
+
   const handleSubmit = async () => {
     if (!validateLines()) {
       void toast.fire({ icon: 'error', title: '請確認每筆借用品項已選擇品項且數量大於 0。' })
@@ -140,9 +142,9 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           borrower,
           department,
           purpose,
-          borrow_date: borrowDate,
-          due_date: dueDate,
-          return_date: returnDate,
+          borrow_date: normalizeDate(borrowDate),
+          due_date: normalizeDate(dueDate),
+          return_date: normalizeDate(returnDate),
           status,
           memo,
           items: lines.map((line) => ({
