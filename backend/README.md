@@ -4,7 +4,7 @@
 
 - 提供 Dashboard 與庫存 CRUD API
 - 提供 Excel（`.xlsx`）批次匯入 API
-- 管理 SQLite 資料庫與資料表初始化
+- 管理 XLSX 資料檔與資料表初始化
 - 記錄操作日誌（create/read/update/delete/import/purge）
 - 提供前端靜態資源（當 `frontend/dist` 存在時）
 
@@ -13,7 +13,8 @@
 - Python 3.14+
 - FastAPI
 - Uvicorn
-- SQLite
+- XLSX（openpyxl）
+- filelock（檔案鎖）
 - openpyxl（讀取 xlsx）
 - Google Sheets API（同步領用/借用清單，可選）
 
@@ -25,7 +26,7 @@ backend/
 ├─ db.py           # 資料表建立、查詢與 CRUD、操作日誌
 ├─ xlsx_import.py  # Excel 匯入與欄位驗證
 ├─ pyproject.toml  # Python 套件與相依設定
-└─ inventory.db    # SQLite 資料庫檔（執行後產生）
+└─ inventory.xlsx  # XLSX 資料檔（執行後產生）
 ```
 
 ## 安裝與啟動
@@ -92,9 +93,9 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 > `類別` 不從 Excel 欄位讀取，而是使用上傳時傳入的 `kind`。
 
-## 資料庫與資料保留策略
+## 資料儲存與資料保留策略
 
-- 啟動時會自動初始化資料表（若不存在則建立）。
+- 啟動時會自動初始化 XLSX 工作表（若不存在則建立）。
 - 刪除採 **軟刪除**（`deleted_at` 標記）。
 - 啟動時會清除超過 6 個月的軟刪除資料（永久刪除）。
 

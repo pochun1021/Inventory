@@ -25,6 +25,7 @@ def import_inventory_items_from_xlsx_content(
     item_create_model,
     to_db_payload,
     create_item,
+    create_items_bulk,
     selected_kind: str,
 ) -> dict[str, Any]:
     if not file_content:
@@ -49,6 +50,7 @@ def import_inventory_items_from_xlsx_content(
     total = 0
     created = 0
     errors: list[dict[str, Any]] = []
+    pending_items: list[dict[str, Any]] = []
 
     for row_index, row in enumerate(rows, start=2):
         if row is None:
@@ -73,12 +75,14 @@ def import_inventory_items_from_xlsx_content(
                 "保管人（單位）": str(row_data.get("保管人（單位）") or "").strip(),
             }
             item = item_create_model.model_validate(payload)
-            create_item(to_db_payload(item))
-            created += 1
+            pending_items.append(to_db_payload(item))
         except ValidationError as exc:
             errors.append({"row": row_index, "message": exc.errors()[0]["msg"]})
         except Exception as exc:  # noqa: BLE001
             errors.append({"row": row_index, "message": str(exc)})
+
+    if pending_items:
+        created = create_items_bulk(pending_items)
 
     return {
         "total": total,
@@ -96,4 +100,3 @@ def normalize_purchase_date(value):
     if isinstance(value, date):
         return value.isoformat()
     return str(value).strip()
-

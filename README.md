@@ -4,7 +4,7 @@
 
 - **前端**：React + TypeScript + Vite
 - **後端**：FastAPI
-- **資料庫**：SQLite（檔案：`backend/inventory.db`）
+- **資料儲存**：XLSX（檔案：`backend/inventory.xlsx`）
 
 ## 功能總覽
 
@@ -19,7 +19,7 @@
 
 ```text
 Inventory/
-├─ backend/                # FastAPI + SQLite
+├─ backend/                # FastAPI + XLSX
 │  ├─ main.py              # API 與前端靜態檔路由
 │  ├─ db.py                # 資料庫 schema 與 CRUD
 │  └─ xlsx_import.py       # Excel 匯入邏輯

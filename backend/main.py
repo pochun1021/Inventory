@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from db import (
     create_item,
+    create_items_bulk,
     create_issue_request,
     create_borrow_request,
     delete_item,
@@ -627,6 +628,7 @@ async def import_inventory_items_from_xlsx(
         selected_kind=selected_kind,
         to_db_payload=to_db_payload,
         create_item=create_item,
+        create_items_bulk=create_items_bulk,
     )
     log_inventory_action(
         action="import",
