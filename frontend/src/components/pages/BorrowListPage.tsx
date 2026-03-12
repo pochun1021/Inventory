@@ -5,6 +5,14 @@ import type { BorrowRequest } from './types'
 const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
 const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
+const statusClassMap: Record<string, string> = {
+  borrowed: 'bg-amber-100 text-amber-800',
+  returned: 'bg-emerald-100 text-emerald-700',
+  overdue: 'bg-red-100 text-red-700'
+}
+
+const getStatusBadgeClass = (status: string) =>
+  statusClassMap[status] ?? 'bg-slate-100 text-slate-700'
 
 export function BorrowListPage() {
   const [requests, setRequests] = useState<BorrowRequest[]>([])
@@ -129,7 +137,9 @@ export function BorrowListPage() {
                       <td className={tableCellClass}>
                         <div className="text-sm">預計：{request.due_date || '--'}</div>
                         <div className="text-sm">實際：{request.return_date || '--'}</div>
-                        <div className="mt-1 inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-700">
+                        <div
+                          className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${getStatusBadgeClass(request.status)}`}
+                        >
                           {request.status}
                         </div>
                       </td>

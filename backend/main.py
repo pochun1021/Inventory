@@ -191,21 +191,25 @@ def _format_date(value: date | None) -> str:
     return value.strftime("%Y/%m/%d") if value else ""
 
 
+def _coerce_str(value) -> str:
+    return value if isinstance(value, str) else "" if value is None else str(value)
+
+
 def row_to_item(row) -> InventoryItem:
     purchase_date_value = row["purchase_date"]
     parsed_date = _parse_purchase_date(purchase_date_value) if purchase_date_value else None
     return InventoryItem(
         id=row["id"],
-        kind=row["kind"],
-        specification=row["specification"],
-        property_number=row["property_number"],
-        name=row["name"],
-        model=row["model"],
-        unit=row["unit"],
+        kind=_coerce_str(row["kind"]),
+        specification=_coerce_str(row["specification"]),
+        property_number=_coerce_str(row["property_number"]),
+        name=_coerce_str(row["name"]),
+        model=_coerce_str(row["model"]),
+        unit=_coerce_str(row["unit"]),
         purchase_date=parsed_date,
-        location=row["location"],
-        memo=row["memo"],
-        keeper=row["keeper"],
+        location=_coerce_str(row["location"]),
+        memo=_coerce_str(row["memo"]),
+        keeper=_coerce_str(row["keeper"]),
     )
 
 
@@ -214,7 +218,7 @@ def row_to_issue_item(row) -> IssueItem:
         id=row["id"],
         item_id=row["item_id"],
         quantity=row["quantity"],
-        note=row["note"],
+        note=_coerce_str(row["note"]),
         item_name=row["item_name"],
         item_model=row["item_model"],
     )
@@ -225,7 +229,7 @@ def row_to_borrow_item(row) -> BorrowItem:
         id=row["id"],
         item_id=row["item_id"],
         quantity=row["quantity"],
-        note=row["note"],
+        note=_coerce_str(row["note"]),
         item_name=row["item_name"],
         item_model=row["item_model"],
     )
@@ -258,11 +262,11 @@ def issue_request_row_to_model(row, items: list[IssueItem]) -> IssueRequest:
     request_date = _parse_purchase_date(row["request_date"]) if row["request_date"] else None
     return IssueRequest(
         id=row["id"],
-        requester=row["requester"],
-        department=row["department"],
-        purpose=row["purpose"],
+        requester=_coerce_str(row["requester"]),
+        department=_coerce_str(row["department"]),
+        purpose=_coerce_str(row["purpose"]),
         request_date=request_date,
-        memo=row["memo"],
+        memo=_coerce_str(row["memo"]),
         items=items,
     )
 
@@ -273,14 +277,14 @@ def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
     return_date = _parse_purchase_date(row["return_date"]) if row["return_date"] else None
     return BorrowRequest(
         id=row["id"],
-        borrower=row["borrower"],
-        department=row["department"],
-        purpose=row["purpose"],
+        borrower=_coerce_str(row["borrower"]),
+        department=_coerce_str(row["department"]),
+        purpose=_coerce_str(row["purpose"]),
         borrow_date=borrow_date,
         due_date=due_date,
         return_date=return_date,
-        status=row["status"],
-        memo=row["memo"],
+        status=_coerce_str(row["status"]),
+        memo=_coerce_str(row["memo"]),
         items=items,
     )
 

@@ -78,6 +78,23 @@ SHEETS: dict[str, list[str]] = {
     ],
 }
 
+STRING_FIELDS: dict[str, list[str]] = {
+    "issue_requests": ["requester", "department", "purpose", "request_date", "memo", "created_at"],
+    "issue_items": ["note"],
+    "borrow_requests": [
+        "borrower",
+        "department",
+        "purpose",
+        "borrow_date",
+        "due_date",
+        "return_date",
+        "status",
+        "memo",
+        "created_at",
+    ],
+    "borrow_items": ["note"],
+}
+
 
 def _now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -159,10 +176,31 @@ def _ensure_sheet(wb: Workbook, sheet_name: str, headers: list[str]) -> bool:
     return changed
 
 
+def _normalize_string_fields(wb: Workbook, sheet_name: str, headers: list[str]) -> bool:
+    string_fields = STRING_FIELDS.get(sheet_name)
+    if not string_fields:
+        return False
+
+    ws = wb[sheet_name]
+    rows = _read_rows(ws, headers)
+    changed = False
+    for row in rows:
+        for field in string_fields:
+            if row.get(field) is None:
+                row[field] = ""
+                changed = True
+
+    if changed:
+        _write_rows(ws, headers, rows)
+    return changed
+
+
 def _ensure_workbook(wb: Workbook) -> bool:
     changed = False
     for sheet_name, headers in SHEETS.items():
         if _ensure_sheet(wb, sheet_name, headers):
+            changed = True
+        if _normalize_string_fields(wb, sheet_name, headers):
             changed = True
     return changed
 

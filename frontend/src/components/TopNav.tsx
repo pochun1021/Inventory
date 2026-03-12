@@ -22,6 +22,12 @@ export function TopNav({ pathname }: TopNavProps) {
       <a className={isDashboardPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/">
         Dashboard
       </a>
+      <a className={isInventoryPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory">
+        財產清單
+      </a>
+      <a className={isCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory/new">
+        新增庫存
+      </a>
       <a className={isIssueListPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/issues">
         領用清單
       </a>
@@ -33,12 +39,6 @@ export function TopNav({ pathname }: TopNavProps) {
       </a>
       <a className={isBorrowCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/borrows/new">
         新增借用
-      </a>
-      <a className={isInventoryPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory">
-        財產清單
-      </a>
-      <a className={isCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory/new">
-        新增庫存
       </a>
       <a className={isUploadPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/upload">
         上傳頁面
