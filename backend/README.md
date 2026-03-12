@@ -15,6 +15,7 @@
 - Uvicorn
 - SQLite
 - openpyxl（讀取 xlsx）
+- Google Sheets API（同步領用/借用清單，可選）
 
 ## 目錄說明
 
@@ -101,6 +102,24 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 - 後端程式會優先嘗試回傳 `frontend/dist/index.html`；若不存在則退回 `frontend/index.html`。
 - 若僅開發 API，可直接使用 `/docs` 驗證端點。
+
+## Google Sheets 同步（即時）
+
+每次「領用/借用」資料新增、更新、刪除後，會即時同步整張清單到 Google Sheets。此功能預設關閉，採 OAuth 用戶授權：
+
+- `client_secrets.json` 放在 `backend/` 目錄（或用環境變數指定路徑）
+- 第一次啟動會打開瀏覽器完成授權，token 會寫到 `backend/google_token.json`
+
+環境變數（選填）：
+
+- `GOOGLE_SHEETS_CLIENT_SECRETS_FILE`（預設 `backend/client_secrets.json`，也支援舊的 `GOOGLE_SHEETS_CREDENTIALS_FILE`）
+- `GOOGLE_SHEETS_TOKEN_FILE`（預設 `backend/google_token.json`）
+- `GOOGLE_SHEETS_SPREADSHEET_ID`（若未提供，會自動建立 Spreadsheet，並存到 `backend/google_sheets_state.json`）
+- `GOOGLE_SHEETS_SPREADSHEET_TITLE`（自動建立時的標題，預設 `Inventory Requests`）
+- `GOOGLE_SHEETS_ISSUE_SHEET_NAME`（預設 `IssueRequests`）
+- `GOOGLE_SHEETS_BORROW_SHEET_NAME`（預設 `BorrowRequests`）
+
+同步欄位會以 request + item 展開，每個 item 一列。若清單為空會保留標題列。
 
 ## 常見問題
 

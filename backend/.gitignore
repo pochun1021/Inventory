@@ -11,3 +11,8 @@ wheels/
 
 # Sqlite
 *.db
+
+# Google Sheets OAuth
+client_secret.json
+google_token.json
+google_sheets_state.json

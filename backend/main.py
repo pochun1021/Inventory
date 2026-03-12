@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -31,6 +31,7 @@ from db import (
     update_borrow_request,
 )
 from xlsx_import import import_inventory_items_from_xlsx_content
+from google_sheets import ensure_google_oauth, is_google_sheets_configured, sync_requests_to_google_sheets
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -283,6 +284,19 @@ def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
     )
 
 
+def _sync_requests_safe() -> None:
+    try:
+        sync_requests_to_google_sheets()
+        log_inventory_action(action="sync", entity="google_sheets", detail={"target": "requests"})
+    except Exception as exc:  # pragma: no cover - external dependency
+        log_inventory_action(
+            action="sync",
+            entity="google_sheets",
+            status="failed",
+            detail={"target": "requests", "error": str(exc)},
+        )
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -293,6 +307,16 @@ def on_startup() -> None:
             entity="inventory_item",
             detail={"deleted_count": purged_count, "policy": "soft-deleted over 6 months"},
         )
+    if is_google_sheets_configured():
+        try:
+            ensure_google_oauth()
+        except Exception as exc:  # pragma: no cover - external dependency
+            log_inventory_action(
+                action="auth",
+                entity="google_sheets",
+                status="failed",
+                detail={"error": str(exc)},
+            )
 
 
 @app.get("/api/data")
@@ -410,7 +434,7 @@ def get_issue_request_api(request_id: int):
 
 
 @app.post("/api/issues", response_model=IssueRequest, response_model_by_alias=False)
-def create_issue_request_api(request: IssueRequestCreate):
+def create_issue_request_api(request: IssueRequestCreate, background_tasks: BackgroundTasks):
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
@@ -429,11 +453,13 @@ def create_issue_request_api(request: IssueRequestCreate):
         raise HTTPException(status_code=500, detail="Issue request created but cannot be loaded")
     items = [row_to_issue_item(item) for item in list_issue_items(request_id)]
     log_inventory_action(action="create", entity="issue_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
     return issue_request_row_to_model(row, items)
 
 
 @app.put("/api/issues/{request_id}", response_model=IssueRequest, response_model_by_alias=False)
-def update_issue_request_api(request_id: int, request: IssueRequestCreate):
+def update_issue_request_api(request_id: int, request: IssueRequestCreate, background_tasks: BackgroundTasks):
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
@@ -461,11 +487,13 @@ def update_issue_request_api(request_id: int, request: IssueRequestCreate):
         raise HTTPException(status_code=404, detail="Issue request not found")
     items = [row_to_issue_item(item) for item in list_issue_items(request_id)]
     log_inventory_action(action="update", entity="issue_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
     return issue_request_row_to_model(row, items)
 
 
 @app.delete("/api/issues/{request_id}")
-def delete_issue_request_api(request_id: int):
+def delete_issue_request_api(request_id: int, background_tasks: BackgroundTasks):
     deleted = delete_issue_request(request_id)
     if not deleted:
         log_inventory_action(
@@ -477,6 +505,8 @@ def delete_issue_request_api(request_id: int):
         )
         raise HTTPException(status_code=404, detail="Issue request not found")
     log_inventory_action(action="delete", entity="issue_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
     return {"success": True}
 
 
@@ -502,7 +532,7 @@ def get_borrow_request_api(request_id: int):
 
 
 @app.post("/api/borrows", response_model=BorrowRequest, response_model_by_alias=False)
-def create_borrow_request_api(request: BorrowRequestCreate):
+def create_borrow_request_api(request: BorrowRequestCreate, background_tasks: BackgroundTasks):
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
@@ -521,11 +551,13 @@ def create_borrow_request_api(request: BorrowRequestCreate):
         raise HTTPException(status_code=500, detail="Borrow request created but cannot be loaded")
     items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
     log_inventory_action(action="create", entity="borrow_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
     return borrow_request_row_to_model(row, items)
 
 
 @app.put("/api/borrows/{request_id}", response_model=BorrowRequest, response_model_by_alias=False)
-def update_borrow_request_api(request_id: int, request: BorrowRequestCreate):
+def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, background_tasks: BackgroundTasks):
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
@@ -553,11 +585,13 @@ def update_borrow_request_api(request_id: int, request: BorrowRequestCreate):
         raise HTTPException(status_code=404, detail="Borrow request not found")
     items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
     log_inventory_action(action="update", entity="borrow_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
     return borrow_request_row_to_model(row, items)
 
 
 @app.delete("/api/borrows/{request_id}")
-def delete_borrow_request_api(request_id: int):
+def delete_borrow_request_api(request_id: int, background_tasks: BackgroundTasks):
     deleted = delete_borrow_request(request_id)
     if not deleted:
         log_inventory_action(
@@ -569,6 +603,8 @@ def delete_borrow_request_api(request_id: int):
         )
         raise HTTPException(status_code=404, detail="Borrow request not found")
     log_inventory_action(action="delete", entity="borrow_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
     return {"success": True}
 
 
