@@ -95,6 +95,50 @@ SHEETS: dict[str, list[str]] = {
         "quantity",
         "note",
     ],
+    "pos_orders": [
+        "id",
+        "order_no",
+        "order_type",
+        "customer_name",
+        "operator_name",
+        "purpose",
+        "request_ref_type",
+        "request_ref_id",
+        "subtotal",
+        "discount_total",
+        "total",
+        "note",
+        "created_at",
+    ],
+    "pos_order_items": [
+        "id",
+        "order_id",
+        "item_id",
+        "item_name",
+        "item_model",
+        "quantity",
+        "unit_price",
+        "discount",
+        "line_total",
+        "note",
+    ],
+    "stock_balances": [
+        "item_id",
+        "quantity",
+        "updated_at",
+    ],
+    "stock_movements": [
+        "id",
+        "order_id",
+        "order_no",
+        "item_id",
+        "delta",
+        "balance_after",
+        "reason",
+        "related_type",
+        "related_id",
+        "created_at",
+    ],
 }
 
 STRING_FIELDS: dict[str, list[str]] = {
@@ -122,6 +166,18 @@ STRING_FIELDS: dict[str, list[str]] = {
         "created_at",
     ],
     "donation_items": ["note"],
+    "pos_orders": [
+        "order_no",
+        "order_type",
+        "customer_name",
+        "operator_name",
+        "purpose",
+        "request_ref_type",
+        "note",
+        "created_at",
+    ],
+    "pos_order_items": ["item_name", "item_model", "note"],
+    "stock_movements": ["order_no", "reason", "related_type", "created_at"],
 }
 
 
@@ -1097,3 +1153,443 @@ def delete_borrow_request(request_id: int) -> bool:
         _write_rows(item_ws, SHEETS["borrow_items"], remaining_items)
         wb.save(DB_PATH)
         return True
+
+
+POS_ORDER_TYPES_DECREASE_STOCK = {"sale", "issue", "borrow"}
+POS_ORDER_TYPES_INCREASE_STOCK = {"issue_restock", "borrow_return"}
+POS_ORDER_TYPES = POS_ORDER_TYPES_DECREASE_STOCK | POS_ORDER_TYPES_INCREASE_STOCK
+
+
+def _make_pos_order_no(order_rows: list[dict[str, Any]]) -> str:
+    date_sn = _date_sn()
+    prefix = f"POS-{date_sn}-"
+    max_seq = 0
+    for row in order_rows:
+        order_no = str(row.get("order_no", ""))
+        if not order_no.startswith(prefix):
+            continue
+        seq = _to_int(order_no.replace(prefix, ""), default=0)
+        if seq > max_seq:
+            max_seq = seq
+    return f"{prefix}{max_seq + 1:04d}"
+
+
+def _active_inventory_map(inventory_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {
+        _to_int(row.get("id")): row
+        for row in inventory_rows
+        if _is_blank(row.get("deleted_at"))
+    }
+
+
+def _stock_balance_map(stock_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {
+        _to_int(row.get("item_id")): row
+        for row in stock_rows
+        if not _is_blank(row.get("item_id"))
+    }
+
+
+def _apply_stock_changes_locked(
+    *,
+    inventory_rows: list[dict[str, Any]],
+    stock_rows: list[dict[str, Any]],
+    stock_changes: dict[int, int],
+) -> dict[int, int]:
+    inventory_map = _active_inventory_map(inventory_rows)
+    stock_map = _stock_balance_map(stock_rows)
+
+    for item_id, delta in stock_changes.items():
+        if item_id not in inventory_map:
+            raise ValueError(f"item_id {item_id} not found")
+        current_qty = _to_int(stock_map.get(item_id, {}).get("quantity"), default=0)
+        next_qty = current_qty + delta
+        if next_qty < 0:
+            raise ValueError(f"item_id {item_id} stock is insufficient")
+
+    now = _now_str()
+    balances_after: dict[int, int] = {}
+    for item_id, delta in stock_changes.items():
+        current_qty = _to_int(stock_map.get(item_id, {}).get("quantity"), default=0)
+        next_qty = current_qty + delta
+        row = stock_map.get(item_id)
+        if row is None:
+            row = {"item_id": item_id, "quantity": next_qty, "updated_at": now}
+            stock_rows.append(row)
+            stock_map[item_id] = row
+        else:
+            row["quantity"] = next_qty
+            row["updated_at"] = now
+        balances_after[item_id] = next_qty
+
+    return balances_after
+
+
+def _create_issue_request_locked(
+    *,
+    request_rows: list[dict[str, Any]],
+    item_rows: list[dict[str, Any]],
+    request_data: dict[str, Any],
+    items: list[dict[str, Any]],
+) -> int:
+    request_id = _next_id(request_rows)
+    request_rows.append(
+        {
+            "id": request_id,
+            "requester": request_data["requester"],
+            "department": request_data["department"],
+            "purpose": request_data["purpose"],
+            "request_date": request_data["request_date"],
+            "memo": request_data["memo"],
+            "created_at": _now_str(),
+        }
+    )
+    next_item_id = _next_id(item_rows)
+    for index, item in enumerate(items):
+        item_rows.append(
+            {
+                "id": next_item_id + index,
+                "request_id": request_id,
+                "item_id": item["item_id"],
+                "quantity": item["quantity"],
+                "note": item.get("note", ""),
+            }
+        )
+    return request_id
+
+
+def _create_borrow_request_locked(
+    *,
+    request_rows: list[dict[str, Any]],
+    item_rows: list[dict[str, Any]],
+    request_data: dict[str, Any],
+    items: list[dict[str, Any]],
+) -> int:
+    request_id = _next_id(request_rows)
+    request_rows.append(
+        {
+            "id": request_id,
+            "borrower": request_data["borrower"],
+            "department": request_data["department"],
+            "purpose": request_data["purpose"],
+            "borrow_date": request_data["borrow_date"],
+            "due_date": request_data["due_date"],
+            "return_date": request_data["return_date"],
+            "status": request_data["status"],
+            "memo": request_data["memo"],
+            "created_at": _now_str(),
+        }
+    )
+    next_item_id = _next_id(item_rows)
+    for index, item in enumerate(items):
+        item_rows.append(
+            {
+                "id": next_item_id + index,
+                "request_id": request_id,
+                "item_id": item["item_id"],
+                "quantity": item["quantity"],
+                "note": item.get("note", ""),
+            }
+        )
+    return request_id
+
+
+def _mark_borrow_request_returned_locked(
+    *,
+    request_rows: list[dict[str, Any]],
+    request_id: int,
+) -> None:
+    for row in request_rows:
+        if _to_int(row.get("id")) != request_id:
+            continue
+        row["status"] = "returned"
+        row["return_date"] = datetime.now().strftime("%Y/%m/%d")
+        return
+    raise ValueError(f"borrow_request_id {request_id} not found")
+
+
+def create_pos_order(order_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
+    order_type = str(order_data.get("order_type", "")).strip()
+    if order_type not in POS_ORDER_TYPES:
+        raise ValueError("invalid order_type")
+    if not items:
+        raise ValueError("items is required")
+
+    stock_changes: dict[int, int] = {}
+    subtotal = 0.0
+    discount_total = 0.0
+    normalized_items: list[dict[str, Any]] = []
+    for item in items:
+        item_id = _to_int(item.get("item_id"))
+        quantity = _to_int(item.get("quantity"))
+        if item_id <= 0:
+            raise ValueError("item_id is required")
+        if quantity <= 0:
+            raise ValueError("quantity must be greater than 0")
+        unit_price = float(item.get("unit_price", 0))
+        discount = float(item.get("discount", 0))
+        if unit_price < 0:
+            raise ValueError("unit_price cannot be negative")
+        if discount < 0:
+            raise ValueError("discount cannot be negative")
+        line_amount = unit_price * quantity
+        if discount > line_amount:
+            raise ValueError("discount cannot exceed line amount")
+        line_total = line_amount - discount
+        subtotal += line_amount
+        discount_total += discount
+        delta = -quantity if order_type in POS_ORDER_TYPES_DECREASE_STOCK else quantity
+        stock_changes[item_id] = stock_changes.get(item_id, 0) + delta
+        normalized_items.append(
+            {
+                "item_id": item_id,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "discount": discount,
+                "line_total": line_total,
+                "note": item.get("note", ""),
+            }
+        )
+
+    with _locked_workbook() as wb:
+        pos_orders_ws = wb["pos_orders"]
+        pos_order_items_ws = wb["pos_order_items"]
+        stock_balances_ws = wb["stock_balances"]
+        stock_movements_ws = wb["stock_movements"]
+        inventory_ws = wb["inventory_items"]
+        issue_requests_ws = wb["issue_requests"]
+        issue_items_ws = wb["issue_items"]
+        borrow_requests_ws = wb["borrow_requests"]
+        borrow_items_ws = wb["borrow_items"]
+
+        pos_orders = _read_rows(pos_orders_ws)
+        pos_order_items = _read_rows(pos_order_items_ws)
+        stock_balances = _read_rows(stock_balances_ws)
+        stock_movements = _read_rows(stock_movements_ws)
+        inventory_rows = _read_rows(inventory_ws)
+        issue_request_rows = _read_rows(issue_requests_ws)
+        issue_item_rows = _read_rows(issue_items_ws)
+        borrow_request_rows = _read_rows(borrow_requests_ws)
+        borrow_item_rows = _read_rows(borrow_items_ws)
+        inventory_map = _active_inventory_map(inventory_rows)
+
+        for line in normalized_items:
+            if line["item_id"] not in inventory_map:
+                raise ValueError(f"item_id {line['item_id']} not found")
+            details = inventory_map[line["item_id"]]
+            line["item_name"] = details.get("name", "")
+            line["item_model"] = details.get("model", "")
+
+        balances_after = _apply_stock_changes_locked(
+            inventory_rows=inventory_rows,
+            stock_rows=stock_balances,
+            stock_changes=stock_changes,
+        )
+
+        request_ref_type = ""
+        request_ref_id: int | None = None
+        today = datetime.now().strftime("%Y/%m/%d")
+        if order_type == "issue":
+            request_ref_type = "issue_request"
+            request_ref_id = _create_issue_request_locked(
+                request_rows=issue_request_rows,
+                item_rows=issue_item_rows,
+                request_data={
+                    "requester": str(order_data.get("customer_name", "")).strip() or "POS",
+                    "department": str(order_data.get("department", "")).strip(),
+                    "purpose": str(order_data.get("purpose", "")).strip() or "POS 領用",
+                    "request_date": today,
+                    "memo": str(order_data.get("note", "")).strip(),
+                },
+                items=normalized_items,
+            )
+        elif order_type == "borrow":
+            request_ref_type = "borrow_request"
+            request_ref_id = _create_borrow_request_locked(
+                request_rows=borrow_request_rows,
+                item_rows=borrow_item_rows,
+                request_data={
+                    "borrower": str(order_data.get("customer_name", "")).strip() or "POS",
+                    "department": str(order_data.get("department", "")).strip(),
+                    "purpose": str(order_data.get("purpose", "")).strip() or "POS 借用",
+                    "borrow_date": today,
+                    "due_date": str(order_data.get("due_date", "")).strip(),
+                    "return_date": "",
+                    "status": "borrowed",
+                    "memo": str(order_data.get("note", "")).strip(),
+                },
+                items=normalized_items,
+            )
+        elif order_type == "borrow_return":
+            ref_id = _to_int(order_data.get("borrow_request_id"))
+            if ref_id > 0:
+                _mark_borrow_request_returned_locked(request_rows=borrow_request_rows, request_id=ref_id)
+                request_ref_type = "borrow_request"
+                request_ref_id = ref_id
+            else:
+                request_ref_type = "borrow_return"
+        elif order_type == "issue_restock":
+            request_ref_type = "issue_restock"
+
+        order_id = _next_id(pos_orders)
+        order_no = _make_pos_order_no(pos_orders)
+        total = subtotal - discount_total
+        pos_orders.append(
+            {
+                "id": order_id,
+                "order_no": order_no,
+                "order_type": order_type,
+                "customer_name": str(order_data.get("customer_name", "")).strip(),
+                "operator_name": str(order_data.get("operator_name", "")).strip(),
+                "purpose": str(order_data.get("purpose", "")).strip(),
+                "request_ref_type": request_ref_type,
+                "request_ref_id": request_ref_id if request_ref_id is not None else "",
+                "subtotal": round(subtotal, 2),
+                "discount_total": round(discount_total, 2),
+                "total": round(total, 2),
+                "note": str(order_data.get("note", "")).strip(),
+                "created_at": _now_str(),
+            }
+        )
+
+        next_item_id = _next_id(pos_order_items)
+        next_movement_id = _next_id(stock_movements)
+        for index, line in enumerate(normalized_items):
+            pos_order_items.append(
+                {
+                    "id": next_item_id + index,
+                    "order_id": order_id,
+                    "item_id": line["item_id"],
+                    "item_name": line["item_name"],
+                    "item_model": line["item_model"],
+                    "quantity": line["quantity"],
+                    "unit_price": line["unit_price"],
+                    "discount": round(line["discount"], 2),
+                    "line_total": round(line["line_total"], 2),
+                    "note": line["note"],
+                }
+            )
+            delta = -line["quantity"] if order_type in POS_ORDER_TYPES_DECREASE_STOCK else line["quantity"]
+            stock_movements.append(
+                {
+                    "id": next_movement_id + index,
+                    "order_id": order_id,
+                    "order_no": order_no,
+                    "item_id": line["item_id"],
+                    "delta": delta,
+                    "balance_after": balances_after[line["item_id"]],
+                    "reason": order_type,
+                    "related_type": request_ref_type,
+                    "related_id": request_ref_id if request_ref_id is not None else "",
+                    "created_at": _now_str(),
+                }
+            )
+
+        _write_rows(pos_orders_ws, SHEETS["pos_orders"], pos_orders)
+        _write_rows(pos_order_items_ws, SHEETS["pos_order_items"], pos_order_items)
+        _write_rows(stock_balances_ws, SHEETS["stock_balances"], stock_balances)
+        _write_rows(stock_movements_ws, SHEETS["stock_movements"], stock_movements)
+        _write_rows(issue_requests_ws, SHEETS["issue_requests"], issue_request_rows)
+        _write_rows(issue_items_ws, SHEETS["issue_items"], issue_item_rows)
+        _write_rows(borrow_requests_ws, SHEETS["borrow_requests"], borrow_request_rows)
+        _write_rows(borrow_items_ws, SHEETS["borrow_items"], borrow_item_rows)
+        wb.save(DB_PATH)
+        return order_id
+
+
+def list_pos_orders() -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["pos_orders"])
+    return sorted(rows, key=lambda row: _to_int(row.get("id")), reverse=True)
+
+
+def get_pos_order(order_id: int) -> dict[str, Any] | None:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["pos_orders"])
+    for row in rows:
+        if _to_int(row.get("id")) == order_id:
+            return row
+    return None
+
+
+def list_pos_order_items(order_id: int) -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["pos_order_items"])
+    results = [row for row in rows if _to_int(row.get("order_id")) == order_id]
+    return sorted(results, key=lambda row: _to_int(row.get("id")))
+
+
+def list_stock_balances() -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        inventory_rows = _read_rows(wb["inventory_items"])
+        stock_rows = _read_rows(wb["stock_balances"])
+
+    stock_map = _stock_balance_map(stock_rows)
+    results = []
+    for item_id, item in _active_inventory_map(inventory_rows).items():
+        quantity = _to_int(stock_map.get(item_id, {}).get("quantity"), default=0)
+        results.append(
+            {
+                "item_id": item_id,
+                "item_name": item.get("name", ""),
+                "item_model": item.get("model", ""),
+                "quantity": quantity,
+            }
+        )
+    return sorted(results, key=lambda row: _to_int(row.get("item_id")))
+
+
+def set_stock_quantity(item_id: int, quantity: int) -> bool:
+    if quantity < 0:
+        raise ValueError("quantity cannot be negative")
+
+    with _locked_workbook() as wb:
+        inventory_rows = _read_rows(wb["inventory_items"])
+        stock_ws = wb["stock_balances"]
+        stock_rows = _read_rows(stock_ws)
+        inventory_map = _active_inventory_map(inventory_rows)
+        if item_id not in inventory_map:
+            return False
+
+        stock_map = _stock_balance_map(stock_rows)
+        row = stock_map.get(item_id)
+        now = _now_str()
+        if row is None:
+            stock_rows.append({"item_id": item_id, "quantity": quantity, "updated_at": now})
+        else:
+            row["quantity"] = quantity
+            row["updated_at"] = now
+        _write_rows(stock_ws, SHEETS["stock_balances"], stock_rows)
+        wb.save(DB_PATH)
+        return True
+
+
+def list_stock_movements(limit: int = 200) -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        movement_rows = _read_rows(wb["stock_movements"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+
+    inventory_map = _active_inventory_map(inventory_rows)
+    results = []
+    for row in movement_rows:
+        item_id = _to_int(row.get("item_id"))
+        item = inventory_map.get(item_id, {})
+        results.append(
+            {
+                "id": row.get("id"),
+                "order_id": row.get("order_id"),
+                "order_no": row.get("order_no"),
+                "item_id": item_id,
+                "item_name": item.get("name", ""),
+                "item_model": item.get("model", ""),
+                "delta": _to_int(row.get("delta")),
+                "balance_after": _to_int(row.get("balance_after")),
+                "reason": row.get("reason", ""),
+                "related_type": row.get("related_type", ""),
+                "related_id": _to_int(row.get("related_id")),
+                "created_at": row.get("created_at", ""),
+            }
+        )
+    sorted_rows = sorted(results, key=lambda row: _to_int(row.get("id")), reverse=True)
+    safe_limit = max(1, min(limit, 1000))
+    return sorted_rows[:safe_limit]
