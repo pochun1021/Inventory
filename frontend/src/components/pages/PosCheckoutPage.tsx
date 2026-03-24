@@ -5,6 +5,7 @@ import type { InventoryItem, PosOrder, PosStockBalance } from './types'
 
 type CheckoutLine = {
   item_id: number | ''
+  searchText: string
   quantity: number
   unit_price: number
   discount: number
@@ -16,7 +17,7 @@ type StockLookup = Record<number, number>
 const fieldClass = 'min-w-0 w-full rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 const removeButtonClass = 'cursor-pointer rounded-[10px] border-none bg-red-600 px-3 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-red-300'
-const emptyLine = (): CheckoutLine => ({ item_id: '', quantity: 1, unit_price: 0, discount: 0, note: '' })
+const emptyLine = (): CheckoutLine => ({ item_id: '', searchText: '', quantity: 1, unit_price: 0, discount: 0, note: '' })
 const ORDER_TYPE_OPTIONS = [
   { value: 'sale', label: '一般銷售（扣庫）' },
   { value: 'issue', label: '領用（扣庫）' },
@@ -152,6 +153,34 @@ export function PosCheckoutPage() {
 
   const handleRemoveLine = (index: number) => {
     setLines((previousLines) => previousLines.filter((_, currentIndex) => currentIndex !== index))
+  }
+
+  const getFilteredOptionsForLine = (line: CheckoutLine) => {
+    const keyword = line.searchText.trim().toLowerCase()
+    const nextOptions = itemOptions.filter((option) => {
+      if (!keyword) {
+        return true
+      }
+
+      const item = itemOptionMap[option.value]
+      if (!item) {
+        return false
+      }
+
+      const name = item.name?.toLowerCase() || ''
+      const model = item.model?.toLowerCase() || ''
+      const propertyNumber = item.property_number?.toLowerCase() || ''
+      return name.includes(keyword) || model.includes(keyword) || propertyNumber.includes(keyword)
+    })
+
+    if (typeof line.item_id === 'number' && !nextOptions.some((option) => option.value === line.item_id)) {
+      const selectedOption = itemOptions.find((option) => option.value === line.item_id)
+      if (selectedOption) {
+        nextOptions.unshift(selectedOption)
+      }
+    }
+
+    return nextOptions
   }
 
   const validatePayload = (): boolean => {
@@ -310,18 +339,25 @@ export function PosCheckoutPage() {
             {computedLines.map((line, index) => {
               const selectedItem = typeof line.item_id === 'number' ? itemOptionMap[line.item_id] : null
               const stockWarning = DECREASE_ORDER_TYPES.has(orderType) && typeof line.item_id === 'number' && line.quantity > line.stockQuantity
+              const filteredOptions = getFilteredOptionsForLine(line)
 
               return (
                 <div key={`pos-line-${index}`} className="grid gap-2 rounded-xl border border-slate-200 p-4 md:grid-cols-[2fr,1fr,1fr,1fr,2fr]">
                   <label className="grid gap-2 font-bold md:col-span-2">
                     品項
+                    <input
+                      className={fieldClass}
+                      value={line.searchText}
+                      onChange={(event) => handleLineChange(index, { searchText: event.target.value })}
+                      placeholder="輸入名稱、型號或財產編號"
+                    />
                     <select
                       className={fieldClass}
                       value={line.item_id}
                       onChange={(event) => handleLineChange(index, { item_id: event.target.value ? Number(event.target.value) : '' })}
                     >
                       <option value="">請選擇品項</option>
-                      {itemOptions.map((option) => (
+                      {filteredOptions.map((option) => (
                         <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>

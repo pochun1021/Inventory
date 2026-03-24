@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import type { InventoryItem } from './types'
@@ -15,6 +15,21 @@ const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
 const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
+const SCAN_MAX_KEY_INTERVAL_MS = 45
+const SCAN_MIN_LENGTH = 4
+
+const toast = Swal.mixin({
+  toast: true,
+  position: 'top-end',
+  showConfirmButton: false,
+  timer: 2600,
+  timerProgressBar: true,
+})
+
+type ScanBuffer = {
+  value: string
+  lastTs: number
+}
 
 export function InventoryListPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
@@ -29,6 +44,10 @@ export function InventoryListPage() {
   const [customPageSize, setCustomPageSize] = useState('10')
   const [currentPage, setCurrentPage] = useState(1)
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const scanBufferRef = useRef<ScanBuffer>({ value: '', lastTs: 0 })
+  const lastInputSourceRef = useRef<'manual' | 'scan'>('manual')
+  const lastNotifiedScanKeywordRef = useRef('')
 
   useEffect(() => {
     const loadItems = async () => {
@@ -50,6 +69,10 @@ export function InventoryListPage() {
 
     void loadItems()
   }, [showDonated])
+
+  useEffect(() => {
+    searchInputRef.current?.focus()
+  }, [])
 
   const toKindLabel = (kind: string) => {
     if (!kind) {
@@ -107,6 +130,45 @@ export function InventoryListPage() {
       setCurrentPage(totalPages)
     }
   }, [currentPage, totalPages])
+
+  useEffect(() => {
+    if (lastInputSourceRef.current !== 'scan') {
+      return
+    }
+    const normalizedKeyword = keyword.trim()
+    if (!normalizedKeyword || filteredItems.length > 0 || lastNotifiedScanKeywordRef.current === normalizedKeyword) {
+      return
+    }
+    lastNotifiedScanKeywordRef.current = normalizedKeyword
+    void toast.fire({ icon: 'error', title: '查無此財產編號。' })
+  }, [filteredItems.length, keyword])
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const now = Date.now()
+    const buffer = scanBufferRef.current
+    const key = event.key
+
+    if (key === 'Enter') {
+      if (buffer.value.length >= SCAN_MIN_LENGTH) {
+        lastInputSourceRef.current = 'scan'
+      }
+      buffer.value = ''
+      buffer.lastTs = 0
+      return
+    }
+
+    if (key.length !== 1) {
+      return
+    }
+
+    lastInputSourceRef.current = 'manual'
+    if (buffer.lastTs > 0 && now - buffer.lastTs > SCAN_MAX_KEY_INTERVAL_MS) {
+      buffer.value = key
+    } else {
+      buffer.value += key
+    }
+    buffer.lastTs = now
+  }
 
   const handlePresetPageSize = (size: number) => {
     setPageSize(size)
@@ -166,7 +228,7 @@ export function InventoryListPage() {
     <>
       <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <h1 className="mt-0">財產清單</h1>
-        <p className="mt-2 text-slate-500">可依財產編號、品名、型號、放置地點或保管人快速查詢。</p>
+        <p className="mt-2 text-slate-500">可依財產編號、品名、型號、放置地點或保管人快速查詢（支援掃描槍）。</p>
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
@@ -177,10 +239,17 @@ export function InventoryListPage() {
           <input
             className={fieldClass}
             id="search-input"
+            ref={searchInputRef}
             type="search"
-            placeholder="輸入財產編號、品名、型號..."
+            placeholder="可輸入/掃描財產編號、品名、型號..."
             value={keyword}
-            onChange={(event) => setKeyword(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            onChange={(event) => {
+              if (lastInputSourceRef.current !== 'scan') {
+                lastInputSourceRef.current = 'manual'
+              }
+              setKeyword(event.target.value)
+            }}
           />
 
           <label htmlFor="kind-filter" className="font-bold">

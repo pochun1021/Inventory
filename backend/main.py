@@ -223,6 +223,7 @@ class PosStockBalance(BaseModel):
     item_id: int
     item_name: str = ""
     item_model: str = ""
+    property_number: str = ""
     quantity: int = 0
 
 
@@ -461,6 +462,7 @@ def row_to_pos_stock_balance(row) -> PosStockBalance:
         item_id=int(row.get("item_id", 0)),
         item_name=_coerce_str(row.get("item_name")),
         item_model=_coerce_str(row.get("item_model")),
+        property_number=_coerce_str(row.get("property_number")),
         quantity=int(row.get("quantity", 0)),
     )
 

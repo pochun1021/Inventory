@@ -1539,6 +1539,7 @@ def list_stock_balances() -> list[dict[str, Any]]:
                 "item_id": item_id,
                 "item_name": _to_str(item.get("name")),
                 "item_model": _to_str(item.get("model")),
+                "property_number": _to_str(item.get("property_number")),
                 "quantity": quantity,
             }
         )

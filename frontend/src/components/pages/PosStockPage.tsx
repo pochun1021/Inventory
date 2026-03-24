@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import type { PosStockBalance, PosStockMovement } from './types'
@@ -7,9 +7,15 @@ const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
 const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
+const SCAN_MAX_KEY_INTERVAL_MS = 45
+const SCAN_MIN_LENGTH = 4
 
 type EditingMap = Record<number, string>
 type SavingMap = Record<number, boolean>
+type ScanBuffer = {
+  value: string
+  lastTs: number
+}
 
 const toast = Swal.mixin({
   toast: true,
@@ -40,6 +46,10 @@ export function PosStockPage() {
   const [keyword, setKeyword] = useState('')
   const [editingValues, setEditingValues] = useState<EditingMap>({})
   const [savingMap, setSavingMap] = useState<SavingMap>({})
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const scanBufferRef = useRef<ScanBuffer>({ value: '', lastTs: 0 })
+  const lastInputSourceRef = useRef<'manual' | 'scan'>('manual')
+  const lastNotifiedScanKeywordRef = useRef('')
 
   const loadData = async () => {
     setLoading(true)
@@ -76,6 +86,10 @@ export function PosStockPage() {
     void loadData()
   }, [])
 
+  useEffect(() => {
+    searchInputRef.current?.focus()
+  }, [])
+
   const filteredStockRows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase()
     if (!normalizedKeyword) {
@@ -83,10 +97,49 @@ export function PosStockPage() {
     }
 
     return stockRows.filter((row) => {
-      const fields = [row.item_name, row.item_model, String(row.item_id)]
+      const fields = [row.item_name, row.item_model, row.property_number, String(row.item_id)]
       return fields.some((field) => field.toLowerCase().includes(normalizedKeyword))
     })
   }, [keyword, stockRows])
+
+  useEffect(() => {
+    if (lastInputSourceRef.current !== 'scan') {
+      return
+    }
+    const normalizedKeyword = keyword.trim()
+    if (!normalizedKeyword || filteredStockRows.length > 0 || lastNotifiedScanKeywordRef.current === normalizedKeyword) {
+      return
+    }
+    lastNotifiedScanKeywordRef.current = normalizedKeyword
+    void toast.fire({ icon: 'error', title: '查無此財產編號。' })
+  }, [filteredStockRows.length, keyword])
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const now = Date.now()
+    const buffer = scanBufferRef.current
+    const key = event.key
+
+    if (key === 'Enter') {
+      if (buffer.value.length >= SCAN_MIN_LENGTH) {
+        lastInputSourceRef.current = 'scan'
+      }
+      buffer.value = ''
+      buffer.lastTs = 0
+      return
+    }
+
+    if (key.length !== 1) {
+      return
+    }
+
+    lastInputSourceRef.current = 'manual'
+    if (buffer.lastTs > 0 && now - buffer.lastTs > SCAN_MAX_KEY_INTERVAL_MS) {
+      buffer.value = key
+    } else {
+      buffer.value += key
+    }
+    buffer.lastTs = now
+  }
 
   const handleUpdateStock = async (itemId: number) => {
     const rawValue = editingValues[itemId] ?? ''
@@ -124,7 +177,7 @@ export function PosStockPage() {
     <>
       <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <h1 className="mt-0">POS 庫存與台帳</h1>
-        <p className="mt-2 text-slate-500">上半部可查詢與調整庫存，下半部顯示最近 200 筆庫存異動紀錄。</p>
+        <p className="mt-2 text-slate-500">上半部可查詢與調整庫存（支援掃描財產編號），下半部顯示最近 200 筆庫存異動紀錄。</p>
       </section>
 
       <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
@@ -132,11 +185,18 @@ export function PosStockPage() {
           <label className="grid gap-2 font-bold">
             庫存關鍵字搜尋
             <input
+              ref={searchInputRef}
               className={fieldClass}
               type="search"
-              placeholder="輸入品名、型號或 item_id..."
+              placeholder="可輸入/掃描財產編號、品名、型號或 item_id..."
               value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              onChange={(event) => {
+                if (lastInputSourceRef.current !== 'scan') {
+                  lastInputSourceRef.current = 'manual'
+                }
+                setKeyword(event.target.value)
+              }}
             />
           </label>
           <button className={buttonClass} type="button" onClick={() => void loadData()} disabled={loading}>重新整理</button>
@@ -152,7 +212,7 @@ export function PosStockPage() {
             <table className="mt-2 w-full table-auto border-collapse bg-white">
               <thead>
                 <tr>
-                  {['item_id', '品項', '型號', '目前庫存', '調整為', '操作'].map((header) => (
+                  {['item_id', '財產編號', '品項', '型號', '目前庫存', '調整為', '操作'].map((header) => (
                     <th key={header} className={tableHeaderClass}>{header}</th>
                   ))}
                 </tr>
@@ -160,7 +220,7 @@ export function PosStockPage() {
               <tbody>
                 {filteredStockRows.length === 0 ? (
                   <tr>
-                    <td className={`${tableCellClass} text-center text-slate-500`} colSpan={6}>查無符合條件的庫存資料。</td>
+                    <td className={`${tableCellClass} text-center text-slate-500`} colSpan={7}>查無符合條件的庫存資料。</td>
                   </tr>
                 ) : (
                   filteredStockRows.map((row) => {
@@ -168,6 +228,7 @@ export function PosStockPage() {
                     return (
                       <tr key={row.item_id}>
                         <td className={tableCellClass}>{row.item_id}</td>
+                        <td className={tableCellClass}>{row.property_number || '--'}</td>
                         <td className={tableCellClass}>{row.item_name || '--'}</td>
                         <td className={tableCellClass}>{row.item_model || '--'}</td>
                         <td className={`${tableCellClass} font-bold text-blue-700`}>{row.quantity}</td>

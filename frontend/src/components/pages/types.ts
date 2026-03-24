@@ -123,6 +123,7 @@ export type PosStockBalance = {
   item_id: number
   item_name: string
   item_model: string
+  property_number: string
   quantity: number
 }
 
