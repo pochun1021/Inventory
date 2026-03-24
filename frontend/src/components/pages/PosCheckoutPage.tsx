@@ -15,7 +15,7 @@ type StockLookup = Record<number, number>
 
 const fieldClass = 'min-w-0 w-full rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
-const removeButtonClass = 'cursor-pointer rounded-[10px] border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50'
+const removeButtonClass = 'cursor-pointer rounded-[10px] border-none bg-red-600 px-3 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-red-300'
 const emptyLine = (): CheckoutLine => ({ item_id: '', quantity: 1, unit_price: 0, discount: 0, note: '' })
 const ORDER_TYPE_OPTIONS = [
   { value: 'sale', label: '一般銷售（扣庫）' },
@@ -312,7 +312,7 @@ export function PosCheckoutPage() {
               const stockWarning = DECREASE_ORDER_TYPES.has(orderType) && typeof line.item_id === 'number' && line.quantity > line.stockQuantity
 
               return (
-                <div key={`pos-line-${index}`} className="grid gap-2 rounded-xl border border-slate-200 p-4 md:grid-cols-[2fr,1fr,1fr,1fr,2fr,auto]">
+                <div key={`pos-line-${index}`} className="grid gap-2 rounded-xl border border-slate-200 p-4 md:grid-cols-[2fr,1fr,1fr,1fr,2fr]">
                   <label className="grid gap-2 font-bold md:col-span-2">
                     品項
                     <select
@@ -367,22 +367,22 @@ export function PosCheckoutPage() {
                     <input className={fieldClass} value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} />
                   </label>
 
-                  <div className="grid content-end gap-2">
-                    <div className="rounded-[10px] bg-slate-50 px-3 py-2 text-sm">
-                      行小計：{line.lineTotal.toFixed(2)}
-                    </div>
-                    <button type="button" className={removeButtonClass} onClick={() => handleRemoveLine(index)} disabled={lines.length <= 1}>
-                      移除
-                    </button>
-                  </div>
-
-                  <div className="min-w-0 md:col-span-6">
+                  <div className="min-w-0 md:col-span-5">
                     <p className="m-0 break-all text-sm text-slate-500">
                       {selectedItem ? `${selectedItem.name || '未命名'}${selectedItem.model ? ` (${selectedItem.model})` : ''}` : '尚未選擇品項'}
                       {' · '}
                       目前庫存 {line.stockQuantity}
                     </p>
                     {stockWarning ? <p className="m-0 mt-1 text-sm font-bold text-red-600">此筆數量超過目前庫存，送出時可能被後端拒絕。</p> : null}
+                    <div className="mt-2 rounded-[10px] bg-amber-50 px-3 py-2 text-base font-bold text-amber-800">
+                      行小計：{line.lineTotal.toFixed(2)}
+                    </div>
+                  </div>
+
+                  <div className="mt-1 flex justify-end md:col-span-5">
+                    <button type="button" className={removeButtonClass} onClick={() => handleRemoveLine(index)} disabled={lines.length <= 1}>
+                      移除
+                    </button>
                   </div>
                 </div>
               )

@@ -149,7 +149,7 @@ export function PosStockPage() {
 
         {!loading && !loadError ? (
           <div className="w-full overflow-x-auto">
-            <table className="mt-2 w-full table-fixed border-collapse bg-white">
+            <table className="mt-2 w-full table-auto border-collapse bg-white">
               <thead>
                 <tr>
                   {['item_id', '品項', '型號', '目前庫存', '調整為', '操作'].map((header) => (
@@ -204,7 +204,7 @@ export function PosStockPage() {
       <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <h2 className="mt-0 text-lg font-bold">庫存異動台帳</h2>
         <div className="w-full overflow-x-auto">
-          <table className="mt-2 w-full table-fixed border-collapse bg-white">
+          <table className="mt-2 min-w-[980px] table-auto border-collapse bg-white">
             <thead>
               <tr>
                 {['#', '時間', '訂單編號', 'item_id', '品項', 'delta', 'balance_after', 'reason', 'related'].map((header) => (
