@@ -65,13 +65,18 @@ npm run lint     # ESLint 檢查
 - `/inventory/new`：新增財產
 - `/inventory/edit/:id`：編輯財產
 - `/upload`：Excel 匯入
+- `/donations`：捐贈清單
+- `/donations/new`：新增捐贈
+- `/donations/:id`：編輯捐贈單
 
 ## 畫面與資料行為
 
 - 清單資料由 `GET /api/items` 載入。
+- 財產清單預設隱藏已捐贈資料，可切換顯示（`GET /api/items?include_donated=true`）。
 - 新增資料使用 `POST /api/items`。
 - 編輯資料使用 `PUT /api/items/{id}`。
 - 刪除資料使用 `DELETE /api/items/{id}`（軟刪除）。
+- 捐贈清單/表單使用 `/api/donations` 系列 API。
 - 匯入頁使用 `POST /api/items/import` 上傳 `.xlsx`。
 
 ## 建置輸出

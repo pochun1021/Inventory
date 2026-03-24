@@ -8,12 +8,15 @@ const activeNavLinkClass = 'bg-blue-600 text-white'
 export function TopNav({ pathname }: TopNavProps) {
   const isIssueEditPage = /^\/issues\/\d+$/.test(pathname)
   const isBorrowEditPage = /^\/borrows\/\d+$/.test(pathname)
+  const isDonationEditPage = /^\/donations\/\d+$/.test(pathname)
   const isUploadPage = pathname === '/upload'
   const isDashboardPage = pathname === '/'
   const isIssueListPage = pathname === '/issues' || isIssueEditPage
   const isIssueCreatePage = pathname === '/issues/new'
   const isBorrowListPage = pathname === '/borrows' || isBorrowEditPage
   const isBorrowCreatePage = pathname === '/borrows/new'
+  const isDonationListPage = pathname === '/donations' || isDonationEditPage
+  const isDonationCreatePage = pathname === '/donations/new'
   const isInventoryPage = pathname === '/inventory'
   const isCreatePage = pathname === '/inventory/new'
 
@@ -39,6 +42,12 @@ export function TopNav({ pathname }: TopNavProps) {
       </a>
       <a className={isBorrowCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/borrows/new">
         新增借用
+      </a>
+      <a className={isDonationListPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/donations">
+        捐贈清單
+      </a>
+      <a className={isDonationCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/donations/new">
+        新增捐贈
       </a>
       <a className={isUploadPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/upload">
         上傳頁面

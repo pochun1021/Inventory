@@ -71,10 +71,16 @@ npm run dev
 
 - `GET /api/data`：儀表板資訊
 - `GET /api/items`：取得清單
+- `GET /api/items?include_donated=true`：取得含已捐贈資料的清單
 - `GET /api/items/{item_id}`：取得單筆
 - `POST /api/items`：新增
 - `PUT /api/items/{item_id}`：更新
 - `DELETE /api/items/{item_id}`：軟刪除
+- `GET /api/donations`：取得捐贈清單
+- `GET /api/donations/{request_id}`：取得單筆捐贈單
+- `POST /api/donations`：建立捐贈單
+- `PUT /api/donations/{request_id}`：更新捐贈單
+- `DELETE /api/donations/{request_id}`：刪除捐贈單（並解除庫存捐贈標記）
 - `POST /api/items/import`：上傳 Excel 匯入（`multipart/form-data`）
 
 ## Excel 匯入欄位

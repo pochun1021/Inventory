@@ -24,6 +24,7 @@ export function InventoryListPage() {
   const [keyword, setKeyword] = useState('')
   const [selectedKind, setSelectedKind] = useState('all')
   const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>('all')
+  const [showDonated, setShowDonated] = useState(false)
   const [pageSize, setPageSize] = useState(10)
   const [customPageSize, setCustomPageSize] = useState('10')
   const [currentPage, setCurrentPage] = useState(1)
@@ -34,7 +35,7 @@ export function InventoryListPage() {
       setLoading(true)
       setLoadError('')
       try {
-        const response = await fetch(apiUrl('/api/items'))
+        const response = await fetch(apiUrl(showDonated ? '/api/items?include_donated=true' : '/api/items'))
         if (!response.ok) {
           throw new Error('無法載入財產清單')
         }
@@ -48,7 +49,7 @@ export function InventoryListPage() {
     }
 
     void loadItems()
-  }, [])
+  }, [showDonated])
 
   const toKindLabel = (kind: string) => {
     if (!kind) {
@@ -206,6 +207,15 @@ export function InventoryListPage() {
             <option value="needs_fix">僅顯示待修正資料</option>
           </select>
 
+          <label className="mt-1 inline-flex items-center gap-2 font-bold">
+            <input
+              type="checkbox"
+              checked={showDonated}
+              onChange={(event) => setShowDonated(event.target.checked)}
+            />
+            顯示已捐贈資料
+          </label>
+
           <div className="grid gap-2">
             <span className="font-bold">每頁筆數</span>
             <div className="flex flex-wrap gap-2">
@@ -250,7 +260,7 @@ export function InventoryListPage() {
               <table className="mt-2 w-full table-fixed border-collapse bg-white">
                 <thead>
                   <tr>
-                    {['#', '類別', '財產編號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '操作'].map((header) => (
+                    {['#', '類別', '財產編號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '捐贈狀態', '操作'].map((header) => (
                       <th key={header} className={tableHeaderClass}>{header}</th>
                     ))}
                   </tr>
@@ -258,7 +268,7 @@ export function InventoryListPage() {
                 <tbody>
                   {paginatedItems.length === 0 ? (
                     <tr>
-                      <td colSpan={11} className="border border-slate-200 p-2 text-center text-slate-500">
+                      <td colSpan={12} className="border border-slate-200 p-2 text-center text-slate-500">
                         查無符合條件的財產資料
                       </td>
                     </tr>
@@ -277,6 +287,17 @@ export function InventoryListPage() {
                         <td className={`${tableCellClass} whitespace-nowrap`}>{item.purchase_date ?? '--'}</td>
                         <td className={tableCellClass}>{item.location || '--'}</td>
                         <td className={tableCellClass}>{item.keeper || '--'}</td>
+                        <td className={`${tableCellClass} whitespace-nowrap`}>
+                          {item.donated_at ? (
+                            <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                              已捐贈
+                            </span>
+                          ) : (
+                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">
+                              可使用
+                            </span>
+                          )}
+                        </td>
                         <td className={`${tableCellClass} whitespace-nowrap`}>
                           <button
                             type="button"
