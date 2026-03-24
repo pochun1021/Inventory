@@ -456,6 +456,15 @@ def row_to_pos_stock_movement(row) -> PosStockMovement:
     )
 
 
+def row_to_pos_stock_balance(row) -> PosStockBalance:
+    return PosStockBalance(
+        item_id=int(row.get("item_id", 0)),
+        item_name=_coerce_str(row.get("item_name")),
+        item_model=_coerce_str(row.get("item_model")),
+        quantity=int(row.get("quantity", 0)),
+    )
+
+
 def issue_request_to_db_payload(request: IssueRequestCreate) -> dict:
     return {
         "requester": request.requester,
@@ -1067,7 +1076,7 @@ def get_pos_order_api(order_id: int):
 @app.get("/api/pos/stock", response_model=list[PosStockBalance], response_model_by_alias=False)
 def list_pos_stock_api():
     rows = list_stock_balances()
-    return [PosStockBalance(**row) for row in rows]
+    return [row_to_pos_stock_balance(row) for row in rows]
 
 
 @app.put("/api/pos/stock/{item_id}", response_model=PosStockBalance, response_model_by_alias=False)
@@ -1083,7 +1092,7 @@ def set_pos_stock_api(item_id: int, request: PosStockSetRequest):
     if row is None:
         raise HTTPException(status_code=500, detail="stock updated but cannot be loaded")
     log_inventory_action(action="update", entity="stock_balance", entity_id=item_id, detail={"quantity": request.quantity})
-    return PosStockBalance(**row)
+    return row_to_pos_stock_balance(row)
 
 
 @app.get("/api/pos/stock-movements", response_model=list[PosStockMovement], response_model_by_alias=False)

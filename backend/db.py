@@ -196,6 +196,12 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _to_str(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    return value if isinstance(value, str) else str(value)
+
+
 def _is_blank(value: Any) -> bool:
     return value is None or str(value).strip() == ""
 
@@ -1531,8 +1537,8 @@ def list_stock_balances() -> list[dict[str, Any]]:
         results.append(
             {
                 "item_id": item_id,
-                "item_name": item.get("name", ""),
-                "item_model": item.get("model", ""),
+                "item_name": _to_str(item.get("name")),
+                "item_model": _to_str(item.get("model")),
                 "quantity": quantity,
             }
         )
