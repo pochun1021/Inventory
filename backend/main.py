@@ -11,25 +11,32 @@ from db import (
     create_items_bulk,
     create_issue_request,
     create_borrow_request,
+    create_donation_request,
     delete_item,
     delete_issue_request,
     delete_borrow_request,
+    delete_donation_request,
     get_item_by_id,
     get_items_count,
     get_issue_request,
     get_borrow_request,
+    get_donation_request,
     get_pending_fix_count,
     init_db,
     list_issue_items,
     list_issue_requests,
     list_borrow_items,
     list_borrow_requests,
+    list_donation_items,
+    list_donation_requests,
     list_items,
     log_inventory_action,
     purge_soft_deleted_items,
     update_item,
     update_issue_request,
     update_borrow_request,
+    update_donation_request,
+    validate_item_ids_available,
 )
 from xlsx_import import import_inventory_items_from_xlsx_content
 from google_sheets import ensure_google_oauth, is_google_sheets_configured, sync_requests_to_google_sheets
@@ -70,6 +77,8 @@ class InventoryItemCreate(BaseModel):
 
 class InventoryItem(InventoryItemCreate):
     id: int
+    donated_at: datetime | None = None
+    donation_request_id: int | None = None
 
 
 class IssueItemCreate(BaseModel):
@@ -127,6 +136,33 @@ class BorrowRequest(BorrowRequestCreate):
     items: list[BorrowItem]
 
 
+class DonationItemCreate(BaseModel):
+    item_id: int
+    quantity: int = 1
+    note: str = ""
+
+
+class DonationItem(DonationItemCreate):
+    id: int
+    item_name: str | None = None
+    item_model: str | None = None
+
+
+class DonationRequestCreate(BaseModel):
+    donor: str = ""
+    department: str = ""
+    recipient: str = ""
+    purpose: str = ""
+    donation_date: date | None = None
+    memo: str = ""
+    items: list[DonationItemCreate] = Field(default_factory=list)
+
+
+class DonationRequest(DonationRequestCreate):
+    id: int
+    items: list[DonationItem]
+
+
 class ImportErrorDetail(BaseModel):
     row: int
     message: str
@@ -146,6 +182,15 @@ def _parse_purchase_date(value: str) -> date:
         except ValueError:
             continue
     raise ValueError(f"Invalid purchase_date format: {value}")
+
+
+def _parse_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def _resolve_frontend_index() -> Path | None:
@@ -198,6 +243,12 @@ def _coerce_str(value) -> str:
 def row_to_item(row) -> InventoryItem:
     purchase_date_value = row["purchase_date"]
     parsed_date = _parse_purchase_date(purchase_date_value) if purchase_date_value else None
+    donated_at_value = _coerce_str(row.get("donated_at"))
+    donation_request_id_raw = row.get("donation_request_id")
+    try:
+        donation_request_id = int(donation_request_id_raw) if donation_request_id_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        donation_request_id = None
     return InventoryItem(
         id=row["id"],
         kind=_coerce_str(row["kind"]),
@@ -210,6 +261,8 @@ def row_to_item(row) -> InventoryItem:
         location=_coerce_str(row["location"]),
         memo=_coerce_str(row["memo"]),
         keeper=_coerce_str(row["keeper"]),
+        donated_at=_parse_datetime(donated_at_value),
+        donation_request_id=donation_request_id,
     )
 
 
@@ -226,6 +279,17 @@ def row_to_issue_item(row) -> IssueItem:
 
 def row_to_borrow_item(row) -> BorrowItem:
     return BorrowItem(
+        id=row["id"],
+        item_id=row["item_id"],
+        quantity=row["quantity"],
+        note=_coerce_str(row["note"]),
+        item_name=row["item_name"],
+        item_model=row["item_model"],
+    )
+
+
+def row_to_donation_item(row) -> DonationItem:
+    return DonationItem(
         id=row["id"],
         item_id=row["item_id"],
         quantity=row["quantity"],
@@ -254,6 +318,17 @@ def borrow_request_to_db_payload(request: BorrowRequestCreate) -> dict:
         "due_date": _format_date(request.due_date),
         "return_date": _format_date(request.return_date),
         "status": request.status,
+        "memo": request.memo,
+    }
+
+
+def donation_request_to_db_payload(request: DonationRequestCreate) -> dict:
+    return {
+        "donor": request.donor,
+        "department": request.department,
+        "recipient": request.recipient.strip(),
+        "purpose": request.purpose,
+        "donation_date": _format_date(request.donation_date),
         "memo": request.memo,
     }
 
@@ -287,6 +362,35 @@ def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
         memo=_coerce_str(row["memo"]),
         items=items,
     )
+
+
+def donation_request_row_to_model(row, items: list[DonationItem]) -> DonationRequest:
+    donation_date = _parse_purchase_date(row["donation_date"]) if row["donation_date"] else None
+    return DonationRequest(
+        id=row["id"],
+        donor=_coerce_str(row["donor"]),
+        department=_coerce_str(row["department"]),
+        recipient=_coerce_str(row["recipient"]),
+        purpose=_coerce_str(row["purpose"]),
+        donation_date=donation_date,
+        memo=_coerce_str(row["memo"]),
+        items=items,
+    )
+
+
+def _ensure_available_item_ids(
+    item_ids: list[int],
+    *,
+    allow_donation_request_id: int | None = None,
+    enforce_unique: bool = False,
+) -> None:
+    is_available, error_message = validate_item_ids_available(
+        item_ids,
+        allow_donation_request_id=allow_donation_request_id,
+        enforce_unique=enforce_unique,
+    )
+    if not is_available:
+        raise HTTPException(status_code=400, detail=error_message or "invalid item_id")
 
 
 def _sync_requests_safe() -> None:
@@ -330,8 +434,8 @@ def get_dashboard_data():
 
 
 @app.get("/api/items", response_model=list[InventoryItem], response_model_by_alias=False)
-def get_inventory_items():
-    rows = list_items()
+def get_inventory_items(include_donated: bool = False):
+    rows = list_items(include_donated=include_donated)
     log_inventory_action(action="read", entity="inventory_item", detail={"count": len(rows), "mode": "list"})
     return [row_to_item(row) for row in rows]
 
@@ -445,6 +549,7 @@ def create_issue_request_api(request: IssueRequestCreate, background_tasks: Back
     for item in request.items:
         if item.quantity <= 0:
             raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    _ensure_available_item_ids([item.item_id for item in request.items])
     request_id = create_issue_request(issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
     row = get_issue_request(request_id)
     if row is None:
@@ -470,6 +575,7 @@ def update_issue_request_api(request_id: int, request: IssueRequestCreate, backg
     for item in request.items:
         if item.quantity <= 0:
             raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    _ensure_available_item_ids([item.item_id for item in request.items])
     updated = update_issue_request(request_id, issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
     if not updated:
         log_inventory_action(
@@ -543,6 +649,7 @@ def create_borrow_request_api(request: BorrowRequestCreate, background_tasks: Ba
     for item in request.items:
         if item.quantity <= 0:
             raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    _ensure_available_item_ids([item.item_id for item in request.items])
     request_id = create_borrow_request(borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
     row = get_borrow_request(request_id)
     if row is None:
@@ -568,6 +675,7 @@ def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, bac
     for item in request.items:
         if item.quantity <= 0:
             raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    _ensure_available_item_ids([item.item_id for item in request.items])
     updated = update_borrow_request(request_id, borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
     if not updated:
         log_inventory_action(
@@ -610,6 +718,123 @@ def delete_borrow_request_api(request_id: int, background_tasks: BackgroundTasks
     log_inventory_action(action="delete", entity="borrow_request", entity_id=request_id)
     if is_google_sheets_configured():
         background_tasks.add_task(_sync_requests_safe)
+    return {"success": True}
+
+
+@app.get("/api/donations", response_model=list[DonationRequest], response_model_by_alias=False)
+def list_donation_requests_api():
+    rows = list_donation_requests()
+    results = []
+    for row in rows:
+        items = [row_to_donation_item(item) for item in list_donation_items(row["id"])]
+        results.append(donation_request_row_to_model(row, items))
+    log_inventory_action(action="read", entity="donation_request", detail={"count": len(results), "mode": "list"})
+    return results
+
+
+@app.get("/api/donations/{request_id}", response_model=DonationRequest, response_model_by_alias=False)
+def get_donation_request_api(request_id: int):
+    row = get_donation_request(request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Donation request not found")
+    items = [row_to_donation_item(item) for item in list_donation_items(request_id)]
+    log_inventory_action(action="read", entity="donation_request", entity_id=request_id, detail={"mode": "single"})
+    return donation_request_row_to_model(row, items)
+
+
+@app.post("/api/donations", response_model=DonationRequest, response_model_by_alias=False)
+def create_donation_request_api(request: DonationRequestCreate):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items is required")
+    if not request.recipient.strip():
+        raise HTTPException(status_code=400, detail="recipient is required")
+    for item in request.items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    _ensure_available_item_ids([item.item_id for item in request.items], enforce_unique=True)
+    try:
+        request_id = create_donation_request(
+            donation_request_to_db_payload(request),
+            [item.model_dump() for item in request.items],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    row = get_donation_request(request_id)
+    if row is None:
+        log_inventory_action(
+            action="create",
+            entity="donation_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Donation request created but cannot be loaded"},
+        )
+        raise HTTPException(status_code=500, detail="Donation request created but cannot be loaded")
+    items = [row_to_donation_item(item) for item in list_donation_items(request_id)]
+    log_inventory_action(action="create", entity="donation_request", entity_id=request_id)
+    return donation_request_row_to_model(row, items)
+
+
+@app.put("/api/donations/{request_id}", response_model=DonationRequest, response_model_by_alias=False)
+def update_donation_request_api(request_id: int, request: DonationRequestCreate):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="items is required")
+    if not request.recipient.strip():
+        raise HTTPException(status_code=400, detail="recipient is required")
+    for item in request.items:
+        if item.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+    _ensure_available_item_ids(
+        [item.item_id for item in request.items],
+        allow_donation_request_id=request_id,
+        enforce_unique=True,
+    )
+    try:
+        updated = update_donation_request(
+            request_id,
+            donation_request_to_db_payload(request),
+            [item.model_dump() for item in request.items],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not updated:
+        log_inventory_action(
+            action="update",
+            entity="donation_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Donation request not found"},
+        )
+        raise HTTPException(status_code=404, detail="Donation request not found")
+    row = get_donation_request(request_id)
+    if row is None:
+        log_inventory_action(
+            action="update",
+            entity="donation_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Donation request not found after update"},
+        )
+        raise HTTPException(status_code=404, detail="Donation request not found")
+    items = [row_to_donation_item(item) for item in list_donation_items(request_id)]
+    log_inventory_action(action="update", entity="donation_request", entity_id=request_id)
+    return donation_request_row_to_model(row, items)
+
+
+@app.delete("/api/donations/{request_id}")
+def delete_donation_request_api(request_id: int):
+    deleted = delete_donation_request(request_id)
+    if not deleted:
+        log_inventory_action(
+            action="delete",
+            entity="donation_request",
+            entity_id=request_id,
+            status="failed",
+            detail={"reason": "Donation request not found"},
+        )
+        raise HTTPException(status_code=404, detail="Donation request not found")
+    log_inventory_action(action="delete", entity="donation_request", entity_id=request_id)
     return {"success": True}
 
 

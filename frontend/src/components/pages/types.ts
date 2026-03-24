@@ -17,6 +17,8 @@ export type InventoryItem = {
   location: string
   memo: string
   keeper: string
+  donated_at?: string | null
+  donation_request_id?: number | null
 }
 
 export type IssueItem = {
@@ -58,4 +60,24 @@ export type BorrowRequest = {
   status: string
   memo: string
   items: BorrowItem[]
+}
+
+export type DonationItem = {
+  id: number
+  item_id: number
+  quantity: number
+  note: string
+  item_name?: string | null
+  item_model?: string | null
+}
+
+export type DonationRequest = {
+  id: number
+  donor: string
+  department: string
+  recipient: string
+  purpose: string
+  donation_date: string | null
+  memo: string
+  items: DonationItem[]
 }

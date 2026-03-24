@@ -64,10 +64,19 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ### 庫存資料
 
 - `GET /api/items`：列出所有未刪除資料
+- `GET /api/items?include_donated=true`：列出包含已捐贈資料
 - `GET /api/items/{item_id}`：取得單筆資料
 - `POST /api/items`：新增資料
 - `PUT /api/items/{item_id}`：更新資料
 - `DELETE /api/items/{item_id}`：軟刪除資料
+
+### 捐贈資料
+
+- `GET /api/donations`：列出捐贈單
+- `GET /api/donations/{request_id}`：取得單筆捐贈單
+- `POST /api/donations`：建立捐贈單（`recipient` 必填）
+- `PUT /api/donations/{request_id}`：更新捐贈單（`recipient` 必填）
+- `DELETE /api/donations/{request_id}`：刪除捐贈單，解除關聯品項的捐贈標記
 
 ### 批次匯入
 

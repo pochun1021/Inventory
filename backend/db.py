@@ -27,6 +27,8 @@ SHEETS: dict[str, list[str]] = {
         "memo",
         "keeper",
         "deleted_at",
+        "donated_at",
+        "donation_request_id",
     ],
     "order_sn": [
         "name",
@@ -76,6 +78,23 @@ SHEETS: dict[str, list[str]] = {
         "quantity",
         "note",
     ],
+    "donation_requests": [
+        "id",
+        "donor",
+        "department",
+        "recipient",
+        "purpose",
+        "donation_date",
+        "memo",
+        "created_at",
+    ],
+    "donation_items": [
+        "id",
+        "request_id",
+        "item_id",
+        "quantity",
+        "note",
+    ],
 }
 
 STRING_FIELDS: dict[str, list[str]] = {
@@ -93,6 +112,16 @@ STRING_FIELDS: dict[str, list[str]] = {
         "created_at",
     ],
     "borrow_items": ["note"],
+    "donation_requests": [
+        "donor",
+        "department",
+        "recipient",
+        "purpose",
+        "donation_date",
+        "memo",
+        "created_at",
+    ],
+    "donation_items": ["note"],
 }
 
 
@@ -271,7 +300,7 @@ def get_pending_fix_count() -> int:
     )
 
 
-def list_items() -> list[dict[str, Any]]:
+def list_items(*, include_donated: bool = False) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         rows = _read_rows(wb["inventory_items"])
     results = [
@@ -287,10 +316,13 @@ def list_items() -> list[dict[str, Any]]:
             "location": row.get("location", ""),
             "keeper": row.get("keeper", ""),
             "memo": row.get("memo", ""),
+            "donated_at": row.get("donated_at", ""),
+            "donation_request_id": row.get("donation_request_id", ""),
             "deleted_at": row.get("deleted_at", ""),
         }
         for row in rows
         if _is_blank(row.get("deleted_at"))
+        and (include_donated or _is_blank(row.get("donated_at")))
     ]
     return sorted(results, key=lambda row: _to_int(row.get("id")), reverse=True)
 
@@ -312,6 +344,8 @@ def get_item_by_id(item_id: int) -> dict[str, Any] | None:
                 "location": row.get("location", ""),
                 "keeper": row.get("keeper", ""),
                 "memo": row.get("memo", ""),
+                "donated_at": row.get("donated_at", ""),
+                "donation_request_id": row.get("donation_request_id", ""),
             }
     return None
 
@@ -342,6 +376,8 @@ def create_item(item_data: dict[str, Any]) -> int:
                 "keeper": item_data["keeper"],
                 "memo": item_data["memo"],
                 "deleted_at": "",
+                "donated_at": "",
+                "donation_request_id": "",
             }
         )
         _write_rows(ws, SHEETS["inventory_items"], rows)
@@ -397,6 +433,8 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
                     "keeper": item_data["keeper"],
                     "memo": item_data["memo"],
                     "deleted_at": "",
+                    "donated_at": "",
+                    "donation_request_id": "",
                 }
             )
             next_id += 1
@@ -521,6 +559,34 @@ def get_order_sn(name: str) -> dict[str, Any] | None:
                 wb.save(DB_PATH)
                 return {"tmp_no": tmp_no}
         return None
+
+
+def validate_item_ids_available(
+    item_ids: list[int],
+    *,
+    allow_donation_request_id: int | None = None,
+    enforce_unique: bool = False,
+) -> tuple[bool, str | None]:
+    with _locked_workbook() as wb:
+        inventory_rows = _read_rows(wb["inventory_items"])
+
+    if enforce_unique and len(item_ids) != len(set(item_ids)):
+        return False, "item_id cannot be duplicated"
+
+    inventory_map = {_to_int(row.get("id")): row for row in inventory_rows if _is_blank(row.get("deleted_at"))}
+    for item_id in item_ids:
+        row = inventory_map.get(item_id)
+        if row is None:
+            return False, f"item_id {item_id} not found"
+        donated_at = row.get("donated_at")
+        donation_request_id = _to_int(row.get("donation_request_id"))
+        if _is_blank(donated_at):
+            continue
+        if allow_donation_request_id is not None and donation_request_id == allow_donation_request_id:
+            continue
+        return False, f"item_id {item_id} is already donated"
+
+    return True, None
 
 
 def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
@@ -658,6 +724,232 @@ def delete_issue_request(request_id: int) -> bool:
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         _write_rows(request_ws, SHEETS["issue_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["issue_items"], remaining_items)
+        wb.save(DB_PATH)
+        return True
+
+
+def create_donation_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
+    with _locked_workbook() as wb:
+        request_ws = wb["donation_requests"]
+        item_ws = wb["donation_items"]
+        inventory_ws = wb["inventory_items"]
+        request_rows = _read_rows(request_ws)
+        item_rows = _read_rows(item_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        selected_item_ids = [_to_int(item.get("item_id")) for item in items]
+        if len(selected_item_ids) != len(set(selected_item_ids)):
+            raise ValueError("item_id cannot be duplicated")
+
+        inventory_map = {_to_int(row.get("id")): row for row in inventory_rows if _is_blank(row.get("deleted_at"))}
+        for item_id in selected_item_ids:
+            row = inventory_map.get(item_id)
+            if row is None:
+                raise ValueError(f"item_id {item_id} not found")
+            if not _is_blank(row.get("donated_at")):
+                raise ValueError(f"item_id {item_id} is already donated")
+
+        request_id = _next_id(request_rows)
+        request_rows.append(
+            {
+                "id": request_id,
+                "donor": request_data["donor"],
+                "department": request_data["department"],
+                "recipient": request_data["recipient"],
+                "purpose": request_data["purpose"],
+                "donation_date": request_data["donation_date"],
+                "memo": request_data["memo"],
+                "created_at": _now_str(),
+            }
+        )
+
+        next_item_id = _next_id(item_rows)
+        for index, item in enumerate(items):
+            item_rows.append(
+                {
+                    "id": next_item_id + index,
+                    "request_id": request_id,
+                    "item_id": item["item_id"],
+                    "quantity": item["quantity"],
+                    "note": item.get("note", ""),
+                }
+            )
+
+        marked_item_ids = set(selected_item_ids)
+        now = _now_str()
+        for row in inventory_rows:
+            if _to_int(row.get("id")) in marked_item_ids and _is_blank(row.get("deleted_at")):
+                row["donated_at"] = now
+                row["donation_request_id"] = request_id
+
+        _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
+        _write_rows(item_ws, SHEETS["donation_items"], item_rows)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        wb.save(DB_PATH)
+        return request_id
+
+
+def list_donation_requests() -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["donation_requests"])
+    return sorted(rows, key=lambda row: _to_int(row.get("id")), reverse=True)
+
+
+def get_donation_request(request_id: int) -> dict[str, Any] | None:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["donation_requests"])
+    for row in rows:
+        if _to_int(row.get("id")) == request_id:
+            return row
+    return None
+
+
+def list_donation_items(request_id: int) -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        item_rows = _read_rows(wb["donation_items"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+    inventory_map = {
+        _to_int(row.get("id")): {
+            "item_name": row.get("name", ""),
+            "item_model": row.get("model", ""),
+        }
+        for row in inventory_rows
+        if _is_blank(row.get("deleted_at"))
+    }
+    results = []
+    for row in item_rows:
+        if _to_int(row.get("request_id")) != request_id:
+            continue
+        details = inventory_map.get(_to_int(row.get("item_id")), {"item_name": None, "item_model": None})
+        results.append(
+            {
+                "id": row.get("id"),
+                "request_id": row.get("request_id"),
+                "item_id": row.get("item_id"),
+                "quantity": row.get("quantity"),
+                "note": row.get("note", ""),
+                "item_name": details.get("item_name"),
+                "item_model": details.get("item_model"),
+            }
+        )
+    return sorted(results, key=lambda row: _to_int(row.get("id")))
+
+
+def update_donation_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    with _locked_workbook() as wb:
+        request_ws = wb["donation_requests"]
+        item_ws = wb["donation_items"]
+        inventory_ws = wb["inventory_items"]
+        request_rows = _read_rows(request_ws)
+        item_rows = _read_rows(item_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        request_row = None
+        for row in request_rows:
+            if _to_int(row.get("id")) == request_id:
+                request_row = row
+                break
+        if request_row is None:
+            return False
+
+        selected_item_ids = [_to_int(item.get("item_id")) for item in items]
+        if len(selected_item_ids) != len(set(selected_item_ids)):
+            raise ValueError("item_id cannot be duplicated")
+
+        inventory_map = {_to_int(row.get("id")): row for row in inventory_rows if _is_blank(row.get("deleted_at"))}
+        for item_id in selected_item_ids:
+            row = inventory_map.get(item_id)
+            if row is None:
+                raise ValueError(f"item_id {item_id} not found")
+            donated_at = row.get("donated_at")
+            donation_request_id = _to_int(row.get("donation_request_id"))
+            if _is_blank(donated_at):
+                continue
+            if donation_request_id != request_id:
+                raise ValueError(f"item_id {item_id} is already donated")
+
+        old_item_ids = {
+            _to_int(row.get("item_id"))
+            for row in item_rows
+            if _to_int(row.get("request_id")) == request_id
+        }
+        for row in inventory_rows:
+            item_id = _to_int(row.get("id"))
+            if item_id not in old_item_ids or not _is_blank(row.get("deleted_at")):
+                continue
+            if _to_int(row.get("donation_request_id")) == request_id:
+                row["donated_at"] = ""
+                row["donation_request_id"] = ""
+
+        request_row.update(
+            {
+                "donor": request_data["donor"],
+                "department": request_data["department"],
+                "recipient": request_data["recipient"],
+                "purpose": request_data["purpose"],
+                "donation_date": request_data["donation_date"],
+                "memo": request_data["memo"],
+            }
+        )
+
+        item_rows = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
+        next_item_id = _next_id(item_rows)
+        for index, item in enumerate(items):
+            item_rows.append(
+                {
+                    "id": next_item_id + index,
+                    "request_id": request_id,
+                    "item_id": item["item_id"],
+                    "quantity": item["quantity"],
+                    "note": item.get("note", ""),
+                }
+            )
+
+        now = _now_str()
+        marked_item_ids = set(selected_item_ids)
+        for row in inventory_rows:
+            if _to_int(row.get("id")) in marked_item_ids and _is_blank(row.get("deleted_at")):
+                row["donated_at"] = now
+                row["donation_request_id"] = request_id
+
+        _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
+        _write_rows(item_ws, SHEETS["donation_items"], item_rows)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        wb.save(DB_PATH)
+        return True
+
+
+def delete_donation_request(request_id: int) -> bool:
+    with _locked_workbook() as wb:
+        request_ws = wb["donation_requests"]
+        item_ws = wb["donation_items"]
+        inventory_ws = wb["inventory_items"]
+        request_rows = _read_rows(request_ws)
+        item_rows = _read_rows(item_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        remaining_requests = [row for row in request_rows if _to_int(row.get("id")) != request_id]
+        deleted = len(remaining_requests) != len(request_rows)
+        if not deleted:
+            return False
+
+        removed_item_ids = {
+            _to_int(row.get("item_id"))
+            for row in item_rows
+            if _to_int(row.get("request_id")) == request_id
+        }
+        remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
+
+        for row in inventory_rows:
+            if _to_int(row.get("id")) not in removed_item_ids:
+                continue
+            if _to_int(row.get("donation_request_id")) == request_id:
+                row["donated_at"] = ""
+                row["donation_request_id"] = ""
+
+        _write_rows(request_ws, SHEETS["donation_requests"], remaining_requests)
+        _write_rows(item_ws, SHEETS["donation_items"], remaining_items)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         wb.save(DB_PATH)
         return True
 
