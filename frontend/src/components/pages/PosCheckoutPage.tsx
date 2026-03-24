@@ -13,7 +13,7 @@ type CheckoutLine = {
 
 type StockLookup = Record<number, number>
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
+const fieldClass = 'min-w-0 w-full rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 const removeButtonClass = 'cursor-pointer rounded-[10px] border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50'
 const emptyLine = (): CheckoutLine => ({ item_id: '', quantity: 1, unit_price: 0, discount: 0, note: '' })
@@ -376,8 +376,8 @@ export function PosCheckoutPage() {
                     </button>
                   </div>
 
-                  <div className="md:col-span-6">
-                    <p className="m-0 text-sm text-slate-500">
+                  <div className="min-w-0 md:col-span-6">
+                    <p className="m-0 break-all text-sm text-slate-500">
                       {selectedItem ? `${selectedItem.name || '未命名'}${selectedItem.model ? ` (${selectedItem.model})` : ''}` : '尚未選擇品項'}
                       {' · '}
                       目前庫存 {line.stockQuantity}
