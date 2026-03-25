@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "inventory.xlsx"
 LOCK_PATH = BASE_DIR / "inventory.xlsx.lock"
+ASSET_CATEGORY_NAME_PATH = BASE_DIR.parent / "asset_category_name.xlsx"
 
 SHEETS: dict[str, list[str]] = {
     "inventory_items": [
@@ -261,6 +262,8 @@ KIND_TO_ASSET_TYPE = {
     "other": "A2",
 }
 ASSET_TYPE_TO_KIND = {value: key for key, value in KIND_TO_ASSET_TYPE.items()}
+VALID_NAME_CODE_PAIRS: set[tuple[str, str]] = set()
+ASSET_CATEGORY_MAPPING_LOADED = False
 
 
 def _kind_to_asset_type(kind: Any) -> str:
@@ -269,6 +272,54 @@ def _kind_to_asset_type(kind: Any) -> str:
 
 def _asset_type_to_kind(asset_type: Any) -> str:
     return ASSET_TYPE_TO_KIND.get(str(asset_type).strip(), "other")
+
+
+def _normalize_name_code_value(value: Any) -> str:
+    raw = _to_str(value).strip()
+    if not raw:
+        return ""
+    if raw.isdigit() and len(raw) <= 2:
+        return raw.zfill(2)
+    return raw
+
+
+def _normalize_name_codes(name_code: Any, name_code2: Any) -> tuple[str, str]:
+    normalized_code = _normalize_name_code_value(name_code)
+    normalized_code2 = _normalize_name_code_value(name_code2)
+    if not normalized_code or not normalized_code2:
+        return "", ""
+    if not VALID_NAME_CODE_PAIRS:
+        return "", ""
+    if (normalized_code, normalized_code2) not in VALID_NAME_CODE_PAIRS:
+        return "", ""
+    return normalized_code, normalized_code2
+
+
+def _load_asset_category_mapping() -> None:
+    global ASSET_CATEGORY_MAPPING_LOADED
+    if ASSET_CATEGORY_MAPPING_LOADED:
+        return
+
+    pairs: set[tuple[str, str]] = set()
+    if ASSET_CATEGORY_NAME_PATH.exists():
+        try:
+            wb = load_workbook(ASSET_CATEGORY_NAME_PATH, read_only=True, data_only=True)
+            ws = wb["asset_category_name"] if "asset_category_name" in wb.sheetnames else wb.active
+            rows = ws.iter_rows(min_row=2, values_only=True)
+            for row in rows:
+                if not row:
+                    continue
+                name_code = _normalize_name_code_value(row[0] if len(row) > 0 else "")
+                name_code2 = _normalize_name_code_value(row[1] if len(row) > 1 else "")
+                if not name_code or not name_code2:
+                    continue
+                pairs.add((name_code, name_code2))
+        except Exception:  # noqa: BLE001
+            pairs = set()
+
+    VALID_NAME_CODE_PAIRS.clear()
+    VALID_NAME_CODE_PAIRS.update(pairs)
+    ASSET_CATEGORY_MAPPING_LOADED = True
 
 
 def _inventory_property_number(row: dict[str, Any]) -> str:
@@ -293,6 +344,7 @@ def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_nu
     asset_type = _kind_to_asset_type(item_data.get("kind"))
     n_property_sn = property_number if asset_type == "11" else ""
     n_item_sn = property_number if asset_type != "11" else ""
+    name_code, name_code2 = _normalize_name_codes(item_data.get("name_code"), item_data.get("name_code2"))
     now = _now_str()
     row = {
         "id": new_id,
@@ -304,8 +356,8 @@ def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_nu
         "n_item_sn": n_item_sn,
         "item_sn": "",
         "name": _to_str(item_data.get("name")),
-        "name_code": "",
-        "name_code2": "",
+        "name_code": name_code,
+        "name_code2": name_code2,
         "model": _to_str(item_data.get("model")),
         "specification": _to_str(item_data.get("specification")),
         "unit": _to_str(item_data.get("unit")),
@@ -345,6 +397,8 @@ def _to_inventory_api_row(
         "specification": _to_str(row.get("specification")),
         "property_number": property_number,
         "name": _to_str(row.get("name")),
+        "name_code": _to_str(row.get("name_code")),
+        "name_code2": _to_str(row.get("name_code2")),
         "model": _to_str(row.get("model")),
         "unit": _to_str(row.get("unit")),
         "purchase_date": _to_str(row.get("purchase_date")),
@@ -515,6 +569,7 @@ def _next_id(rows: list[dict[str, Any]]) -> int:
 
 
 def init_db() -> None:
+    _load_asset_category_mapping()
     with _locked_workbook() as wb:
         if _ensure_workbook(wb):
             wb.save(DB_PATH)
@@ -641,6 +696,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
             if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
                 asset_type = _kind_to_asset_type(item_data.get("kind"))
                 property_number = _to_str(item_data.get("property_number")).strip()
+                name_code, name_code2 = _normalize_name_codes(item_data.get("name_code"), item_data.get("name_code2"))
                 row.update(
                     {
                         "asset_type": asset_type,
@@ -649,6 +705,8 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                         "n_item_sn": property_number if asset_type != "11" else "",
                         "key": _inventory_key(row, property_number),
                         "name": item_data["name"],
+                        "name_code": name_code,
+                        "name_code2": name_code2,
                         "model": item_data["model"],
                         "unit": item_data["unit"],
                         "purchase_date": item_data["purchase_date"],

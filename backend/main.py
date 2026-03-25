@@ -70,6 +70,8 @@ class InventoryItemCreate(BaseModel):
     specification: str = Field(default="", alias="規格(大小/容量)")
     property_number: str = Field(default="", alias="財產編號")
     name: str = Field(default="", alias="品名")
+    name_code: str = Field(default="")
+    name_code2: str = Field(default="")
     model: str = Field(default="", alias="型號")
     unit: str = Field(default="", alias="單位")
     purchase_date: date | None = Field(default=None, alias="購置日期")
@@ -306,6 +308,8 @@ def to_db_payload(item: InventoryItemCreate) -> dict:
         "specification": item.specification,
         "property_number": item.property_number,
         "name": item.name,
+        "name_code": item.name_code,
+        "name_code2": item.name_code2,
         "model": item.model,
         "unit": item.unit,
         "purchase_date": item.purchase_date.strftime("%Y/%m/%d") if item.purchase_date else "",
@@ -351,6 +355,8 @@ def row_to_item(row) -> InventoryItem:
         specification=_coerce_str(row["specification"]),
         property_number=_coerce_str(row["property_number"]),
         name=_coerce_str(row["name"]),
+        name_code=_coerce_str(row.get("name_code")),
+        name_code2=_coerce_str(row.get("name_code2")),
         model=_coerce_str(row["model"]),
         unit=_coerce_str(row["unit"]),
         purchase_date=parsed_date,
