@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
+import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
 import type { InventoryItem } from './types'
 
-const KIND_LABEL_MAP: Record<string, string> = {
-  asset: '財產',
-  item: '物品',
-  other: '其他',
+const ASSET_TYPE_LABEL_MAP: Record<string, string> = {
+  '11': '財產',
+  A1: '物品',
+  A2: '其他',
 }
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
@@ -33,11 +34,12 @@ type ScanBuffer = {
 
 export function InventoryListPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
+  const [assetStatusLabelMap, setAssetStatusLabelMap] = useState<Record<string, string>>({})
   const [loadError, setLoadError] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState('')
-  const [selectedKind, setSelectedKind] = useState('all')
+  const [selectedAssetType, setSelectedAssetType] = useState('all')
   const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>('all')
   const [showDonated, setShowDonated] = useState(false)
   const [pageSize, setPageSize] = useState(10)
@@ -71,33 +73,60 @@ export function InventoryListPage() {
   }, [showDonated])
 
   useEffect(() => {
+    let cancelled = false
+
+    const loadAssetStatusOptions = async () => {
+      try {
+        const options = await fetchAssetStatusOptions()
+        if (cancelled) {
+          return
+        }
+        setAssetStatusLabelMap(buildAssetStatusLabelMap(options))
+      } catch {
+        if (!cancelled) {
+          setAssetStatusLabelMap({})
+        }
+      }
+    }
+
+    void loadAssetStatusOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     searchInputRef.current?.focus()
   }, [])
 
-  const toKindLabel = (kind: string) => {
-    if (!kind) {
+  const toAssetTypeLabel = (assetType: string) => {
+    if (!assetType) {
       return '--'
     }
 
-    return KIND_LABEL_MAP[kind] ?? kind
+    return ASSET_TYPE_LABEL_MAP[assetType] ?? assetType
   }
 
-  const kindOptions = useMemo(() => {
-    const uniqueKinds = new Set(items.map((item) => item.kind).filter((kind): kind is string => Boolean(kind?.trim())))
-    return ['all', ...Array.from(uniqueKinds)]
+  const getPrimarySerial = (item: InventoryItem) => {
+    return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || ''
+  }
+
+  const assetTypeOptions = useMemo(() => {
+    const uniqueAssetTypes = new Set(items.map((item) => item.asset_type).filter((assetType): assetType is string => Boolean(assetType?.trim())))
+    return ['all', ...Array.from(uniqueAssetTypes)]
   }, [items])
 
   const filteredItems = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase()
     const normalizeSearchValue = (value: unknown) => (typeof value === 'string' ? value : '').toLowerCase()
     const isNeedsFix = (item: InventoryItem) => {
-      const propertyNumber = item.property_number?.trim() ?? ''
-      return propertyNumber.length === 0 || CHINESE_CHARACTER_REGEX.test(propertyNumber)
+      const serial = getPrimarySerial(item).trim()
+      return serial.length === 0 || CHINESE_CHARACTER_REGEX.test(serial)
     }
 
     return items.filter((item) => {
-      const passesKindFilter = selectedKind === 'all' || item.kind === selectedKind
-      if (!passesKindFilter) {
+      const passesAssetTypeFilter = selectedAssetType === 'all' || item.asset_type === selectedAssetType
+      if (!passesAssetTypeFilter) {
         return false
       }
 
@@ -110,10 +139,10 @@ export function InventoryListPage() {
         return true
       }
 
-      const searchFields = [item.property_number, item.name, item.model, item.location, item.keeper]
+      const searchFields = [item.n_property_sn, item.property_sn, item.n_item_sn, item.item_sn, item.name, item.model, item.location, item.keeper]
       return searchFields.some((field) => normalizeSearchValue(field).includes(normalizedKeyword))
     })
-  }, [items, keyword, selectedKind, selectedCorrectionStatus])
+  }, [items, keyword, selectedAssetType, selectedCorrectionStatus])
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize))
   const paginatedItems = useMemo(() => {
@@ -123,7 +152,7 @@ export function InventoryListPage() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [keyword, selectedKind, selectedCorrectionStatus, pageSize])
+  }, [keyword, selectedAssetType, selectedCorrectionStatus, pageSize])
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -191,7 +220,7 @@ export function InventoryListPage() {
 
     const result = await Swal.fire({
       title: '確認刪除',
-      text: `確定要刪除財產「${item.name || item.property_number || item.id}」嗎？`,
+      text: `確定要刪除財產「${item.name || getPrimarySerial(item) || item.id}」嗎？`,
       icon: 'warning',
       showCancelButton: true,
       confirmButtonText: '刪除',
@@ -252,13 +281,13 @@ export function InventoryListPage() {
             }}
           />
 
-          <label htmlFor="kind-filter" className="font-bold">
-            類別篩選
+          <label htmlFor="asset-type-filter" className="font-bold">
+            資產類型篩選
           </label>
-          <select className={fieldClass} id="kind-filter" value={selectedKind} onChange={(event) => setSelectedKind(event.target.value)}>
-            {kindOptions.map((kindValue) => (
-              <option key={kindValue} value={kindValue}>
-                {kindValue === 'all' ? '全部類別' : toKindLabel(kindValue)}
+          <select className={fieldClass} id="asset-type-filter" value={selectedAssetType} onChange={(event) => setSelectedAssetType(event.target.value)}>
+            {assetTypeOptions.map((assetTypeValue) => (
+              <option key={assetTypeValue} value={assetTypeValue}>
+                {assetTypeValue === 'all' ? '全部類別' : toAssetTypeLabel(assetTypeValue)}
               </option>
             ))}
           </select>
@@ -329,7 +358,7 @@ export function InventoryListPage() {
               <table className="mt-2 w-full table-fixed border-collapse bg-white">
                 <thead>
                   <tr>
-                    {['#', '類別', '財產編號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '捐贈狀態', '操作'].map((header) => (
+                    {['#', '資產類型', '財產序號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '資產狀態', '操作'].map((header) => (
                       <th key={header} className={tableHeaderClass}>{header}</th>
                     ))}
                   </tr>
@@ -347,8 +376,8 @@ export function InventoryListPage() {
                         <td className={`${tableCellClass} whitespace-nowrap`}>
                           {item.id ? <a className="font-bold text-blue-700 no-underline hover:underline" href={`/inventory/edit/${item.id}`}>{item.id}</a> : '--'}
                         </td>
-                        <td className={tableCellClass}>{toKindLabel(item.kind)}</td>
-                        <td className={tableCellClass}>{item.property_number || '--'}</td>
+                        <td className={tableCellClass}>{toAssetTypeLabel(item.asset_type)}</td>
+                        <td className={tableCellClass}>{getPrimarySerial(item) || '--'}</td>
                         <td className={tableCellClass}>{item.name || '--'}</td>
                         <td className={tableCellClass}>{item.model || '--'}</td>
                         <td className={tableCellClass}>{item.specification || '--'}</td>
@@ -357,15 +386,9 @@ export function InventoryListPage() {
                         <td className={tableCellClass}>{item.location || '--'}</td>
                         <td className={tableCellClass}>{item.keeper || '--'}</td>
                         <td className={`${tableCellClass} whitespace-nowrap`}>
-                          {item.donated_at ? (
-                            <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
-                              已捐贈
-                            </span>
-                          ) : (
-                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">
-                              可使用
-                            </span>
-                          )}
+                          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">
+                            {toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}
+                          </span>
                         </td>
                         <td className={`${tableCellClass} whitespace-nowrap`}>
                           <button

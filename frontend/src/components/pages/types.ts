@@ -7,18 +7,40 @@ export type DashboardPayload = {
 
 export type InventoryItem = {
   id: number
-  kind: string
+  asset_type: string
+  asset_status: string
+  key: string
+  n_property_sn: string
+  property_sn: string
+  n_item_sn: string
+  item_sn: string
   specification: string
-  property_number: string
   name: string
+  name_code: string
+  name_code2: string
   model: string
   unit: string
+  count: number
   purchase_date: string | null
+  due_date: string | null
+  return_date: string | null
   location: string
   memo: string
+  memo2: string
   keeper: string
+  created_at: string | null
+  created_by: string
+  updated_at: string | null
+  updated_by: string
+  deleted_at: string | null
+  deleted_by: string
   donated_at?: string | null
   donation_request_id?: number | null
+}
+
+export type AssetStatusOption = {
+  code: string
+  description: string
 }
 
 export type IssueItem = {

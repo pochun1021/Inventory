@@ -105,7 +105,8 @@ export function PosCheckoutPage() {
   const itemOptions = useMemo(() => {
     return inventoryItems.map((item) => {
       const stock = stockMap[item.id] ?? 0
-      const title = `${item.name || '未命名'}${item.model ? ` (${item.model})` : ''}`
+      const serial = item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn
+      const title = `${item.name || '未命名'}${item.model ? ` (${item.model})` : ''}${serial ? ` ｜${serial}` : ''}`
       return {
         value: item.id,
         label: `${title}｜庫存 ${stock}`,
@@ -169,8 +170,8 @@ export function PosCheckoutPage() {
 
       const name = item.name?.toLowerCase() || ''
       const model = item.model?.toLowerCase() || ''
-      const propertyNumber = item.property_number?.toLowerCase() || ''
-      return name.includes(keyword) || model.includes(keyword) || propertyNumber.includes(keyword)
+      const serial = (item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || '').toLowerCase()
+      return name.includes(keyword) || model.includes(keyword) || serial.includes(keyword)
     })
 
     if (typeof line.item_id === 'number' && !nextOptions.some((option) => option.value === line.item_id)) {
@@ -405,7 +406,9 @@ export function PosCheckoutPage() {
 
                   <div className="min-w-0 md:col-span-5">
                     <p className="m-0 break-all text-sm text-slate-500">
-                      {selectedItem ? `${selectedItem.name || '未命名'}${selectedItem.model ? ` (${selectedItem.model})` : ''}` : '尚未選擇品項'}
+                      {selectedItem
+                        ? `${selectedItem.name || '未命名'}${selectedItem.model ? ` (${selectedItem.model})` : ''}${selectedItem.n_property_sn || selectedItem.property_sn || selectedItem.n_item_sn || selectedItem.item_sn ? ` ｜${selectedItem.n_property_sn || selectedItem.property_sn || selectedItem.n_item_sn || selectedItem.item_sn}` : ''}`
+                        : '尚未選擇品項'}
                       {' · '}
                       目前庫存 {line.stockQuantity}
                     </p>
