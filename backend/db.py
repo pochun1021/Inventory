@@ -16,19 +16,33 @@ LOCK_PATH = BASE_DIR / "inventory.xlsx.lock"
 SHEETS: dict[str, list[str]] = {
     "inventory_items": [
         "id",
-        "kind",
-        "property_number",
+        "asset_type",
+        "asset_status",
+        "key",
+        "n_property_sn",
+        "property_sn",
+        "n_item_sn",
+        "item_sn",
         "name",
+        "name_code",
+        "name_code2",
         "model",
         "specification",
         "unit",
+        "count",
         "purchase_date",
+        "due_date",
+        "return_date",
         "location",
         "memo",
+        "memo2",
         "keeper",
+        "created_at",
+        "created_by",
+        "updated_at",
+        "updated_by",
         "deleted_at",
-        "donated_at",
-        "donation_request_id",
+        "deleted_by",
     ],
     "order_sn": [
         "name",
@@ -142,6 +156,35 @@ SHEETS: dict[str, list[str]] = {
 }
 
 STRING_FIELDS: dict[str, list[str]] = {
+    "inventory_items": [
+        "asset_type",
+        "asset_status",
+        "key",
+        "n_property_sn",
+        "property_sn",
+        "n_item_sn",
+        "item_sn",
+        "name",
+        "name_code",
+        "name_code2",
+        "model",
+        "specification",
+        "unit",
+        "count",
+        "purchase_date",
+        "due_date",
+        "return_date",
+        "location",
+        "memo",
+        "memo2",
+        "keeper",
+        "created_at",
+        "created_by",
+        "updated_at",
+        "updated_by",
+        "deleted_at",
+        "deleted_by",
+    ],
     "issue_requests": ["requester", "department", "purpose", "request_date", "memo", "created_at"],
     "issue_items": ["note"],
     "borrow_requests": [
@@ -212,6 +255,108 @@ def _has_cjk(value: Any) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in str(value))
 
 
+KIND_TO_ASSET_TYPE = {
+    "asset": "11",
+    "item": "A1",
+    "other": "A2",
+}
+ASSET_TYPE_TO_KIND = {value: key for key, value in KIND_TO_ASSET_TYPE.items()}
+
+
+def _kind_to_asset_type(kind: Any) -> str:
+    return KIND_TO_ASSET_TYPE.get(str(kind).strip(), "A2")
+
+
+def _asset_type_to_kind(asset_type: Any) -> str:
+    return ASSET_TYPE_TO_KIND.get(str(asset_type).strip(), "other")
+
+
+def _inventory_property_number(row: dict[str, Any]) -> str:
+    for field in ("n_property_sn", "property_sn", "n_item_sn", "item_sn"):
+        value = _to_str(row.get(field)).strip()
+        if value:
+            return value
+    return ""
+
+
+def _inventory_key(row: dict[str, Any], property_number: str) -> str:
+    key = _to_str(row.get("key")).strip()
+    if key:
+        return key
+    if property_number:
+        return property_number
+    item_id = _to_int(row.get("id"))
+    return f"item-{item_id}" if item_id > 0 else ""
+
+
+def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_number: str) -> dict[str, Any]:
+    asset_type = _kind_to_asset_type(item_data.get("kind"))
+    n_property_sn = property_number if asset_type == "11" else ""
+    n_item_sn = property_number if asset_type != "11" else ""
+    now = _now_str()
+    row = {
+        "id": new_id,
+        "asset_type": asset_type,
+        "asset_status": "0",
+        "key": property_number or f"item-{new_id}",
+        "n_property_sn": n_property_sn,
+        "property_sn": "",
+        "n_item_sn": n_item_sn,
+        "item_sn": "",
+        "name": _to_str(item_data.get("name")),
+        "name_code": "",
+        "name_code2": "",
+        "model": _to_str(item_data.get("model")),
+        "specification": _to_str(item_data.get("specification")),
+        "unit": _to_str(item_data.get("unit")),
+        "count": "1",
+        "purchase_date": _to_str(item_data.get("purchase_date")),
+        "due_date": "",
+        "return_date": "",
+        "location": _to_str(item_data.get("location")),
+        "memo": _to_str(item_data.get("memo")),
+        "memo2": "",
+        "keeper": _to_str(item_data.get("keeper")),
+        "created_at": now,
+        "created_by": "system",
+        "updated_at": "",
+        "updated_by": "",
+        "deleted_at": "",
+        "deleted_by": "",
+    }
+    return row
+
+
+def _to_inventory_api_row(
+    row: dict[str, Any],
+    *,
+    donation_map: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    item_id = _to_int(row.get("id"))
+    property_number = _inventory_property_number(row)
+    donation_info = donation_map.get(item_id, {}) if donation_map else {}
+    donated_at = _to_str(donation_info.get("donated_at"))
+    donation_request_id = _to_int(donation_info.get("donation_request_id"))
+    if not donated_at and _to_str(row.get("asset_status")) == "3":
+        donated_at = _to_str(row.get("updated_at")) or _to_str(row.get("created_at"))
+    return {
+        "id": item_id,
+        "kind": _asset_type_to_kind(row.get("asset_type")),
+        "specification": _to_str(row.get("specification")),
+        "property_number": property_number,
+        "name": _to_str(row.get("name")),
+        "model": _to_str(row.get("model")),
+        "unit": _to_str(row.get("unit")),
+        "purchase_date": _to_str(row.get("purchase_date")),
+        "location": _to_str(row.get("location")),
+        "keeper": _to_str(row.get("keeper")),
+        "memo": _to_str(row.get("memo")),
+        "donated_at": donated_at,
+        "donation_request_id": donation_request_id if donation_request_id > 0 else "",
+        "deleted_at": _to_str(row.get("deleted_at")),
+    }
+
+
 @contextmanager
 def _locked_workbook():
     lock = FileLock(str(LOCK_PATH))
@@ -253,7 +398,7 @@ def _ensure_sheet(wb: Workbook, sheet_name: str, headers: list[str]) -> bool:
     ws = wb[sheet_name]
     existing_headers = [cell.value for cell in ws[1]] if ws.max_row >= 1 else []
     if existing_headers != headers:
-        rows = _read_rows(ws, existing_headers)
+        rows = _read_rows(ws, existing_headers) if sheet_name != "inventory_items" else []
         ws.delete_rows(1, ws.max_row or 1)
         ws.append(headers)
         for row in rows:
@@ -329,6 +474,39 @@ def _write_rows(ws, headers: list[str], rows: list[dict[str, Any]]) -> None:
         ws.append([row.get(header, "") for header in headers])
 
 
+def _donation_map(
+    donation_item_rows: list[dict[str, Any]],
+    donation_request_rows: list[dict[str, Any]],
+) -> dict[int, dict[str, Any]]:
+    donation_date_map = {
+        _to_int(row.get("id")): _to_str(row.get("created_at"))
+        for row in donation_request_rows
+    }
+    item_map: dict[int, dict[str, Any]] = {}
+    for row in donation_item_rows:
+        request_id = _to_int(row.get("request_id"))
+        item_id = _to_int(row.get("item_id"))
+        if item_id <= 0:
+            continue
+        item_map[item_id] = {
+            "donation_request_id": request_id,
+            "donated_at": donation_date_map.get(request_id, ""),
+        }
+    return item_map
+
+
+def _is_item_donated(
+    row: dict[str, Any],
+    *,
+    donation_info: dict[str, Any] | None = None,
+) -> bool:
+    if _to_str(row.get("asset_status")) == "3":
+        return True
+    if donation_info and _to_int(donation_info.get("donation_request_id")) > 0:
+        return True
+    return False
+
+
 def _next_id(rows: list[dict[str, Any]]) -> int:
     max_id = 0
     for row in rows:
@@ -356,8 +534,8 @@ def get_pending_fix_count() -> int:
         for row in rows
         if _is_blank(row.get("deleted_at"))
         and (
-            _is_blank(str(row.get("property_number", "")).strip())
-            or _has_cjk(row.get("property_number"))
+            _is_blank(_inventory_property_number(row))
+            or _has_cjk(_inventory_property_number(row))
         )
     )
 
@@ -365,50 +543,30 @@ def get_pending_fix_count() -> int:
 def list_items(*, include_donated: bool = False) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         rows = _read_rows(wb["inventory_items"])
-    results = [
-        {
-            "id": row.get("id"),
-            "kind": row.get("kind", ""),
-            "specification": row.get("specification", ""),
-            "property_number": row.get("property_number", ""),
-            "name": row.get("name", ""),
-            "model": row.get("model", ""),
-            "unit": row.get("unit", ""),
-            "purchase_date": row.get("purchase_date", ""),
-            "location": row.get("location", ""),
-            "keeper": row.get("keeper", ""),
-            "memo": row.get("memo", ""),
-            "donated_at": row.get("donated_at", ""),
-            "donation_request_id": row.get("donation_request_id", ""),
-            "deleted_at": row.get("deleted_at", ""),
-        }
-        for row in rows
-        if _is_blank(row.get("deleted_at"))
-        and (include_donated or _is_blank(row.get("donated_at")))
-    ]
+        donation_rows = _read_rows(wb["donation_items"])
+        donation_request_rows = _read_rows(wb["donation_requests"])
+
+    donation_map = _donation_map(donation_rows, donation_request_rows)
+    results = []
+    for row in rows:
+        if not _is_blank(row.get("deleted_at")):
+            continue
+        donation_info = donation_map.get(_to_int(row.get("id")))
+        if not include_donated and _is_item_donated(row, donation_info=donation_info):
+            continue
+        results.append(_to_inventory_api_row(row, donation_map=donation_map))
     return sorted(results, key=lambda row: _to_int(row.get("id")), reverse=True)
 
 
 def get_item_by_id(item_id: int) -> dict[str, Any] | None:
     with _locked_workbook() as wb:
         rows = _read_rows(wb["inventory_items"])
+        donation_rows = _read_rows(wb["donation_items"])
+        donation_request_rows = _read_rows(wb["donation_requests"])
+    donation_map = _donation_map(donation_rows, donation_request_rows)
     for row in rows:
         if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
-            return {
-                "id": row.get("id"),
-                "kind": row.get("kind", ""),
-                "specification": row.get("specification", ""),
-                "property_number": row.get("property_number", ""),
-                "name": row.get("name", ""),
-                "model": row.get("model", ""),
-                "unit": row.get("unit", ""),
-                "purchase_date": row.get("purchase_date", ""),
-                "location": row.get("location", ""),
-                "keeper": row.get("keeper", ""),
-                "memo": row.get("memo", ""),
-                "donated_at": row.get("donated_at", ""),
-                "donation_request_id": row.get("donation_request_id", ""),
-            }
+            return _to_inventory_api_row(row, donation_map=donation_map)
     return None
 
 
@@ -424,24 +582,7 @@ def create_item(item_data: dict[str, Any]) -> int:
         ws = wb["inventory_items"]
         rows = _read_rows(ws)
         new_id = _next_id(rows)
-        rows.append(
-            {
-                "id": new_id,
-                "kind": item_data["kind"],
-                "specification": item_data["specification"],
-                "property_number": item_data["property_number"],
-                "name": item_data["name"],
-                "model": item_data["model"],
-                "unit": item_data["unit"],
-                "purchase_date": item_data["purchase_date"],
-                "location": item_data["location"],
-                "keeper": item_data["keeper"],
-                "memo": item_data["memo"],
-                "deleted_at": "",
-                "donated_at": "",
-                "donation_request_id": "",
-            }
-        )
+        rows.append(_to_inventory_create_row(new_id, item_data, property_number))
         _write_rows(ws, SHEETS["inventory_items"], rows)
         wb.save(DB_PATH)
         return new_id
@@ -481,24 +622,7 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
                 order_row["current_value"] = current_value
                 property_number = f"tmp-{_date_sn()}-{current_value:04d}"
 
-            inventory_rows.append(
-                {
-                    "id": next_id,
-                    "kind": item_data["kind"],
-                    "specification": item_data["specification"],
-                    "property_number": property_number,
-                    "name": item_data["name"],
-                    "model": item_data["model"],
-                    "unit": item_data["unit"],
-                    "purchase_date": item_data["purchase_date"],
-                    "location": item_data["location"],
-                    "keeper": item_data["keeper"],
-                    "memo": item_data["memo"],
-                    "deleted_at": "",
-                    "donated_at": "",
-                    "donation_request_id": "",
-                }
-            )
+            inventory_rows.append(_to_inventory_create_row(next_id, item_data, property_number))
             next_id += 1
             created += 1
 
@@ -515,11 +639,15 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
         updated = False
         for row in rows:
             if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
+                asset_type = _kind_to_asset_type(item_data.get("kind"))
+                property_number = _to_str(item_data.get("property_number")).strip()
                 row.update(
                     {
-                        "kind": item_data["kind"],
+                        "asset_type": asset_type,
                         "specification": item_data["specification"],
-                        "property_number": item_data["property_number"],
+                        "n_property_sn": property_number if asset_type == "11" else "",
+                        "n_item_sn": property_number if asset_type != "11" else "",
+                        "key": _inventory_key(row, property_number),
                         "name": item_data["name"],
                         "model": item_data["model"],
                         "unit": item_data["unit"],
@@ -527,6 +655,8 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                         "location": item_data["location"],
                         "keeper": item_data["keeper"],
                         "memo": item_data["memo"],
+                        "updated_at": _now_str(),
+                        "updated_by": "system",
                     }
                 )
                 updated = True
@@ -545,6 +675,7 @@ def delete_item(item_id: int) -> bool:
         for row in rows:
             if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
                 row["deleted_at"] = _now_str()
+                row["deleted_by"] = "system"
                 deleted = True
                 break
         if deleted:
@@ -631,18 +762,22 @@ def validate_item_ids_available(
 ) -> tuple[bool, str | None]:
     with _locked_workbook() as wb:
         inventory_rows = _read_rows(wb["inventory_items"])
+        donation_item_rows = _read_rows(wb["donation_items"])
 
     if enforce_unique and len(item_ids) != len(set(item_ids)):
         return False, "item_id cannot be duplicated"
 
     inventory_map = {_to_int(row.get("id")): row for row in inventory_rows if _is_blank(row.get("deleted_at"))}
+    donation_request_map = {
+        _to_int(row.get("item_id")): _to_int(row.get("request_id"))
+        for row in donation_item_rows
+    }
     for item_id in item_ids:
         row = inventory_map.get(item_id)
         if row is None:
             return False, f"item_id {item_id} not found"
-        donated_at = row.get("donated_at")
-        donation_request_id = _to_int(row.get("donation_request_id"))
-        if _is_blank(donated_at):
+        donation_request_id = donation_request_map.get(item_id, 0)
+        if _to_str(row.get("asset_status")) != "3" and donation_request_id == 0:
             continue
         if allow_donation_request_id is not None and donation_request_id == allow_donation_request_id:
             continue
@@ -808,7 +943,7 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
             row = inventory_map.get(item_id)
             if row is None:
                 raise ValueError(f"item_id {item_id} not found")
-            if not _is_blank(row.get("donated_at")):
+            if _to_str(row.get("asset_status")) == "3":
                 raise ValueError(f"item_id {item_id} is already donated")
 
         request_id = _next_id(request_rows)
@@ -841,8 +976,9 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
         now = _now_str()
         for row in inventory_rows:
             if _to_int(row.get("id")) in marked_item_ids and _is_blank(row.get("deleted_at")):
-                row["donated_at"] = now
-                row["donation_request_id"] = request_id
+                row["asset_status"] = "3"
+                row["updated_at"] = now
+                row["updated_by"] = "system"
 
         _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
@@ -923,9 +1059,12 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
             row = inventory_map.get(item_id)
             if row is None:
                 raise ValueError(f"item_id {item_id} not found")
-            donated_at = row.get("donated_at")
-            donation_request_id = _to_int(row.get("donation_request_id"))
-            if _is_blank(donated_at):
+            donation_request_id = 0
+            for donation_row in item_rows:
+                if _to_int(donation_row.get("item_id")) == item_id:
+                    donation_request_id = _to_int(donation_row.get("request_id"))
+                    break
+            if _to_str(row.get("asset_status")) != "3" and donation_request_id == 0:
                 continue
             if donation_request_id != request_id:
                 raise ValueError(f"item_id {item_id} is already donated")
@@ -939,9 +1078,9 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
             item_id = _to_int(row.get("id"))
             if item_id not in old_item_ids or not _is_blank(row.get("deleted_at")):
                 continue
-            if _to_int(row.get("donation_request_id")) == request_id:
-                row["donated_at"] = ""
-                row["donation_request_id"] = ""
+            row["asset_status"] = "0"
+            row["updated_at"] = _now_str()
+            row["updated_by"] = "system"
 
         request_row.update(
             {
@@ -971,8 +1110,9 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
         marked_item_ids = set(selected_item_ids)
         for row in inventory_rows:
             if _to_int(row.get("id")) in marked_item_ids and _is_blank(row.get("deleted_at")):
-                row["donated_at"] = now
-                row["donation_request_id"] = request_id
+                row["asset_status"] = "3"
+                row["updated_at"] = now
+                row["updated_by"] = "system"
 
         _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
@@ -1005,9 +1145,9 @@ def delete_donation_request(request_id: int) -> bool:
         for row in inventory_rows:
             if _to_int(row.get("id")) not in removed_item_ids:
                 continue
-            if _to_int(row.get("donation_request_id")) == request_id:
-                row["donated_at"] = ""
-                row["donation_request_id"] = ""
+            row["asset_status"] = "0"
+            row["updated_at"] = _now_str()
+            row["updated_by"] = "system"
 
         _write_rows(request_ws, SHEETS["donation_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["donation_items"], remaining_items)
@@ -1539,7 +1679,7 @@ def list_stock_balances() -> list[dict[str, Any]]:
                 "item_id": item_id,
                 "item_name": _to_str(item.get("name")),
                 "item_model": _to_str(item.get("model")),
-                "property_number": _to_str(item.get("property_number")),
+                "property_number": _inventory_property_number(item),
                 "quantity": quantity,
             }
         )
