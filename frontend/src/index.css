@@ -4,6 +4,16 @@
   :root {
     font-family: 'Noto Sans TC', 'Segoe UI', Arial, sans-serif;
     color: #1f2937;
+    --background: 210 40% 98%;
+    --foreground: 222.2 47.4% 11.2%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47.4% 11.2%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --border: 214.3 31.8% 91.4%;
   }
 
   * {
@@ -11,6 +21,6 @@
   }
 
   body {
-    @apply m-0 min-h-screen bg-gradient-to-b from-[#f0f7ff] to-slate-50;
+    @apply m-0 min-h-screen bg-gradient-to-b from-[#f0f7ff] to-slate-50 text-[hsl(var(--foreground))];
   }
 }

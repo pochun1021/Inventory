@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { Activity, AlertTriangle, Boxes, Server } from 'lucide-react'
 import { apiUrl } from '../../api'
 import type { DashboardPayload } from './types'
-
-const cardClass = 'rounded-2xl bg-white shadow-[0_12px_30px_rgba(31,41,55,0.12)]'
+import { Badge } from '../ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
+import { Separator } from '../ui/separator'
 
 export function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardPayload | null>(null)
@@ -27,35 +29,78 @@ export function DashboardPage() {
 
   return (
     <>
-      <section className={`${cardClass} px-7 py-6`}>
-        <h1 className="mt-0">資產管理 Dashboard</h1>
-        <p className="mt-2 text-slate-500">此頁面僅顯示系統數據。</p>
+      <Card className="border-0 bg-gradient-to-r from-slate-900 to-slate-700 text-white shadow-lg">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-2xl text-white">資產管理 Dashboard</CardTitle>
+              <CardDescription className="mt-2 text-slate-200">此頁面僅顯示系統數據。</CardDescription>
+            </div>
+            <Badge variant="secondary" className="bg-white/15 text-white">
+              <Activity className="size-3.5" />
+              系統摘要
+            </Badge>
+          </div>
+        </CardHeader>
+      </Card>
+
+      <section className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle>系統狀態</CardTitle>
+              <Server className="size-4 text-[hsl(var(--muted-foreground))]" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="m-0 text-3xl font-semibold text-[hsl(var(--primary))]">{dashboardData?.status ?? '讀取中...'}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle>資產總數</CardTitle>
+              <Boxes className="size-4 text-[hsl(var(--muted-foreground))]" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="m-0 text-3xl font-semibold text-[hsl(var(--primary))]">{dashboardData?.items ?? '--'}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle>待修改資料</CardTitle>
+              <AlertTriangle className="size-4 text-amber-500" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="m-0 text-3xl font-semibold text-[hsl(var(--primary))]">{dashboardData?.pendingFix ?? '--'}</p>
+            <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">財產編號空值或包含中文</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle>後端訊息</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">{dashboardData?.data ?? '等待資料載入'}</p>
+          </CardContent>
+        </Card>
       </section>
 
-      <section className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
-        <article className={`${cardClass} p-5`}>
-          <h2 className="mt-0">系統狀態</h2>
-          <p className="m-0 text-[1.75rem] font-bold text-blue-700">{dashboardData?.status ?? '讀取中...'}</p>
-        </article>
+      <Separator className="my-1" />
 
-        <article className={`${cardClass} p-5`}>
-          <h2 className="mt-0">資產總數</h2>
-          <p className="m-0 text-[1.75rem] font-bold text-blue-700">{dashboardData?.items ?? '--'}</p>
-        </article>
-
-        <article className={`${cardClass} p-5`}>
-          <h2 className="mt-0">待修改資料</h2>
-          <p className="m-0 text-[1.75rem] font-bold text-blue-700">{dashboardData?.pendingFix ?? '--'}</p>
-          <p className="mt-1.5 text-[0.92rem] text-slate-500">財產編號空值或包含中文</p>
-        </article>
-
-        <article className={`${cardClass} p-5`}>
-          <h2 className="mt-0">後端訊息</h2>
-          <p>{dashboardData?.data ?? '等待資料載入'}</p>
-        </article>
-      </section>
-
-      {loadError ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{loadError}</p> : null}
+      {loadError ? (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="p-4">
+            <p className="m-0 text-sm text-red-700">{loadError}</p>
+          </CardContent>
+        </Card>
+      ) : null}
     </>
   )
 }
