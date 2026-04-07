@@ -14,20 +14,20 @@ type ImportResponse = {
   errors: ImportErrorDetail[]
 }
 
-const KIND_OPTIONS = {
-  物品: 'item',
-  財產: 'asset',
-  其他: 'other',
+const ASSET_TYPE_OPTIONS = {
+  財產: '11',
+  物品: 'A1',
+  其他: 'A2',
 } as const
 
-type KindValue = (typeof KIND_OPTIONS)[keyof typeof KIND_OPTIONS]
-const KIND_ENTRIES = Object.entries(KIND_OPTIONS) as Array<[string, KindValue]>
+type AssetTypeValue = (typeof ASSET_TYPE_OPTIONS)[keyof typeof ASSET_TYPE_OPTIONS]
+const ASSET_TYPE_ENTRIES = Object.entries(ASSET_TYPE_OPTIONS) as Array<[string, AssetTypeValue]>
 
 const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
 const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 
 export function UploadPanel() {
-  const [kind, setKind] = useState(KIND_ENTRIES[0][1])
+  const [assetType, setAssetType] = useState(ASSET_TYPE_ENTRIES[0][1])
   const [file, setFile] = useState<File | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -56,7 +56,7 @@ export function UploadPanel() {
 
     try {
       const formData = new FormData()
-      formData.append('kind', kind)
+      formData.append('asset_type', assetType)
       formData.append('file', file)
 
       const response = await fetch(apiUrl('/api/items/import'), {
@@ -94,8 +94,8 @@ export function UploadPanel() {
       <form className="mt-6 grid gap-4" onSubmit={handleSubmit}>
         <label className="grid gap-1.5 font-semibold">
           資產類別
-          <select className={fieldClass} value={kind} onChange={(event) => setKind(event.target.value as KindValue)}>
-            {KIND_ENTRIES.map(([label, value]) => (
+          <select className={fieldClass} value={assetType} onChange={(event) => setAssetType(event.target.value as AssetTypeValue)}>
+            {ASSET_TYPE_ENTRIES.map(([label, value]) => (
               <option key={value} value={value}>
                 {label}
               </option>

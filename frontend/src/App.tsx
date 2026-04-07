@@ -6,9 +6,6 @@ import { DonationPage } from './components/pages/DonationPage'
 import { DonationListPage } from './components/pages/DonationListPage'
 import { InventoryFormPage } from './components/pages/InventoryFormPage'
 import { InventoryListPage } from './components/pages/InventoryListPage'
-import { PosCheckoutPage } from './components/pages/PosCheckoutPage'
-import { PosOrdersPage } from './components/pages/PosOrdersPage'
-import { PosStockPage } from './components/pages/PosStockPage'
 import { IssueListPage } from './components/pages/IssueListPage'
 import { IssuePage } from './components/pages/IssuePage'
 import { UploadPage } from './components/pages/UploadPage'
@@ -65,9 +62,6 @@ function App() {
   const isDonationCreatePage = pathname === '/donations/new'
   const isInventoryPage = pathname === '/inventory'
   const isCreateInventoryPage = pathname === '/inventory/new'
-  const isPosCheckoutPage = pathname === '/pos/checkout'
-  const isPosOrdersPage = pathname === '/pos/orders'
-  const isPosStockPage = pathname === '/pos/stock'
   const editItemId = parseEditItemId(pathname)
   const editIssueRequestId = parseIssueRequestId(pathname)
   const editBorrowRequestId = parseBorrowRequestId(pathname)
@@ -91,9 +85,6 @@ function App() {
       {isUploadPage ? <UploadPage /> : null}
       {isCreateInventoryPage ? <InventoryFormPage /> : null}
       {editItemId ? <InventoryFormPage itemId={editItemId} /> : null}
-      {isPosCheckoutPage ? <PosCheckoutPage /> : null}
-      {isPosOrdersPage ? <PosOrdersPage /> : null}
-      {isPosStockPage ? <PosStockPage /> : null}
 
       {!isDashboardPage &&
       !isIssueListPage &&
@@ -108,13 +99,10 @@ function App() {
       !isUploadPage &&
       !isInventoryPage &&
       !isCreateInventoryPage &&
-      !isPosCheckoutPage &&
-      !isPosOrdersPage &&
-      !isPosStockPage &&
       !editItemId ? (
         <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
           <h1 className="mt-0">找不到頁面</h1>
-          <p className="mt-2 text-slate-500">請使用上方導覽前往 Dashboard、POS、領用/借用/捐贈清單、財產清單、新增資料或上傳頁面。</p>
+          <p className="mt-2 text-slate-500">請使用上方導覽前往 Dashboard、領用/借用/捐贈清單、財產清單、新增資料或上傳頁面。</p>
         </section>
       ) : null}
     </main>

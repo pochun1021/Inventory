@@ -4,7 +4,6 @@
 
 - 提供 Dashboard 與庫存 CRUD API
 - 提供 Excel（`.xlsx`）批次匯入 API
-- 提供 POS 結帳與庫存異動 API（不含金流）
 - 管理 XLSX 資料檔與資料表初始化
 - 記錄操作日誌（create/read/update/delete/import/purge）
 - 提供前端靜態資源（當 `frontend/dist` 存在時）
@@ -79,29 +78,13 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `PUT /api/donations/{request_id}`：更新捐贈單（`recipient` 必填）
 - `DELETE /api/donations/{request_id}`：刪除捐贈單，解除關聯品項的捐贈標記
 
-### POS（不含金流）
-
-- `POST /api/pos/checkout`：建立 POS 訂單並寫入庫存異動
-- `GET /api/pos/orders`：列出 POS 訂單
-- `GET /api/pos/orders/{order_id}`：取得單筆 POS 訂單
-- `GET /api/pos/stock`：查看各品項庫存餘額
-- `PUT /api/pos/stock/{item_id}`：設定單一品項庫存數量
-- `GET /api/pos/stock-movements`：查看庫存異動台帳
-
-`order_type` 支援：
-- `sale`：一般銷售（扣庫）
-- `issue`：領用（扣庫，並自動建立 issue request）
-- `borrow`：借用（扣庫，並自動建立 borrow request）
-- `issue_restock`：領用回補（加庫）
-- `borrow_return`：借用歸還（加庫；可帶 `borrow_request_id` 直接回填借用單狀態）
-
 ### 批次匯入
 
 - `POST /api/items/import`
   - `multipart/form-data`
   - 欄位：
     - `file`：`.xlsx` 檔案
-    - `kind`：類別（例：`assets` / `supplies` / `other`）
+    - `asset_type`：類別代碼（`11` / `A1` / `A2`）
 
 ## Excel 欄位需求
 
@@ -117,7 +100,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `放置地點`
 - `保管人（單位）`
 
-> `類別` 不從 Excel 欄位讀取，而是使用上傳時傳入的 `kind`。
+> `類別` 不從 Excel 欄位讀取，而是使用上傳時傳入的 `asset_type`。
 
 ## 資料儲存與資料保留策略
 

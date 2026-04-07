@@ -7,18 +7,40 @@ export type DashboardPayload = {
 
 export type InventoryItem = {
   id: number
-  kind: string
+  asset_type: string
+  asset_status: string
+  key: string
+  n_property_sn: string
+  property_sn: string
+  n_item_sn: string
+  item_sn: string
   specification: string
-  property_number: string
   name: string
+  name_code: string
+  name_code2: string
   model: string
   unit: string
+  count: number
   purchase_date: string | null
+  due_date: string | null
+  return_date: string | null
   location: string
   memo: string
+  memo2: string
   keeper: string
+  created_at: string | null
+  created_by: string
+  updated_at: string | null
+  updated_by: string
+  deleted_at: string | null
+  deleted_by: string
   donated_at?: string | null
   donation_request_id?: number | null
+}
+
+export type AssetStatusOption = {
+  code: string
+  description: string
 }
 
 export type IssueItem = {
@@ -80,64 +102,4 @@ export type DonationRequest = {
   donation_date: string | null
   memo: string
   items: DonationItem[]
-}
-
-export type PosCheckoutItem = {
-  item_id: number
-  quantity: number
-  unit_price: number
-  discount: number
-  note: string
-}
-
-export type PosOrderItem = {
-  id: number
-  item_id: number
-  item_name: string
-  item_model: string
-  quantity: number
-  unit_price: number
-  discount: number
-  line_total: number
-  note: string
-}
-
-export type PosOrder = {
-  id: number
-  order_no: string
-  order_type: string
-  customer_name: string
-  operator_name: string
-  purpose: string
-  request_ref_type: string
-  request_ref_id: number | null
-  subtotal: number
-  discount_total: number
-  total: number
-  note: string
-  created_at: string | null
-  items: PosOrderItem[]
-}
-
-export type PosStockBalance = {
-  item_id: number
-  item_name: string
-  item_model: string
-  property_number: string
-  quantity: number
-}
-
-export type PosStockMovement = {
-  id: number
-  order_id: number
-  order_no: string
-  item_id: number
-  item_name: string
-  item_model: string
-  delta: number
-  balance_after: number
-  reason: string
-  related_type: string
-  related_id: number | null
-  created_at: string | null
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
+import { fetchAssetStatusOptions } from './assetStatusLookup'
 import type { InventoryItem } from './types'
 
 type InventoryFormPageProps = {
@@ -7,35 +8,57 @@ type InventoryFormPageProps = {
 }
 
 type InventoryFormData = {
-  kind: string
-  property_number: string
+  asset_type: string
+  asset_status: string
+  key: string
+  n_property_sn: string
+  property_sn: string
+  n_item_sn: string
+  item_sn: string
   name: string
+  name_code: string
+  name_code2: string
   model: string
   specification: string
   unit: string
+  count: number
   purchase_date: string
+  due_date: string
+  return_date: string
   location: string
-  keeper: string
   memo: string
+  memo2: string
+  keeper: string
 }
 
-const KIND_OPTIONS = [
-  { value: 'asset', label: '財產' },
-  { value: 'item', label: '物品' },
-  { value: 'other', label: '其他' },
+const ASSET_TYPE_OPTIONS = [
+  { value: '11', label: '財產 (11)' },
+  { value: 'A1', label: '物品 (A1)' },
+  { value: 'A2', label: '其他 (A2)' },
 ]
 
 const DEFAULT_FORM_DATA: InventoryFormData = {
-  kind: '',
-  property_number: '',
+  asset_type: 'A2',
+  asset_status: '0',
+  key: '',
+  n_property_sn: '',
+  property_sn: '',
+  n_item_sn: '',
+  item_sn: '',
   name: '',
+  name_code: '',
+  name_code2: '',
   model: '',
   specification: '',
   unit: '',
+  count: 1,
   purchase_date: '',
+  due_date: '',
+  return_date: '',
   location: '',
-  keeper: '',
   memo: '',
+  memo2: '',
+  keeper: '',
 }
 
 const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
@@ -54,20 +77,68 @@ function normalizeDateForInput(value: string | null): string {
   return value
 }
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return '--'
+  }
+
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleString('zh-TW', { hour12: false })
+  }
+
+  return value
+}
+
 function toSubmitPayload(formData: InventoryFormData) {
+  const normalizedCount = Number.isFinite(formData.count) && formData.count > 0 ? Math.floor(formData.count) : 1
+
   return {
     ...formData,
+    count: normalizedCount,
     purchase_date: formData.purchase_date || null,
+    due_date: formData.due_date || null,
+    return_date: formData.return_date || null,
   }
 }
 
 export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   const isEditMode = typeof itemId === 'number'
   const [formData, setFormData] = useState<InventoryFormData>(DEFAULT_FORM_DATA)
+  const [loadedItem, setLoadedItem] = useState<InventoryItem | null>(null)
   const [loading, setLoading] = useState(isEditMode)
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [assetStatusOptions, setAssetStatusOptions] = useState<Array<{ value: string; label: string }>>([])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadAssetStatusOptions = async () => {
+      try {
+        const options = await fetchAssetStatusOptions()
+        if (cancelled) {
+          return
+        }
+        setAssetStatusOptions(
+          options.map((option) => ({
+            value: option.code,
+            label: `${option.description || option.code} (${option.code})`,
+          })),
+        )
+      } catch {
+        if (!cancelled) {
+          setAssetStatusOptions([])
+        }
+      }
+    }
+
+    void loadAssetStatusOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!isEditMode || !itemId) {
@@ -85,17 +156,29 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
         }
 
         const item = (await response.json()) as InventoryItem
+        setLoadedItem(item)
         setFormData({
-          kind: item.kind || '',
-          property_number: item.property_number || '',
+          asset_type: item.asset_type || 'A2',
+          asset_status: item.asset_status || '0',
+          key: item.key || '',
+          n_property_sn: item.n_property_sn || '',
+          property_sn: item.property_sn || '',
+          n_item_sn: item.n_item_sn || '',
+          item_sn: item.item_sn || '',
           name: item.name || '',
+          name_code: item.name_code || '',
+          name_code2: item.name_code2 || '',
           model: item.model || '',
           specification: item.specification || '',
           unit: item.unit || '',
+          count: item.count > 0 ? item.count : 1,
           purchase_date: normalizeDateForInput(item.purchase_date),
+          due_date: normalizeDateForInput(item.due_date),
+          return_date: normalizeDateForInput(item.return_date),
           location: item.location || '',
-          keeper: item.keeper || '',
           memo: item.memo || '',
+          memo2: item.memo2 || '',
+          keeper: item.keeper || '',
         })
       } catch {
         setErrorMessage('讀取財產資料失敗，請稍後再試。')
@@ -122,6 +205,14 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     }))
   }
 
+  const handleCountChange = (value: string) => {
+    const nextValue = Number(value)
+    setFormData((previousData) => ({
+      ...previousData,
+      count: Number.isFinite(nextValue) ? nextValue : 0,
+    }))
+  }
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setErrorMessage('')
@@ -142,6 +233,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
       }
 
       const savedItem = (await response.json()) as InventoryItem
+      setLoadedItem(savedItem)
       setSuccessMessage(isEditMode ? '財產資料已更新。' : '庫存資料新增成功。')
 
       if (!isEditMode && savedItem.id) {
@@ -169,33 +261,71 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
         {!loading ? (
           <form className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-x-4 gap-y-3.5" onSubmit={(event) => void handleSubmit(event)}>
             <label className={labelClass}>
-              類別
-              <select className={fieldClass} value={formData.kind} onChange={(event) => handleInputChange('kind', event.target.value)}>
-                <option value="">請選擇類別</option>
-                {KIND_OPTIONS.map((kindOption) => (
-                  <option key={kindOption.value} value={kindOption.value}>
-                    {kindOption.label}
+              資產類型
+              <select className={fieldClass} value={formData.asset_type} onChange={(event) => handleInputChange('asset_type', event.target.value)}>
+                {ASSET_TYPE_OPTIONS.map((assetTypeOption) => (
+                  <option key={assetTypeOption.value} value={assetTypeOption.value}>
+                    {assetTypeOption.label}
                   </option>
                 ))}
-                {!KIND_OPTIONS.some((kindOption) => kindOption.value === formData.kind) && formData.kind ? (
-                  <option value={formData.kind}>{formData.kind}</option>
+                {!ASSET_TYPE_OPTIONS.some((assetTypeOption) => assetTypeOption.value === formData.asset_type) && formData.asset_type ? (
+                  <option value={formData.asset_type}>{formData.asset_type}</option>
                 ) : null}
               </select>
             </label>
 
             <label className={labelClass}>
-              財產編號
-              <input
-                className={fieldClass}
-                type="text"
-                value={formData.property_number}
-                onChange={(event) => handleInputChange('property_number', event.target.value)}
-              />
+              資產狀態
+              <select className={fieldClass} value={formData.asset_status} onChange={(event) => handleInputChange('asset_status', event.target.value)}>
+                {assetStatusOptions.map((statusOption) => (
+                  <option key={statusOption.value} value={statusOption.value}>
+                    {statusOption.label}
+                  </option>
+                ))}
+                {!assetStatusOptions.some((statusOption) => statusOption.value === formData.asset_status) && formData.asset_status ? (
+                  <option value={formData.asset_status}>{formData.asset_status}</option>
+                ) : null}
+              </select>
+            </label>
+
+            <label className={labelClass}>
+              Key
+              <input className={fieldClass} type="text" value={formData.key} onChange={(event) => handleInputChange('key', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              n_property_sn
+              <input className={fieldClass} type="text" value={formData.n_property_sn} onChange={(event) => handleInputChange('n_property_sn', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              property_sn
+              <input className={fieldClass} type="text" value={formData.property_sn} onChange={(event) => handleInputChange('property_sn', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              n_item_sn
+              <input className={fieldClass} type="text" value={formData.n_item_sn} onChange={(event) => handleInputChange('n_item_sn', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              item_sn
+              <input className={fieldClass} type="text" value={formData.item_sn} onChange={(event) => handleInputChange('item_sn', event.target.value)} />
             </label>
 
             <label className={labelClass}>
               品名
               <input className={fieldClass} type="text" value={formData.name} onChange={(event) => handleInputChange('name', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              name_code
+              <input className={fieldClass} type="text" value={formData.name_code} onChange={(event) => handleInputChange('name_code', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              name_code2
+              <input className={fieldClass} type="text" value={formData.name_code2} onChange={(event) => handleInputChange('name_code2', event.target.value)} />
             </label>
 
             <label className={labelClass}>
@@ -205,12 +335,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
             <label className={labelClass}>
               規格
-              <input
-                className={fieldClass}
-                type="text"
-                value={formData.specification}
-                onChange={(event) => handleInputChange('specification', event.target.value)}
-              />
+              <input className={fieldClass} type="text" value={formData.specification} onChange={(event) => handleInputChange('specification', event.target.value)} />
             </label>
 
             <label className={labelClass}>
@@ -219,44 +344,55 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
             </label>
 
             <label className={labelClass}>
+              數量
+              <input className={fieldClass} type="number" min={1} value={formData.count} onChange={(event) => handleCountChange(event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
               購置日期
-              <input
-                className={fieldClass}
-                type="date"
-                value={formData.purchase_date}
-                onChange={(event) => handleInputChange('purchase_date', event.target.value)}
-              />
+              <input className={fieldClass} type="date" value={formData.purchase_date} onChange={(event) => handleInputChange('purchase_date', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              到期日
+              <input className={fieldClass} type="date" value={formData.due_date} onChange={(event) => handleInputChange('due_date', event.target.value)} />
+            </label>
+
+            <label className={labelClass}>
+              歸還日
+              <input className={fieldClass} type="date" value={formData.return_date} onChange={(event) => handleInputChange('return_date', event.target.value)} />
             </label>
 
             <label className={labelClass}>
               放置地點
-              <input
-                className={fieldClass}
-                type="text"
-                value={formData.location}
-                onChange={(event) => handleInputChange('location', event.target.value)}
-              />
+              <input className={fieldClass} type="text" value={formData.location} onChange={(event) => handleInputChange('location', event.target.value)} />
             </label>
 
             <label className={labelClass}>
               保管人
-              <input
-                className={fieldClass}
-                type="text"
-                value={formData.keeper}
-                onChange={(event) => handleInputChange('keeper', event.target.value)}
-              />
+              <input className={fieldClass} type="text" value={formData.keeper} onChange={(event) => handleInputChange('keeper', event.target.value)} />
             </label>
 
             <label className={`${labelClass} col-[1/-1]`}>
-              備註
-              <textarea
-                className={`${fieldClass} resize-y`}
-                value={formData.memo}
-                onChange={(event) => handleInputChange('memo', event.target.value)}
-                rows={4}
-              />
+              memo
+              <textarea className={`${fieldClass} resize-y`} value={formData.memo} onChange={(event) => handleInputChange('memo', event.target.value)} rows={3} />
             </label>
+
+            <label className={`${labelClass} col-[1/-1]`}>
+              memo2
+              <textarea className={`${fieldClass} resize-y`} value={formData.memo2} onChange={(event) => handleInputChange('memo2', event.target.value)} rows={3} />
+            </label>
+
+            {loadedItem ? (
+              <div className="col-[1/-1] grid gap-2 rounded-[10px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 md:grid-cols-2">
+                <div>建立時間：{formatDateTime(loadedItem.created_at)}</div>
+                <div>建立者：{loadedItem.created_by || '--'}</div>
+                <div>更新時間：{formatDateTime(loadedItem.updated_at)}</div>
+                <div>更新者：{loadedItem.updated_by || '--'}</div>
+                <div>刪除時間：{formatDateTime(loadedItem.deleted_at)}</div>
+                <div>刪除者：{loadedItem.deleted_by || '--'}</div>
+              </div>
+            ) : null}
 
             <div className="col-[1/-1] flex justify-end">
               <button className={buttonClass} type="submit" disabled={submitting}>

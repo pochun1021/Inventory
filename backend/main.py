@@ -7,12 +7,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from db import (
+    create_asset_status_code,
     create_item,
     create_items_bulk,
     create_issue_request,
     create_borrow_request,
     create_donation_request,
-    create_pos_order,
+    delete_asset_status_code,
     delete_item,
     delete_issue_request,
     delete_borrow_request,
@@ -23,8 +24,8 @@ from db import (
     get_borrow_request,
     get_donation_request,
     get_pending_fix_count,
-    get_pos_order,
     init_db,
+    list_asset_status_codes,
     list_issue_items,
     list_issue_requests,
     list_borrow_items,
@@ -32,13 +33,9 @@ from db import (
     list_donation_items,
     list_donation_requests,
     list_items,
-    list_pos_order_items,
-    list_pos_orders,
-    list_stock_balances,
-    list_stock_movements,
     log_inventory_action,
     purge_soft_deleted_items,
-    set_stock_quantity,
+    update_asset_status_code,
     update_item,
     update_issue_request,
     update_borrow_request,
@@ -66,26 +63,54 @@ app.add_middleware(
 
 
 class InventoryItemCreate(BaseModel):
-    kind: str = Field(default="", alias="類別")
-    specification: str = Field(default="", alias="規格(大小/容量)")
-    property_number: str = Field(default="", alias="財產編號")
-    name: str = Field(default="", alias="品名")
-    model: str = Field(default="", alias="型號")
-    unit: str = Field(default="", alias="單位")
-    purchase_date: date | None = Field(default=None, alias="購置日期")
-    location: str = Field(default="", alias="放置地點")
-    memo: str = Field(default="", alias="備註")
-    keeper: str = Field(default="", alias="保管人（單位）")
-
-    model_config = {
-        "populate_by_name": True,
-    }
+    asset_type: str = ""
+    asset_status: str = ""
+    key: str = ""
+    n_property_sn: str = ""
+    property_sn: str = ""
+    n_item_sn: str = ""
+    item_sn: str = ""
+    name: str = ""
+    name_code: str = ""
+    name_code2: str = ""
+    model: str = ""
+    specification: str = ""
+    unit: str = ""
+    count: int = Field(default=1, ge=1)
+    purchase_date: date | None = None
+    due_date: date | None = None
+    return_date: date | None = None
+    location: str = ""
+    memo: str = ""
+    memo2: str = ""
+    keeper: str = ""
 
 
 class InventoryItem(InventoryItemCreate):
     id: int
+    created_at: datetime | None = None
+    created_by: str = ""
+    updated_at: datetime | None = None
+    updated_by: str = ""
+    deleted_at: datetime | None = None
+    deleted_by: str = ""
     donated_at: datetime | None = None
     donation_request_id: int | None = None
+
+
+class AssetStatusCode(BaseModel):
+    code: str
+    description: str
+
+
+class AssetStatusCodeCreate(BaseModel):
+    code: str = ""
+    description: str = ""
+
+
+class AssetStatusCodeUpdate(BaseModel):
+    code: str = ""
+    description: str = ""
 
 
 class IssueItemCreate(BaseModel):
@@ -170,82 +195,6 @@ class DonationRequest(DonationRequestCreate):
     items: list[DonationItem]
 
 
-class PosCheckoutItem(BaseModel):
-    item_id: int
-    quantity: int = 1
-    unit_price: float = 0
-    discount: float = 0
-    note: str = ""
-
-
-class PosCheckoutRequest(BaseModel):
-    order_type: str = "sale"
-    customer_name: str = ""
-    operator_name: str = ""
-    department: str = ""
-    purpose: str = ""
-    note: str = ""
-    due_date: date | None = None
-    borrow_request_id: int | None = None
-    items: list[PosCheckoutItem] = Field(default_factory=list)
-
-
-class PosOrderItem(BaseModel):
-    id: int
-    item_id: int
-    item_name: str = ""
-    item_model: str = ""
-    quantity: int = 1
-    unit_price: float = 0
-    discount: float = 0
-    line_total: float = 0
-    note: str = ""
-
-
-class PosOrder(BaseModel):
-    id: int
-    order_no: str
-    order_type: str
-    customer_name: str = ""
-    operator_name: str = ""
-    purpose: str = ""
-    request_ref_type: str = ""
-    request_ref_id: int | None = None
-    subtotal: float = 0
-    discount_total: float = 0
-    total: float = 0
-    note: str = ""
-    created_at: datetime | None = None
-    items: list[PosOrderItem] = Field(default_factory=list)
-
-
-class PosStockBalance(BaseModel):
-    item_id: int
-    item_name: str = ""
-    item_model: str = ""
-    property_number: str = ""
-    quantity: int = 0
-
-
-class PosStockSetRequest(BaseModel):
-    quantity: int
-
-
-class PosStockMovement(BaseModel):
-    id: int
-    order_id: int
-    order_no: str = ""
-    item_id: int
-    item_name: str = ""
-    item_model: str = ""
-    delta: int
-    balance_after: int
-    reason: str = ""
-    related_type: str = ""
-    related_id: int | None = None
-    created_at: datetime | None = None
-
-
 class ImportErrorDetail(BaseModel):
     row: int
     message: str
@@ -302,16 +251,27 @@ def _resolve_frontend_asset(path: str) -> Path | None:
 
 def to_db_payload(item: InventoryItemCreate) -> dict:
     return {
-        "kind": item.kind,
-        "specification": item.specification,
-        "property_number": item.property_number,
+        "asset_type": item.asset_type,
+        "asset_status": item.asset_status,
+        "key": item.key,
+        "n_property_sn": item.n_property_sn,
+        "property_sn": item.property_sn,
+        "n_item_sn": item.n_item_sn,
+        "item_sn": item.item_sn,
         "name": item.name,
+        "name_code": item.name_code,
+        "name_code2": item.name_code2,
         "model": item.model,
+        "specification": item.specification,
         "unit": item.unit,
-        "purchase_date": item.purchase_date.strftime("%Y/%m/%d") if item.purchase_date else "",
+        "count": item.count,
+        "purchase_date": _format_date(item.purchase_date),
+        "due_date": _format_date(item.due_date),
+        "return_date": _format_date(item.return_date),
         "location": item.location,
-        "keeper": item.keeper,
         "memo": item.memo,
+        "memo2": item.memo2,
+        "keeper": item.keeper,
     }
 
 
@@ -323,40 +283,54 @@ def _coerce_str(value) -> str:
     return value if isinstance(value, str) else "" if value is None else str(value)
 
 
-def pos_checkout_to_db_payload(request: PosCheckoutRequest) -> dict:
-    return {
-        "order_type": request.order_type.strip(),
-        "customer_name": request.customer_name,
-        "operator_name": request.operator_name,
-        "department": request.department,
-        "purpose": request.purpose,
-        "note": request.note,
-        "due_date": _format_date(request.due_date),
-        "borrow_request_id": request.borrow_request_id or "",
-    }
-
-
 def row_to_item(row) -> InventoryItem:
-    purchase_date_value = row["purchase_date"]
+    purchase_date_value = _coerce_str(row.get("purchase_date"))
+    due_date_value = _coerce_str(row.get("due_date"))
+    return_date_value = _coerce_str(row.get("return_date"))
     parsed_date = _parse_purchase_date(purchase_date_value) if purchase_date_value else None
+    parsed_due_date = _parse_purchase_date(due_date_value) if due_date_value else None
+    parsed_return_date = _parse_purchase_date(return_date_value) if return_date_value else None
     donated_at_value = _coerce_str(row.get("donated_at"))
     donation_request_id_raw = row.get("donation_request_id")
     try:
         donation_request_id = int(donation_request_id_raw) if donation_request_id_raw not in (None, "") else None
     except (TypeError, ValueError):
         donation_request_id = None
+    try:
+        count = int(row.get("count") or 0)
+    except (TypeError, ValueError):
+        count = 1
+    if count <= 0:
+        count = 1
     return InventoryItem(
         id=row["id"],
-        kind=_coerce_str(row["kind"]),
-        specification=_coerce_str(row["specification"]),
-        property_number=_coerce_str(row["property_number"]),
-        name=_coerce_str(row["name"]),
-        model=_coerce_str(row["model"]),
-        unit=_coerce_str(row["unit"]),
+        asset_type=_coerce_str(row.get("asset_type")),
+        asset_status=_coerce_str(row.get("asset_status")),
+        key=_coerce_str(row.get("key")),
+        n_property_sn=_coerce_str(row.get("n_property_sn")),
+        property_sn=_coerce_str(row.get("property_sn")),
+        n_item_sn=_coerce_str(row.get("n_item_sn")),
+        item_sn=_coerce_str(row.get("item_sn")),
+        name=_coerce_str(row.get("name")),
+        name_code=_coerce_str(row.get("name_code")),
+        name_code2=_coerce_str(row.get("name_code2")),
+        model=_coerce_str(row.get("model")),
+        specification=_coerce_str(row.get("specification")),
+        unit=_coerce_str(row.get("unit")),
+        count=count,
         purchase_date=parsed_date,
-        location=_coerce_str(row["location"]),
-        memo=_coerce_str(row["memo"]),
-        keeper=_coerce_str(row["keeper"]),
+        due_date=parsed_due_date,
+        return_date=parsed_return_date,
+        location=_coerce_str(row.get("location")),
+        memo=_coerce_str(row.get("memo")),
+        memo2=_coerce_str(row.get("memo2")),
+        keeper=_coerce_str(row.get("keeper")),
+        created_at=_parse_datetime(_coerce_str(row.get("created_at"))),
+        created_by=_coerce_str(row.get("created_by")),
+        updated_at=_parse_datetime(_coerce_str(row.get("updated_at"))),
+        updated_by=_coerce_str(row.get("updated_by")),
+        deleted_at=_parse_datetime(_coerce_str(row.get("deleted_at"))),
+        deleted_by=_coerce_str(row.get("deleted_by")),
         donated_at=_parse_datetime(donated_at_value),
         donation_request_id=donation_request_id,
     )
@@ -392,78 +366,6 @@ def row_to_donation_item(row) -> DonationItem:
         note=_coerce_str(row["note"]),
         item_name=row["item_name"],
         item_model=row["item_model"],
-    )
-
-
-def row_to_pos_item(row) -> PosOrderItem:
-    return PosOrderItem(
-        id=int(row.get("id", 0)),
-        item_id=int(row.get("item_id", 0)),
-        item_name=_coerce_str(row.get("item_name")),
-        item_model=_coerce_str(row.get("item_model")),
-        quantity=int(row.get("quantity", 0)),
-        unit_price=float(row.get("unit_price", 0) or 0),
-        discount=float(row.get("discount", 0) or 0),
-        line_total=float(row.get("line_total", 0) or 0),
-        note=_coerce_str(row.get("note")),
-    )
-
-
-def row_to_pos_order(row, items: list[PosOrderItem]) -> PosOrder:
-    created_at = _parse_datetime(_coerce_str(row.get("created_at")))
-    request_ref_id_raw = row.get("request_ref_id")
-    try:
-        request_ref_id = int(request_ref_id_raw) if request_ref_id_raw not in ("", None) else None
-    except (TypeError, ValueError):
-        request_ref_id = None
-    return PosOrder(
-        id=int(row.get("id", 0)),
-        order_no=_coerce_str(row.get("order_no")),
-        order_type=_coerce_str(row.get("order_type")),
-        customer_name=_coerce_str(row.get("customer_name")),
-        operator_name=_coerce_str(row.get("operator_name")),
-        purpose=_coerce_str(row.get("purpose")),
-        request_ref_type=_coerce_str(row.get("request_ref_type")),
-        request_ref_id=request_ref_id,
-        subtotal=float(row.get("subtotal", 0) or 0),
-        discount_total=float(row.get("discount_total", 0) or 0),
-        total=float(row.get("total", 0) or 0),
-        note=_coerce_str(row.get("note")),
-        created_at=created_at,
-        items=items,
-    )
-
-
-def row_to_pos_stock_movement(row) -> PosStockMovement:
-    created_at = _parse_datetime(_coerce_str(row.get("created_at")))
-    related_id_raw = row.get("related_id")
-    try:
-        related_id = int(related_id_raw) if related_id_raw not in ("", None) else None
-    except (TypeError, ValueError):
-        related_id = None
-    return PosStockMovement(
-        id=int(row.get("id", 0)),
-        order_id=int(row.get("order_id", 0)),
-        order_no=_coerce_str(row.get("order_no")),
-        item_id=int(row.get("item_id", 0)),
-        item_name=_coerce_str(row.get("item_name")),
-        item_model=_coerce_str(row.get("item_model")),
-        delta=int(row.get("delta", 0)),
-        balance_after=int(row.get("balance_after", 0)),
-        reason=_coerce_str(row.get("reason")),
-        related_type=_coerce_str(row.get("related_type")),
-        related_id=related_id,
-        created_at=created_at,
-    )
-
-
-def row_to_pos_stock_balance(row) -> PosStockBalance:
-    return PosStockBalance(
-        item_id=int(row.get("item_id", 0)),
-        item_name=_coerce_str(row.get("item_name")),
-        item_model=_coerce_str(row.get("item_model")),
-        property_number=_coerce_str(row.get("property_number")),
-        quantity=int(row.get("quantity", 0)),
     )
 
 
@@ -599,6 +501,57 @@ def on_startup() -> None:
 @app.get("/api/data")
 def get_dashboard_data():
     return {"status": "success", "data": "這是管理系統的後端數據", "items": get_items_count(), "pendingFix": get_pending_fix_count()}
+
+
+@app.get("/api/lookups/asset-status", response_model=list[AssetStatusCode], response_model_by_alias=False)
+def list_asset_status_codes_api():
+    rows = list_asset_status_codes()
+    return [AssetStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description"))) for row in rows]
+
+
+@app.post("/api/lookups/asset-status", response_model=AssetStatusCode, response_model_by_alias=False)
+def create_asset_status_code_api(payload: AssetStatusCodeCreate):
+    try:
+        row = create_asset_status_code(payload.code, payload.description)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already exists" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    log_inventory_action(action="create", entity="asset_status_code", detail=row)
+    return AssetStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description")))
+
+
+@app.put("/api/lookups/asset-status/{code}", response_model=AssetStatusCode, response_model_by_alias=False)
+def update_asset_status_code_api(code: str, payload: AssetStatusCodeUpdate):
+    try:
+        row = update_asset_status_code(code, payload.code or code, payload.description)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "already exists" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="update", entity="asset_status_code", detail={"from_code": code, **row})
+    return AssetStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description")))
+
+
+@app.delete("/api/lookups/asset-status/{code}")
+def delete_asset_status_code_api(code: str):
+    try:
+        delete_asset_status_code(code)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "in use" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="delete", entity="asset_status_code", detail={"code": code})
+    return {"success": True}
 
 
 @app.get("/api/items", response_model=list[InventoryItem], response_model_by_alias=False)
@@ -1006,121 +959,23 @@ def delete_donation_request_api(request_id: int):
     return {"success": True}
 
 
-@app.post("/api/pos/checkout", response_model=PosOrder, response_model_by_alias=False)
-def checkout_pos_order_api(request: PosCheckoutRequest):
-    allowed_types = {"sale", "issue", "borrow", "issue_restock", "borrow_return"}
-    order_type = request.order_type.strip()
-    if order_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="invalid order_type")
-    if not request.items:
-        raise HTTPException(status_code=400, detail="items is required")
-
-    for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-        if item.unit_price < 0:
-            raise HTTPException(status_code=400, detail="unit_price cannot be negative")
-        if item.discount < 0:
-            raise HTTPException(status_code=400, detail="discount cannot be negative")
-        if item.discount > item.unit_price * item.quantity:
-            raise HTTPException(status_code=400, detail="discount cannot exceed line amount")
-
-    try:
-        order_id = create_pos_order(
-            pos_checkout_to_db_payload(request),
-            [item.model_dump() for item in request.items],
-        )
-    except ValueError as exc:
-        log_inventory_action(
-            action="create",
-            entity="pos_order",
-            status="failed",
-            detail={"reason": str(exc), "order_type": order_type},
-        )
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    row = get_pos_order(order_id)
-    if row is None:
-        log_inventory_action(
-            action="create",
-            entity="pos_order",
-            entity_id=order_id,
-            status="failed",
-            detail={"reason": "POS order created but cannot be loaded"},
-        )
-        raise HTTPException(status_code=500, detail="POS order created but cannot be loaded")
-    items = [row_to_pos_item(item) for item in list_pos_order_items(order_id)]
-    log_inventory_action(action="create", entity="pos_order", entity_id=order_id, detail={"order_type": order_type})
-    return row_to_pos_order(row, items)
-
-
-@app.get("/api/pos/orders", response_model=list[PosOrder], response_model_by_alias=False)
-def list_pos_orders_api():
-    rows = list_pos_orders()
-    results = []
-    for row in rows:
-        items = [row_to_pos_item(item) for item in list_pos_order_items(int(row["id"]))]
-        results.append(row_to_pos_order(row, items))
-    log_inventory_action(action="read", entity="pos_order", detail={"count": len(results), "mode": "list"})
-    return results
-
-
-@app.get("/api/pos/orders/{order_id}", response_model=PosOrder, response_model_by_alias=False)
-def get_pos_order_api(order_id: int):
-    row = get_pos_order(order_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="POS order not found")
-    items = [row_to_pos_item(item) for item in list_pos_order_items(order_id)]
-    log_inventory_action(action="read", entity="pos_order", entity_id=order_id, detail={"mode": "single"})
-    return row_to_pos_order(row, items)
-
-
-@app.get("/api/pos/stock", response_model=list[PosStockBalance], response_model_by_alias=False)
-def list_pos_stock_api():
-    rows = list_stock_balances()
-    return [row_to_pos_stock_balance(row) for row in rows]
-
-
-@app.put("/api/pos/stock/{item_id}", response_model=PosStockBalance, response_model_by_alias=False)
-def set_pos_stock_api(item_id: int, request: PosStockSetRequest):
-    try:
-        updated = set_stock_quantity(item_id=item_id, quantity=request.quantity)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if not updated:
-        raise HTTPException(status_code=404, detail="item not found")
-    row = next((stock for stock in list_stock_balances() if stock["item_id"] == item_id), None)
-    if row is None:
-        raise HTTPException(status_code=500, detail="stock updated but cannot be loaded")
-    log_inventory_action(action="update", entity="stock_balance", entity_id=item_id, detail={"quantity": request.quantity})
-    return row_to_pos_stock_balance(row)
-
-
-@app.get("/api/pos/stock-movements", response_model=list[PosStockMovement], response_model_by_alias=False)
-def list_pos_stock_movements_api(limit: int = 200):
-    rows = list_stock_movements(limit=limit)
-    log_inventory_action(action="read", entity="stock_movement", detail={"count": len(rows), "mode": "list", "limit": limit})
-    return [row_to_pos_stock_movement(row) for row in rows]
-
-
 @app.post("/api/items/import", response_model=ImportResponse)
 async def import_inventory_items_from_xlsx(
     file: UploadFile = File(...),
-    kind: str = Form(...),
+    asset_type: str = Form(...),
 ):
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
 
-    selected_kind = kind.strip()
-    if not selected_kind:
-        raise HTTPException(status_code=400, detail="kind is required")
+    selected_asset_type = asset_type.strip()
+    if not selected_asset_type:
+        raise HTTPException(status_code=400, detail="asset_type is required")
 
     content = await file.read()
     result = import_inventory_items_from_xlsx_content(
         file_content=content,
         item_create_model=InventoryItemCreate,
-        selected_kind=selected_kind,
+        selected_asset_type=selected_asset_type,
         to_db_payload=to_db_payload,
         create_item=create_item,
         create_items_bulk=create_items_bulk,
@@ -1130,7 +985,7 @@ async def import_inventory_items_from_xlsx(
         entity="inventory_item",
         detail={
             "filename": file.filename,
-            "kind": selected_kind,
+            "asset_type": selected_asset_type,
             "total": result["total"],
             "created": result["created"],
             "failed": result["failed"],

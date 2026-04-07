@@ -100,7 +100,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const itemOptions = useMemo(() => {
     return inventoryItems.map((item) => ({
       value: item.id,
-      label: `${item.name || '未命名'} ${item.model ? `(${item.model})` : ''}`.trim(),
+      label: `${item.name || '未命名'} ${item.model ? `(${item.model})` : ''} ${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn ? `｜${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn}` : ''}`.trim(),
     }))
   }, [inventoryItems])
 

@@ -19,9 +19,6 @@ export function TopNav({ pathname }: TopNavProps) {
   const isDonationCreatePage = pathname === '/donations/new'
   const isInventoryPage = pathname === '/inventory'
   const isCreatePage = pathname === '/inventory/new'
-  const isPosCheckoutPage = pathname === '/pos/checkout'
-  const isPosOrdersPage = pathname === '/pos/orders'
-  const isPosStockPage = pathname === '/pos/stock'
 
   return (
     <nav className="flex flex-wrap items-start gap-3">
@@ -33,15 +30,6 @@ export function TopNav({ pathname }: TopNavProps) {
       </a>
       <a className={isCreatePage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/inventory/new">
         新增庫存
-      </a>
-      <a className={isPosCheckoutPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/pos/checkout">
-        POS 結帳
-      </a>
-      <a className={isPosOrdersPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/pos/orders">
-        POS 訂單
-      </a>
-      <a className={isPosStockPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/pos/stock">
-        POS 庫存
       </a>
       <a className={isIssueListPage ? `${navLinkClass} ${activeNavLinkClass}` : navLinkClass} href="/issues">
         領用清單

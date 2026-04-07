@@ -26,7 +26,7 @@ def import_inventory_items_from_xlsx_content(
     to_db_payload,
     create_item,
     create_items_bulk,
-    selected_kind: str,
+    selected_asset_type: str,
 ) -> dict[str, Any]:
     if not file_content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
@@ -63,16 +63,16 @@ def import_inventory_items_from_xlsx_content(
         total += 1
         try:
             payload = {
-                "類別": selected_kind,
-                "備註": str(row_data.get("備註") or "").strip(),
-                "規格(大小/容量)": str(row_data.get("規格(大小/容量)") or "").strip(),
-                "財產編號": str(row_data.get("財產編號") or "").strip(),
-                "品名": str(row_data.get("品名") or "").strip(),
-                "型號": str(row_data.get("型號") or "").strip(),
-                "單位": str(row_data.get("單位") or "").strip(),
-                "購置日期": normalize_purchase_date(row_data.get("購置日期")),
-                "放置地點": str(row_data.get("放置地點") or "").strip(),
-                "保管人（單位）": str(row_data.get("保管人（單位）") or "").strip(),
+                "asset_type": selected_asset_type,
+                "n_property_sn": str(row_data.get("財產編號") or "").strip(),
+                "name": str(row_data.get("品名") or "").strip(),
+                "model": str(row_data.get("型號") or "").strip(),
+                "specification": str(row_data.get("規格(大小/容量)") or "").strip(),
+                "unit": str(row_data.get("單位") or "").strip(),
+                "purchase_date": normalize_purchase_date(row_data.get("購置日期")),
+                "location": str(row_data.get("放置地點") or "").strip(),
+                "memo": str(row_data.get("備註") or "").strip(),
+                "keeper": str(row_data.get("保管人（單位）") or "").strip(),
             }
             item = item_create_model.model_validate(payload)
             pending_items.append(to_db_payload(item))

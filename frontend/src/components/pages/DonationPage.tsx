@@ -241,7 +241,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
                     <option value="">請選擇品項</option>
                     {itemOptions.map((item) => (
                       <option key={item.id} value={item.id}>
-                        {`${item.name || '未命名'} ${item.model ? `(${item.model})` : ''}`.trim()}
+                        {`${item.name || '未命名'} ${item.model ? `(${item.model})` : ''} ${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn ? `｜${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn}` : ''}`.trim()}
                       </option>
                     ))}
                   </select>
