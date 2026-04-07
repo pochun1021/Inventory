@@ -176,8 +176,6 @@ STRING_FIELDS: dict[str, list[str]] = {
 }
 
 REMOVED_SHEETS = {
-    "pos_orders",
-    "pos_order_items",
     "stock_balances",
     "stock_movements",
 }
@@ -1631,4 +1629,3 @@ def _create_borrow_request_locked(
             }
         )
     return request_id
-
