@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
-import type { InventoryItem, IssueRequest } from './types'
+import type { InventoryItem, IssueRequest, PaginatedResponse } from './types'
 
 type IssueLine = {
   item_id: number | ''
@@ -41,12 +41,12 @@ export function IssuePage({ requestId }: IssuePageProps) {
     const loadData = async () => {
       setLoadError('')
       try {
-        const itemsResponse = await fetch(apiUrl('/api/items'))
+        const itemsResponse = await fetch(apiUrl('/api/items?page=1&page_size=100000'))
         if (!itemsResponse.ok) {
           throw new Error('無法載入資料')
         }
-        const itemsPayload = (await itemsResponse.json()) as InventoryItem[]
-        setInventoryItems(itemsPayload)
+        const itemsPayload = (await itemsResponse.json()) as PaginatedResponse<InventoryItem>
+        setInventoryItems(itemsPayload.items)
       } catch {
         setLoadError('目前無法讀取領用資料，請稍後重試。')
       }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
-import type { DonationRequest, InventoryItem } from './types'
+import type { DonationRequest, InventoryItem, PaginatedResponse } from './types'
 
 type DonationLine = {
   item_id: number | ''
@@ -43,12 +43,12 @@ export function DonationPage({ requestId }: DonationPageProps) {
   const loadInventoryItems = useCallback(async () => {
     setLoadError('')
     try {
-      const itemsResponse = await fetch(apiUrl('/api/items?include_donated=true'))
+      const itemsResponse = await fetch(apiUrl('/api/items?include_donated=true&page=1&page_size=100000'))
       if (!itemsResponse.ok) {
         throw new Error('無法載入資料')
       }
-      const itemsPayload = (await itemsResponse.json()) as InventoryItem[]
-      setInventoryItems(itemsPayload)
+      const itemsPayload = (await itemsResponse.json()) as PaginatedResponse<InventoryItem>
+      setInventoryItems(itemsPayload.items)
     } catch {
       setLoadError('目前無法讀取捐贈資料，請稍後重試。')
     }

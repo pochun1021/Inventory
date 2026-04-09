@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
+import { DataPagination } from '../ui/data-pagination'
 import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
-import type { InventoryItem } from './types'
+import type { InventoryItem, PaginatedResponse } from './types'
 
 const ASSET_TYPE_LABEL_MAP: Record<string, string> = {
   '11': '財產',
@@ -11,10 +12,8 @@ const ASSET_TYPE_LABEL_MAP: Record<string, string> = {
   A2: '其他',
 }
 
-const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const CHINESE_CHARACTER_REGEX = /[\u4e00-\u9fff]/
 const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-[hsl(var(--primary))] px-3 py-2.5 font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--primary-disabled))] disabled:text-[hsl(var(--primary-foreground))]'
 const tableHeaderClass = 'whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left'
 const tableCellClass = 'border border-[hsl(var(--border))] p-2 text-left align-top break-words'
 const SCAN_MAX_KEY_INTERVAL_MS = 45
@@ -33,36 +32,115 @@ type ScanBuffer = {
   lastTs: number
 }
 
+function parsePositiveInt(value: string | null, fallback: number): number {
+  if (!value) {
+    return fallback
+  }
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback
+  }
+  return parsed
+}
+
+function parseBoolean(value: string | null, fallback: boolean): boolean {
+  if (value === 'true') {
+    return true
+  }
+  if (value === 'false') {
+    return false
+  }
+  return fallback
+}
+
+function readInitialState() {
+  const params = new URLSearchParams(window.location.search)
+  const correctionParam = params.get('correction_status')
+  const correctionStatus = correctionParam === 'needs_fix' ? correctionParam : 'all'
+
+  return {
+    keyword: params.get('keyword') ?? '',
+    selectedAssetType: params.get('asset_type') ?? 'all',
+    selectedCorrectionStatus: correctionStatus as 'all' | 'needs_fix',
+    showDonated: parseBoolean(params.get('include_donated'), false),
+    page: parsePositiveInt(params.get('page'), 1),
+    pageSize: parsePositiveInt(params.get('page_size'), 10),
+  }
+}
+
 export function InventoryListPage() {
+  const initialState = readInitialState()
   const [items, setItems] = useState<InventoryItem[]>([])
+  const [assetTypeOptions, setAssetTypeOptions] = useState<string[]>(['all'])
   const [assetStatusLabelMap, setAssetStatusLabelMap] = useState<Record<string, string>>({})
   const [loadError, setLoadError] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const [loading, setLoading] = useState(true)
-  const [keyword, setKeyword] = useState('')
-  const [selectedAssetType, setSelectedAssetType] = useState('all')
-  const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>('all')
-  const [showDonated, setShowDonated] = useState(false)
-  const [pageSize, setPageSize] = useState(10)
-  const [customPageSize, setCustomPageSize] = useState('10')
-  const [currentPage, setCurrentPage] = useState(1)
+  const [keyword, setKeyword] = useState(initialState.keyword)
+  const [selectedAssetType, setSelectedAssetType] = useState(initialState.selectedAssetType)
+  const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>(initialState.selectedCorrectionStatus)
+  const [showDonated, setShowDonated] = useState(initialState.showDonated)
+  const [page, setPage] = useState(initialState.page)
+  const [pageSize, setPageSize] = useState(initialState.pageSize)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const scanBufferRef = useRef<ScanBuffer>({ value: '', lastTs: 0 })
   const lastInputSourceRef = useRef<'manual' | 'scan'>('manual')
   const lastNotifiedScanKeywordRef = useRef('')
 
   useEffect(() => {
+    const params = new URLSearchParams()
+    if (keyword.trim()) {
+      params.set('keyword', keyword.trim())
+    }
+    if (selectedAssetType !== 'all') {
+      params.set('asset_type', selectedAssetType)
+    }
+    if (selectedCorrectionStatus !== 'all') {
+      params.set('correction_status', selectedCorrectionStatus)
+    }
+    if (showDonated) {
+      params.set('include_donated', 'true')
+    }
+    if (page !== 1) {
+      params.set('page', String(page))
+    }
+    if (pageSize !== 10) {
+      params.set('page_size', String(pageSize))
+    }
+    const queryString = params.toString()
+    const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
+    window.history.replaceState(null, '', url)
+  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, page, pageSize])
+
+  useEffect(() => {
     const loadItems = async () => {
       setLoading(true)
       setLoadError('')
       try {
-        const response = await fetch(apiUrl(showDonated ? '/api/items?include_donated=true' : '/api/items'))
+        const params = new URLSearchParams({
+          page: String(page),
+          page_size: String(pageSize),
+          include_donated: String(showDonated),
+          correction_status: selectedCorrectionStatus,
+        })
+        if (keyword.trim()) {
+          params.set('keyword', keyword.trim())
+        }
+        if (selectedAssetType !== 'all') {
+          params.set('asset_type', selectedAssetType)
+        }
+        const response = await fetch(apiUrl(`/api/items?${params.toString()}`))
         if (!response.ok) {
           throw new Error('無法載入財產清單')
         }
-        const payload = (await response.json()) as InventoryItem[]
-        setItems(payload)
+        const payload = (await response.json()) as PaginatedResponse<InventoryItem>
+        setItems(payload.items)
+        setTotal(payload.total)
+        setTotalPages(payload.total_pages)
       } catch {
         setLoadError('目前無法讀取財產清單，請稍後重試。')
       } finally {
@@ -71,7 +149,30 @@ export function InventoryListPage() {
     }
 
     void loadItems()
-  }, [showDonated])
+  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, page, pageSize, reloadKey])
+
+  useEffect(() => {
+    const loadAssetTypes = async () => {
+      try {
+        const params = new URLSearchParams({
+          page: '1',
+          page_size: '100000',
+          include_donated: String(showDonated),
+        })
+        const response = await fetch(apiUrl(`/api/items?${params.toString()}`))
+        if (!response.ok) {
+          throw new Error('無法載入資產類型')
+        }
+        const payload = (await response.json()) as PaginatedResponse<InventoryItem>
+        const uniqueAssetTypes = new Set(payload.items.map((item) => item.asset_type).filter((assetType): assetType is string => Boolean(assetType?.trim())))
+        setAssetTypeOptions(['all', ...Array.from(uniqueAssetTypes)])
+      } catch {
+        setAssetTypeOptions(['all'])
+      }
+    }
+
+    void loadAssetTypes()
+  }, [showDonated, reloadKey])
 
   useEffect(() => {
     let cancelled = false
@@ -100,6 +201,18 @@ export function InventoryListPage() {
     searchInputRef.current?.focus()
   }, [])
 
+  useEffect(() => {
+    if (lastInputSourceRef.current !== 'scan') {
+      return
+    }
+    const normalizedKeyword = keyword.trim()
+    if (!normalizedKeyword || total > 0 || lastNotifiedScanKeywordRef.current === normalizedKeyword) {
+      return
+    }
+    lastNotifiedScanKeywordRef.current = normalizedKeyword
+    void toast.fire({ icon: 'error', title: '查無此財產編號。' })
+  }, [keyword, total])
+
   const toAssetTypeLabel = (assetType: string) => {
     if (!assetType) {
       return '--'
@@ -111,67 +224,6 @@ export function InventoryListPage() {
   const getPrimarySerial = (item: InventoryItem) => {
     return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || ''
   }
-
-  const assetTypeOptions = useMemo(() => {
-    const uniqueAssetTypes = new Set(items.map((item) => item.asset_type).filter((assetType): assetType is string => Boolean(assetType?.trim())))
-    return ['all', ...Array.from(uniqueAssetTypes)]
-  }, [items])
-
-  const filteredItems = useMemo(() => {
-    const normalizedKeyword = keyword.trim().toLowerCase()
-    const normalizeSearchValue = (value: unknown) => (typeof value === 'string' ? value : '').toLowerCase()
-    const isNeedsFix = (item: InventoryItem) => {
-      const serial = getPrimarySerial(item).trim()
-      return serial.length === 0 || CHINESE_CHARACTER_REGEX.test(serial)
-    }
-
-    return items.filter((item) => {
-      const passesAssetTypeFilter = selectedAssetType === 'all' || item.asset_type === selectedAssetType
-      if (!passesAssetTypeFilter) {
-        return false
-      }
-
-      const passesCorrectionStatusFilter = selectedCorrectionStatus === 'all' || isNeedsFix(item)
-      if (!passesCorrectionStatusFilter) {
-        return false
-      }
-
-      if (!normalizedKeyword) {
-        return true
-      }
-
-      const searchFields = [item.n_property_sn, item.property_sn, item.n_item_sn, item.item_sn, item.name, item.model, item.location, item.keeper]
-      return searchFields.some((field) => normalizeSearchValue(field).includes(normalizedKeyword))
-    })
-  }, [items, keyword, selectedAssetType, selectedCorrectionStatus])
-
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize))
-  const paginatedItems = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    return filteredItems.slice(startIndex, startIndex + pageSize)
-  }, [filteredItems, currentPage, pageSize])
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, pageSize])
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages)
-    }
-  }, [currentPage, totalPages])
-
-  useEffect(() => {
-    if (lastInputSourceRef.current !== 'scan') {
-      return
-    }
-    const normalizedKeyword = keyword.trim()
-    if (!normalizedKeyword || filteredItems.length > 0 || lastNotifiedScanKeywordRef.current === normalizedKeyword) {
-      return
-    }
-    lastNotifiedScanKeywordRef.current = normalizedKeyword
-    void toast.fire({ icon: 'error', title: '查無此財產編號。' })
-  }, [filteredItems.length, keyword])
 
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const now = Date.now()
@@ -198,20 +250,6 @@ export function InventoryListPage() {
       buffer.value += key
     }
     buffer.lastTs = now
-  }
-
-  const handlePresetPageSize = (size: number) => {
-    setPageSize(size)
-    setCustomPageSize(String(size))
-  }
-
-  const handleCustomPageSize = () => {
-    const nextSize = Number(customPageSize)
-    if (!Number.isInteger(nextSize) || nextSize <= 0) {
-      return
-    }
-
-    setPageSize(nextSize)
   }
 
   const handleDeleteItem = async (item: InventoryItem) => {
@@ -245,14 +283,25 @@ export function InventoryListPage() {
         throw new Error('刪除失敗')
       }
 
-      setItems((previousItems) => previousItems.filter((existingItem) => existingItem.id !== item.id))
       setActionMessage('財產資料已刪除。')
+      setReloadKey((previous) => previous + 1)
     } catch {
       setLoadError('刪除財產資料失敗，請稍後再試。')
     } finally {
       setDeletingItemId(null)
     }
   }
+
+  const correctionSummary = useMemo(() => {
+    if (selectedCorrectionStatus !== 'needs_fix') {
+      return null
+    }
+    const count = items.filter((item) => {
+      const serial = getPrimarySerial(item).trim()
+      return serial.length === 0 || CHINESE_CHARACTER_REGEX.test(serial)
+    }).length
+    return count
+  }, [items, selectedCorrectionStatus])
 
   return (
     <>
@@ -274,13 +323,22 @@ export function InventoryListPage() {
                 lastInputSourceRef.current = 'manual'
               }
               setKeyword(event.target.value)
+              setPage(1)
             }}
           />
 
           <label htmlFor="asset-type-filter" className="font-bold">
             資產類型篩選
           </label>
-          <select className={fieldClass} id="asset-type-filter" value={selectedAssetType} onChange={(event) => setSelectedAssetType(event.target.value)}>
+          <select
+            className={fieldClass}
+            id="asset-type-filter"
+            value={selectedAssetType}
+            onChange={(event) => {
+              setSelectedAssetType(event.target.value)
+              setPage(1)
+            }}
+          >
             {assetTypeOptions.map((assetTypeValue) => (
               <option key={assetTypeValue} value={assetTypeValue}>
                 {assetTypeValue === 'all' ? '全部類別' : toAssetTypeLabel(assetTypeValue)}
@@ -295,7 +353,10 @@ export function InventoryListPage() {
             className={fieldClass}
             id="correction-filter"
             value={selectedCorrectionStatus}
-            onChange={(event) => setSelectedCorrectionStatus(event.target.value as 'all' | 'needs_fix')}
+            onChange={(event) => {
+              setSelectedCorrectionStatus(event.target.value as 'all' | 'needs_fix')
+              setPage(1)
+            }}
           >
             <option value="all">全部資料</option>
             <option value="needs_fix">僅顯示待修正資料</option>
@@ -305,43 +366,16 @@ export function InventoryListPage() {
             <input
               type="checkbox"
               checked={showDonated}
-              onChange={(event) => setShowDonated(event.target.checked)}
+              onChange={(event) => {
+                setShowDonated(event.target.checked)
+                setPage(1)
+              }}
             />
             顯示已捐贈資料
           </label>
 
-          <div className="grid gap-2">
-            <span className="font-bold">每頁筆數</span>
-            <div className="flex flex-wrap gap-2">
-              {DEFAULT_PAGE_SIZE_OPTIONS.map((size) => (
-                <button
-                  key={size}
-                  type="button"
-                  className={`cursor-pointer rounded-[10px] border px-3 py-2 font-bold ${size === pageSize ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'border-[hsl(var(--border))] bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))]'}`}
-                  onClick={() => handlePresetPageSize(size)}
-                >
-                  {size}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                className={`${fieldClass} w-26`}
-                type="number"
-                min={1}
-                value={customPageSize}
-                onChange={(event) => setCustomPageSize(event.target.value)}
-              />
-              <button className={buttonClass} type="button" onClick={handleCustomPageSize}>
-                套用
-              </button>
-            </div>
-          </div>
-
-          <p className="mt-1 text-[0.95rem] text-slate-600">共 {filteredItems.length} 筆資料</p>
-          <p className="mt-1 text-[0.95rem] text-slate-600">
-            第 {currentPage} / {totalPages} 頁
-          </p>
+          <p className="mt-1 text-[0.95rem] text-slate-600">共 {total} 筆資料</p>
+          {correctionSummary !== null ? <p className="mt-1 text-[0.95rem] text-slate-600">本頁待修正：{correctionSummary} 筆</p> : null}
         </div>
 
         {loading ? <p className="mt-0.5 rounded-[10px] px-3.5 py-3">資料載入中...</p> : null}
@@ -360,14 +394,14 @@ export function InventoryListPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedItems.length === 0 ? (
+                  {items.length === 0 ? (
                     <tr>
                       <td colSpan={12} className="border border-[hsl(var(--border))] p-2 text-center text-slate-500">
                         查無符合條件的財產資料
                       </td>
                     </tr>
                   ) : (
-                    paginatedItems.map((item) => (
+                    items.map((item) => (
                       <tr key={item.id}>
                         <td className={`${tableCellClass} whitespace-nowrap`}>
                           {item.id ? (
@@ -413,29 +447,17 @@ export function InventoryListPage() {
               </table>
             </div>
 
-            {filteredItems.length > 0 ? (
-              <div className="mt-3.5 flex items-center justify-end gap-3">
-                <button
-                  className={buttonClass}
-                  type="button"
-                  onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
-                  disabled={currentPage === 1}
-                >
-                  上一頁
-                </button>
-                <span>
-                  目前第 {currentPage} 頁，共 {totalPages} 頁
-                </span>
-                <button
-                  className={buttonClass}
-                  type="button"
-                  onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
-                  disabled={currentPage === totalPages}
-                >
-                  下一頁
-                </button>
-              </div>
-            ) : null}
+            <DataPagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={(nextPageSize) => {
+                setPageSize(nextPageSize)
+                setPage(1)
+              }}
+            />
           </>
         ) : null}
       </section>

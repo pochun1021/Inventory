@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { apiUrl } from '../../api'
 import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
-import type { BorrowRequest, DashboardPayload, DonationRequest, InventoryItem, IssueRequest } from './types'
+import type { BorrowRequest, DashboardPayload, DonationRequest, InventoryItem, IssueRequest, PaginatedResponse } from './types'
 import { Badge } from '../ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 
@@ -73,17 +73,17 @@ export function DashboardPage() {
       try {
         const [dashboardPayload, inventoryPayload, issuePayload, borrowPayload, donationPayload] = await Promise.all([
           fetchJson<DashboardPayload>('/api/data'),
-          fetchJson<InventoryItem[]>('/api/items?include_donated=true'),
-          fetchJson<IssueRequest[]>('/api/issues'),
-          fetchJson<BorrowRequest[]>('/api/borrows'),
-          fetchJson<DonationRequest[]>('/api/donations'),
+          fetchJson<PaginatedResponse<InventoryItem>>('/api/items?include_donated=true&page=1&page_size=100000'),
+          fetchJson<PaginatedResponse<IssueRequest>>('/api/issues?page=1&page_size=100000'),
+          fetchJson<PaginatedResponse<BorrowRequest>>('/api/borrows?page=1&page_size=100000'),
+          fetchJson<PaginatedResponse<DonationRequest>>('/api/donations?page=1&page_size=100000'),
         ])
 
         setDashboardData(dashboardPayload)
-        setItems(inventoryPayload)
-        setIssues(issuePayload)
-        setBorrows(borrowPayload)
-        setDonations(donationPayload)
+        setItems(inventoryPayload.items)
+        setIssues(issuePayload.items)
+        setBorrows(borrowPayload.items)
+        setDonations(donationPayload.items)
       } catch {
         setLoadError('目前無法完整讀取 Dashboard，請稍後再試。')
       } finally {

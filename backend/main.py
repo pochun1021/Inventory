@@ -1,7 +1,8 @@
 from datetime import date, datetime
+import math
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -195,6 +196,38 @@ class DonationRequest(DonationRequestCreate):
     items: list[DonationItem]
 
 
+class InventoryItemListResponse(BaseModel):
+    items: list[InventoryItem]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class IssueRequestListResponse(BaseModel):
+    items: list[IssueRequest]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class BorrowRequestListResponse(BaseModel):
+    items: list[BorrowRequest]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class DonationRequestListResponse(BaseModel):
+    items: list[DonationRequest]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class ImportErrorDetail(BaseModel):
     row: int
     message: str
@@ -281,6 +314,28 @@ def _format_date(value: date | None) -> str:
 
 def _coerce_str(value) -> str:
     return value if isinstance(value, str) else "" if value is None else str(value)
+
+
+def _contains_cjk(value: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+
+def _normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
+    if page < 1:
+        raise HTTPException(status_code=400, detail="page must be greater than 0")
+    if page_size < 1:
+        raise HTTPException(status_code=400, detail="page_size must be greater than 0")
+    return page, page_size
+
+
+def _paginate_rows[T](rows: list[T], page: int, page_size: int) -> tuple[list[T], int, int]:
+    total = len(rows)
+    total_pages = max(1, math.ceil(total / page_size)) if total > 0 else 1
+    start_index = (page - 1) * page_size
+    if start_index >= total:
+        return [], total, total_pages
+    end_index = start_index + page_size
+    return rows[start_index:end_index], total, total_pages
 
 
 def row_to_item(row) -> InventoryItem:
@@ -554,11 +609,54 @@ def delete_asset_status_code_api(code: str):
     return {"success": True}
 
 
-@app.get("/api/items", response_model=list[InventoryItem], response_model_by_alias=False)
-def get_inventory_items(include_donated: bool = False):
-    rows = list_items(include_donated=include_donated)
-    log_inventory_action(action="read", entity="inventory_item", detail={"count": len(rows), "mode": "list"})
-    return [row_to_item(row) for row in rows]
+@app.get("/api/items", response_model=InventoryItemListResponse, response_model_by_alias=False)
+def get_inventory_items(
+    include_donated: bool = False,
+    keyword: str = "",
+    asset_type: str = "all",
+    correction_status: str = "all",
+    page: int = Query(default=1),
+    page_size: int = Query(default=10),
+):
+    page, page_size = _normalize_pagination(page, page_size)
+    rows = [row_to_item(row) for row in list_items(include_donated=include_donated)]
+
+    normalized_keyword = keyword.strip().lower()
+    filtered_rows: list[InventoryItem] = []
+    for row in rows:
+        if asset_type != "all" and row.asset_type != asset_type:
+            continue
+
+        if correction_status == "needs_fix":
+            serial = (row.n_property_sn or row.property_sn or row.n_item_sn or row.item_sn).strip()
+            if serial and not _contains_cjk(serial):
+                continue
+        elif correction_status != "all":
+            raise HTTPException(status_code=400, detail="invalid correction_status")
+
+        if normalized_keyword:
+            search_fields = [
+                row.n_property_sn,
+                row.property_sn,
+                row.n_item_sn,
+                row.item_sn,
+                row.name,
+                row.model,
+                row.location,
+                row.keeper,
+            ]
+            if not any((field or "").lower().find(normalized_keyword) >= 0 for field in search_fields):
+                continue
+
+        filtered_rows.append(row)
+
+    paged_items, total, total_pages = _paginate_rows(filtered_rows, page, page_size)
+    log_inventory_action(
+        action="read",
+        entity="inventory_item",
+        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
+    )
+    return InventoryItemListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
 @app.get("/api/items/{item_id}", response_model=InventoryItem, response_model_by_alias=False)
@@ -642,15 +740,39 @@ def delete_inventory_item_api(item_id: int):
     return {"success": True}
 
 
-@app.get("/api/issues", response_model=list[IssueRequest], response_model_by_alias=False)
-def list_issue_requests_api():
+@app.get("/api/issues", response_model=IssueRequestListResponse, response_model_by_alias=False)
+def list_issue_requests_api(
+    keyword: str = "",
+    page: int = Query(default=1),
+    page_size: int = Query(default=10),
+):
+    page, page_size = _normalize_pagination(page, page_size)
     rows = list_issue_requests()
-    results = []
+    normalized_keyword = keyword.strip().lower()
+    results: list[IssueRequest] = []
     for row in rows:
         items = [row_to_issue_item(item) for item in list_issue_items(row["id"])]
-        results.append(issue_request_row_to_model(row, items))
-    log_inventory_action(action="read", entity="issue_request", detail={"count": len(results), "mode": "list"})
-    return results
+        model = issue_request_row_to_model(row, items)
+        if normalized_keyword:
+            item_matches = any((item.item_name or "").lower().find(normalized_keyword) >= 0 for item in model.items)
+            fields = [
+                model.requester or "",
+                model.department or "",
+                model.purpose or "",
+                model.memo or "",
+                str(model.request_date or ""),
+            ]
+            if not item_matches and not any(field.lower().find(normalized_keyword) >= 0 for field in fields):
+                continue
+        results.append(model)
+
+    paged_items, total, total_pages = _paginate_rows(results, page, page_size)
+    log_inventory_action(
+        action="read",
+        entity="issue_request",
+        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
+    )
+    return IssueRequestListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
 @app.get("/api/issues/{request_id}", response_model=IssueRequest, response_model_by_alias=False)
@@ -742,15 +864,42 @@ def delete_issue_request_api(request_id: int, background_tasks: BackgroundTasks)
     return {"success": True}
 
 
-@app.get("/api/borrows", response_model=list[BorrowRequest], response_model_by_alias=False)
-def list_borrow_requests_api():
+@app.get("/api/borrows", response_model=BorrowRequestListResponse, response_model_by_alias=False)
+def list_borrow_requests_api(
+    keyword: str = "",
+    status: str = "all",
+    page: int = Query(default=1),
+    page_size: int = Query(default=10),
+):
+    page, page_size = _normalize_pagination(page, page_size)
     rows = list_borrow_requests()
-    results = []
+    normalized_keyword = keyword.strip().lower()
+    results: list[BorrowRequest] = []
     for row in rows:
         items = [row_to_borrow_item(item) for item in list_borrow_items(row["id"])]
-        results.append(borrow_request_row_to_model(row, items))
-    log_inventory_action(action="read", entity="borrow_request", detail={"count": len(results), "mode": "list"})
-    return results
+        model = borrow_request_row_to_model(row, items)
+        if status != "all" and model.status != status:
+            continue
+        if normalized_keyword:
+            item_matches = any((item.item_name or "").lower().find(normalized_keyword) >= 0 for item in model.items)
+            fields = [
+                model.borrower or "",
+                model.department or "",
+                model.purpose or "",
+                model.memo or "",
+                str(model.borrow_date or ""),
+            ]
+            if not item_matches and not any(field.lower().find(normalized_keyword) >= 0 for field in fields):
+                continue
+        results.append(model)
+
+    paged_items, total, total_pages = _paginate_rows(results, page, page_size)
+    log_inventory_action(
+        action="read",
+        entity="borrow_request",
+        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
+    )
+    return BorrowRequestListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
 @app.get("/api/borrows/{request_id}", response_model=BorrowRequest, response_model_by_alias=False)
@@ -842,15 +991,40 @@ def delete_borrow_request_api(request_id: int, background_tasks: BackgroundTasks
     return {"success": True}
 
 
-@app.get("/api/donations", response_model=list[DonationRequest], response_model_by_alias=False)
-def list_donation_requests_api():
+@app.get("/api/donations", response_model=DonationRequestListResponse, response_model_by_alias=False)
+def list_donation_requests_api(
+    keyword: str = "",
+    page: int = Query(default=1),
+    page_size: int = Query(default=10),
+):
+    page, page_size = _normalize_pagination(page, page_size)
     rows = list_donation_requests()
-    results = []
+    normalized_keyword = keyword.strip().lower()
+    results: list[DonationRequest] = []
     for row in rows:
         items = [row_to_donation_item(item) for item in list_donation_items(row["id"])]
-        results.append(donation_request_row_to_model(row, items))
-    log_inventory_action(action="read", entity="donation_request", detail={"count": len(results), "mode": "list"})
-    return results
+        model = donation_request_row_to_model(row, items)
+        if normalized_keyword:
+            item_matches = any((item.item_name or "").lower().find(normalized_keyword) >= 0 for item in model.items)
+            fields = [
+                model.donor or "",
+                model.department or "",
+                model.recipient or "",
+                model.purpose or "",
+                model.memo or "",
+                str(model.donation_date or ""),
+            ]
+            if not item_matches and not any(field.lower().find(normalized_keyword) >= 0 for field in fields):
+                continue
+        results.append(model)
+
+    paged_items, total, total_pages = _paginate_rows(results, page, page_size)
+    log_inventory_action(
+        action="read",
+        entity="donation_request",
+        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
+    )
+    return DonationRequestListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
 @app.get("/api/donations/{request_id}", response_model=DonationRequest, response_model_by_alias=False)

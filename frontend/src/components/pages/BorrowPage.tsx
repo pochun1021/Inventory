@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
-import type { BorrowRequest, InventoryItem } from './types'
+import type { BorrowRequest, InventoryItem, PaginatedResponse } from './types'
 
 type BorrowLine = {
   item_id: number | ''
@@ -44,12 +44,12 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     const loadData = async () => {
       setLoadError('')
       try {
-        const itemsResponse = await fetch(apiUrl('/api/items'))
+        const itemsResponse = await fetch(apiUrl('/api/items?page=1&page_size=100000'))
         if (!itemsResponse.ok) {
           throw new Error('無法載入資料')
         }
-        const itemsPayload = (await itemsResponse.json()) as InventoryItem[]
-        setInventoryItems(itemsPayload)
+        const itemsPayload = (await itemsResponse.json()) as PaginatedResponse<InventoryItem>
+        setInventoryItems(itemsPayload.items)
       } catch {
         setLoadError('目前無法讀取借用資料，請稍後重試。')
       }
