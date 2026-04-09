@@ -266,53 +266,76 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>最近活動</CardTitle>
-                <CardDescription>最近 8 筆領用、借用、捐贈紀錄。</CardDescription>
+        <div className="grid gap-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>快速入口</CardTitle>
+              <CardDescription>常用操作捷徑。</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              <Link to="/issues/new" className="inline-flex items-center gap-2 rounded-lg bg-[hsl(var(--secondary))] px-3 py-2 text-sm font-semibold text-[hsl(var(--secondary-foreground))] no-underline hover:bg-[hsl(var(--secondary))/0.8]">
+                <HandCoins className="size-4" />
+                新增領用單
+              </Link>
+              <Link to="/borrows/new" className="inline-flex items-center gap-2 rounded-lg bg-[hsl(var(--secondary))] px-3 py-2 text-sm font-semibold text-[hsl(var(--secondary-foreground))] no-underline hover:bg-[hsl(var(--secondary))/0.8]">
+                <Handshake className="size-4" />
+                新增借用單
+              </Link>
+              <Link to="/donations/new" className="inline-flex items-center gap-2 rounded-lg bg-[hsl(var(--secondary))] px-3 py-2 text-sm font-semibold text-[hsl(var(--secondary-foreground))] no-underline hover:bg-[hsl(var(--secondary))/0.8]">
+                <ClipboardList className="size-4" />
+                新增捐贈單
+              </Link>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>最近活動</CardTitle>
+                  <CardDescription>最近 8 筆領用、借用、捐贈紀錄。</CardDescription>
+                </div>
+                <Badge variant="outline">{recentActivities.length}</Badge>
               </div>
-              <Badge variant="outline">{recentActivities.length}</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            {loading ? <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">資料載入中...</p> : null}
-            {!loading && recentActivities.length === 0 ? (
-              <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">目前沒有可顯示的活動紀錄。</p>
-            ) : null}
-            {!loading &&
-              recentActivities.map((activity) => (
-                <Link
-                  key={activity.key}
-                  to={
-                    activity.type === '領用'
-                      ? '/issues/$requestId'
-                      : activity.type === '借用'
-                        ? '/borrows/$requestId'
-                        : '/donations/$requestId'
-                  }
-                  params={{ requestId: activity.requestId }}
-                  className="group grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-[hsl(var(--border))] px-3 py-2 no-underline transition-colors hover:bg-[hsl(var(--secondary))/0.75]"
-                >
-                  <span className="inline-flex rounded-md bg-[hsl(var(--secondary))] px-2 py-1 text-xs font-semibold text-[hsl(var(--secondary-foreground))]">
-                    {activity.type}
-                  </span>
-                  <div>
-                    <p className="m-0 text-sm font-medium text-[hsl(var(--foreground))]">{activity.actor}</p>
-                    <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
-                      {activity.dateLabel} · {activity.summary}
-                    </p>
-                  </div>
-                  <ArrowRight className="size-4 text-[hsl(var(--muted-foreground))] transition-transform group-hover:translate-x-0.5" />
-                </Link>
-              ))}
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              {loading ? <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">資料載入中...</p> : null}
+              {!loading && recentActivities.length === 0 ? (
+                <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">目前沒有可顯示的活動紀錄。</p>
+              ) : null}
+              {!loading &&
+                recentActivities.map((activity) => (
+                  <Link
+                    key={activity.key}
+                    to={
+                      activity.type === '領用'
+                        ? '/issues/$requestId'
+                        : activity.type === '借用'
+                          ? '/borrows/$requestId'
+                          : '/donations/$requestId'
+                    }
+                    params={{ requestId: activity.requestId }}
+                    className="group grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-[hsl(var(--border))] px-3 py-2 no-underline transition-colors hover:bg-[hsl(var(--secondary))/0.75]"
+                  >
+                    <span className="inline-flex rounded-md bg-[hsl(var(--secondary))] px-2 py-1 text-xs font-semibold text-[hsl(var(--secondary-foreground))]">
+                      {activity.type}
+                    </span>
+                    <div>
+                      <p className="m-0 text-sm font-medium text-[hsl(var(--foreground))]">{activity.actor}</p>
+                      <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+                        {activity.dateLabel} · {activity.summary}
+                      </p>
+                    </div>
+                    <ArrowRight className="size-4 text-[hsl(var(--muted-foreground))] transition-transform group-hover:translate-x-0.5" />
+                  </Link>
+                ))}
+            </CardContent>
+          </Card>
+        </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
+      <section className="grid gap-4">
+        <Card>
           <CardHeader className="pb-3">
             <CardTitle>異常提醒</CardTitle>
             <CardDescription>優先處理可能造成資料錯誤或流程延遲的項目。</CardDescription>
@@ -327,27 +350,6 @@ export function DashboardPage() {
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
               已捐贈狀態資產：<strong>{donatedItemsCount}</strong> 筆
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle>快速入口</CardTitle>
-            <CardDescription>常用操作捷徑。</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            <Link to="/issues/new" className="inline-flex items-center gap-2 rounded-lg bg-[hsl(var(--secondary))] px-3 py-2 text-sm font-semibold text-[hsl(var(--secondary-foreground))] no-underline hover:bg-[hsl(var(--secondary))/0.8]">
-              <HandCoins className="size-4" />
-              新增領用單
-            </Link>
-            <Link to="/borrows/new" className="inline-flex items-center gap-2 rounded-lg bg-[hsl(var(--secondary))] px-3 py-2 text-sm font-semibold text-[hsl(var(--secondary-foreground))] no-underline hover:bg-[hsl(var(--secondary))/0.8]">
-              <Handshake className="size-4" />
-              新增借用單
-            </Link>
-            <Link to="/donations/new" className="inline-flex items-center gap-2 rounded-lg bg-[hsl(var(--secondary))] px-3 py-2 text-sm font-semibold text-[hsl(var(--secondary-foreground))] no-underline hover:bg-[hsl(var(--secondary))/0.8]">
-              <ClipboardList className="size-4" />
-              新增捐贈單
-            </Link>
           </CardContent>
         </Card>
       </section>
