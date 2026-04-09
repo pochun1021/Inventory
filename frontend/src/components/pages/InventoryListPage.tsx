@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
@@ -12,10 +13,10 @@ const ASSET_TYPE_LABEL_MAP: Record<string, string> = {
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 const CHINESE_CHARACTER_REGEX = /[\u4e00-\u9fff]/
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
-const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
-const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
+const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
+const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-[hsl(var(--primary))] px-3 py-2.5 font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--primary-disabled))] disabled:text-[hsl(var(--primary-foreground))]'
+const tableHeaderClass = 'whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left'
+const tableCellClass = 'border border-[hsl(var(--border))] p-2 text-left align-top break-words'
 const SCAN_MAX_KEY_INTERVAL_MS = 45
 const SCAN_MIN_LENGTH = 4
 
@@ -255,12 +256,7 @@ export function InventoryListPage() {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">財產清單</h1>
-        <p className="mt-2 text-slate-500">可依財產編號、品名、型號、放置地點或保管人快速查詢（支援掃描槍）。</p>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <div className="mb-4 grid grid-cols-1 gap-2">
           <label htmlFor="search-input" className="font-bold">
             關鍵字搜尋
@@ -321,7 +317,7 @@ export function InventoryListPage() {
                 <button
                   key={size}
                   type="button"
-                  className={`cursor-pointer rounded-[10px] border px-3 py-2 font-bold ${size === pageSize ? 'border-blue-600 bg-blue-600 text-white' : 'border-blue-300 bg-blue-100 text-blue-700'}`}
+                  className={`cursor-pointer rounded-[10px] border px-3 py-2 font-bold ${size === pageSize ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]' : 'border-[hsl(var(--border))] bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))]'}`}
                   onClick={() => handlePresetPageSize(size)}
                 >
                   {size}
@@ -355,7 +351,7 @@ export function InventoryListPage() {
         {!loading && !loadError ? (
           <>
             <div className="w-full overflow-x-auto">
-              <table className="mt-2 w-full table-fixed border-collapse bg-white">
+              <table className="mt-2 w-full table-fixed border-collapse bg-[hsl(var(--card))]">
                 <thead>
                   <tr>
                     {['#', '資產類型', '財產序號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '資產狀態', '操作'].map((header) => (
@@ -366,7 +362,7 @@ export function InventoryListPage() {
                 <tbody>
                   {paginatedItems.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="border border-slate-200 p-2 text-center text-slate-500">
+                      <td colSpan={12} className="border border-[hsl(var(--border))] p-2 text-center text-slate-500">
                         查無符合條件的財產資料
                       </td>
                     </tr>
@@ -374,7 +370,17 @@ export function InventoryListPage() {
                     paginatedItems.map((item) => (
                       <tr key={item.id}>
                         <td className={`${tableCellClass} whitespace-nowrap`}>
-                          {item.id ? <a className="font-bold text-blue-700 no-underline hover:underline" href={`/inventory/edit/${item.id}`}>{item.id}</a> : '--'}
+                          {item.id ? (
+                            <Link
+                              className="font-bold text-blue-700 no-underline hover:underline"
+                              to="/inventory/edit/$itemId"
+                              params={{ itemId: String(item.id) }}
+                            >
+                              {item.id}
+                            </Link>
+                          ) : (
+                            '--'
+                          )}
                         </td>
                         <td className={tableCellClass}>{toAssetTypeLabel(item.asset_type)}</td>
                         <td className={tableCellClass}>{getPrimarySerial(item) || '--'}</td>

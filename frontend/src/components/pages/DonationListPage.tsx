@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { apiUrl } from '../../api'
 import type { DonationRequest } from './types'
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
-const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
+const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
+const tableHeaderClass = 'whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left'
+const tableCellClass = 'border border-[hsl(var(--border))] p-2 text-left align-top break-words'
 
 export function DonationListPage() {
   const [requests, setRequests] = useState<DonationRequest[]>([])
@@ -49,12 +50,7 @@ export function DonationListPage() {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">捐贈清單</h1>
-        <p className="mt-2 text-slate-500">可依捐贈人、受贈對象、用途、品項快速查詢。</p>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <div className="mb-4 grid gap-2">
           <label htmlFor="donation-search" className="font-bold">
             關鍵字搜尋
@@ -75,7 +71,7 @@ export function DonationListPage() {
 
         {!loading && !loadError ? (
           <div className="w-full overflow-x-auto">
-            <table className="mt-2 w-full table-fixed border-collapse bg-white">
+            <table className="mt-2 w-full table-fixed border-collapse bg-[hsl(var(--card))]">
               <thead>
                 <tr>
                   {['#', '捐贈日期', '捐贈人/單位', '受贈對象', '用途', '品項', '備註'].map((header) => (
@@ -94,9 +90,9 @@ export function DonationListPage() {
                   filteredRequests.map((request) => (
                     <tr key={request.id}>
                       <td className={tableCellClass}>
-                        <a className="font-bold text-blue-700 no-underline" href={`/donations/${request.id}`}>
+                        <Link className="font-bold text-blue-700 no-underline" to="/donations/$requestId" params={{ requestId: String(request.id) }}>
                           {request.id}
-                        </a>
+                        </Link>
                       </td>
                       <td className={tableCellClass}>{request.donation_date || '--'}</td>
                       <td className={tableCellClass}>

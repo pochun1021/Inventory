@@ -9,8 +9,8 @@ type IssueLine = {
   note: string
 }
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
+const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
+const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-[hsl(var(--primary))] px-3 py-2.5 font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--primary-disabled))] disabled:text-[hsl(var(--primary-foreground))]'
 const emptyLine = (): IssueLine => ({ item_id: '', quantity: 1, note: '' })
 const toast = Swal.mixin({
   toast: true,
@@ -169,12 +169,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">領用管理</h1>
-        <p className="mt-2 text-slate-500">建立領用單，並可一次選擇多個品項。</p>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <h2 className="mt-0 text-lg font-bold">{isEditing ? '編輯領用單' : '新增領用單'}</h2>
         <div className="mt-4 grid gap-3">
           <div className="grid gap-2 md:grid-cols-2">
@@ -210,7 +205,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
 
           <div className="mt-3 grid gap-3">
             {lines.map((line, index) => (
-              <div key={`issue-line-${index}`} className="grid gap-2 rounded-xl border border-slate-200 p-4 md:grid-cols-[2fr,1fr,2fr,auto]">
+              <div key={`issue-line-${index}`} className="grid gap-2 rounded-xl border border-[hsl(var(--border))] p-4 md:grid-cols-[2fr,1fr,2fr,auto]">
                 <label className="grid gap-2 font-bold">
                   品項
                   <select
@@ -243,7 +238,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
                 <div className="flex items-end">
                   <button
                     type="button"
-                    className="cursor-pointer rounded-[10px] border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-600"
+                    className="cursor-pointer rounded-[10px] border border-[hsl(var(--border))] px-3 py-2.5 text-sm font-bold text-slate-600"
                     onClick={() => handleRemoveLine(index)}
                     disabled={lines.length <= 1}
                   >

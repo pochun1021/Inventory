@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import { apiUrl } from '../../api'
 import type { IssueRequest } from './types'
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const tableHeaderClass = 'whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left'
-const tableCellClass = 'border border-slate-200 p-2 text-left align-top break-words'
+const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
+const tableHeaderClass = 'whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left'
+const tableCellClass = 'border border-[hsl(var(--border))] p-2 text-left align-top break-words'
 
 export function IssueListPage() {
   const [requests, setRequests] = useState<IssueRequest[]>([])
@@ -51,12 +52,7 @@ export function IssueListPage() {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">領用清單</h1>
-        <p className="mt-2 text-slate-500">可依領用人、單位、用途、品項快速查詢。</p>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         <div className="mb-4 grid gap-2">
           <label htmlFor="issue-search" className="font-bold">
             關鍵字搜尋
@@ -77,7 +73,7 @@ export function IssueListPage() {
 
         {!loading && !loadError ? (
           <div className="w-full overflow-x-auto">
-            <table className="mt-2 w-full table-fixed border-collapse bg-white">
+            <table className="mt-2 w-full table-fixed border-collapse bg-[hsl(var(--card))]">
               <thead>
                 <tr>
                   {['#', '領用日期', '領用人/單位', '用途', '品項', '備註'].map((header) => (
@@ -96,9 +92,9 @@ export function IssueListPage() {
                   filteredRequests.map((request) => (
                     <tr key={request.id}>
                       <td className={tableCellClass}>
-                        <a className="font-bold text-blue-700 no-underline" href={`/issues/${request.id}`}>
+                        <Link className="font-bold text-blue-700 no-underline" to="/issues/$requestId" params={{ requestId: String(request.id) }}>
                           {request.id}
-                        </a>
+                        </Link>
                       </td>
                       <td className={tableCellClass}>{request.request_date || '--'}</td>
                       <td className={tableCellClass}>

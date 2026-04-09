@@ -23,8 +23,8 @@ const ASSET_TYPE_OPTIONS = {
 type AssetTypeValue = (typeof ASSET_TYPE_OPTIONS)[keyof typeof ASSET_TYPE_OPTIONS]
 const ASSET_TYPE_ENTRIES = Object.entries(ASSET_TYPE_OPTIONS) as Array<[string, AssetTypeValue]>
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
+const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
+const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-[hsl(var(--primary))] px-3 py-2.5 font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--primary-disabled))] disabled:text-[hsl(var(--primary-foreground))]'
 
 export function UploadPanel() {
   const [assetType, setAssetType] = useState(ASSET_TYPE_ENTRIES[0][1])
@@ -87,7 +87,7 @@ export function UploadPanel() {
   }
 
   return (
-    <section className="rounded-2xl bg-white p-8 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+    <section className="rounded-2xl bg-[hsl(var(--card))] p-8 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
       <h2 className="mt-0">資產資料上傳</h2>
       <p className="mt-2 text-slate-500">請選擇類別並上傳 Excel（.xlsx）檔案，系統會自動匯入資料。</p>
 
@@ -118,7 +118,7 @@ export function UploadPanel() {
       {errorMessage ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{errorMessage}</p> : null}
 
       {result ? (
-        <section className="mt-7 border-t border-slate-200 pt-5">
+        <section className="mt-7 border-t border-[hsl(var(--border))] pt-5">
           <h3 className="mt-0">匯入結果</h3>
           <ul className="mb-0 pl-5">
             <li>總筆數：{result.total}</li>
@@ -129,18 +129,18 @@ export function UploadPanel() {
           {hasErrors ? (
             <div className="mt-4">
               <h4 className="mt-0">錯誤明細</h4>
-              <table className="mt-2 w-full border-collapse bg-white">
+              <table className="mt-2 w-full border-collapse bg-[hsl(var(--card))]">
                 <thead>
                   <tr>
-                    <th className="whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left">列號</th>
-                    <th className="whitespace-nowrap border border-slate-200 bg-slate-50 p-2 text-left">原因</th>
+                    <th className="whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left">列號</th>
+                    <th className="whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left">原因</th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.errors.map((item) => (
                     <tr key={`${item.row}-${item.message}`}>
-                      <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.row}</td>
-                      <td className="whitespace-nowrap border border-slate-200 p-2 text-left">{item.message}</td>
+                      <td className="whitespace-nowrap border border-[hsl(var(--border))] p-2 text-left">{item.row}</td>
+                      <td className="whitespace-nowrap border border-[hsl(var(--border))] p-2 text-left">{item.message}</td>
                     </tr>
                   ))}
                 </tbody>

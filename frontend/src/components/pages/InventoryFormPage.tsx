@@ -61,9 +61,9 @@ const DEFAULT_FORM_DATA: InventoryFormData = {
   keeper: '',
 }
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
+const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
 const labelClass = 'grid gap-1.5 font-semibold'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
+const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-[hsl(var(--primary))] px-3 py-2.5 font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--primary-disabled))] disabled:text-[hsl(var(--primary-foreground))]'
 
 function normalizeDateForInput(value: string | null): string {
   if (!value) {
@@ -248,12 +248,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">{isEditMode ? '修改財產資料' : '新增庫存資料'}</h1>
-        <p className="mt-2 text-slate-500">{isEditMode ? '可編輯現有財產資訊並儲存。' : '填寫下列欄位建立新的庫存資料。'}</p>
-      </section>
-
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
+      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
         {loading ? <p className="mt-0.5 rounded-[10px] px-3.5 py-3">資料載入中...</p> : null}
         {errorMessage ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{errorMessage}</p> : null}
         {successMessage ? <p className="mt-0.5 rounded-[10px] bg-emerald-50 px-3.5 py-3 text-emerald-700">{successMessage}</p> : null}
@@ -384,7 +379,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
             </label>
 
             {loadedItem ? (
-              <div className="col-[1/-1] grid gap-2 rounded-[10px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 md:grid-cols-2">
+              <div className="col-[1/-1] grid gap-2 rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-4 text-sm text-slate-700 md:grid-cols-2">
                 <div>建立時間：{formatDateTime(loadedItem.created_at)}</div>
                 <div>建立者：{loadedItem.created_by || '--'}</div>
                 <div>更新時間：{formatDateTime(loadedItem.updated_at)}</div>
