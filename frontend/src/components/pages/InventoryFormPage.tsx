@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { Label } from '../ui/label'
+import { PageHeader } from '../ui/page-header'
+import { SectionCard } from '../ui/section-card'
+import { Select } from '../ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
+import { Textarea } from '../ui/textarea'
 import { fetchAssetStatusOptions } from './assetStatusLookup'
 import type { InventoryItem } from './types'
 
@@ -60,10 +68,6 @@ const DEFAULT_FORM_DATA: InventoryFormData = {
   memo2: '',
   keeper: '',
 }
-
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const labelClass = 'grid gap-1.5 font-semibold'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 
 function normalizeDateForInput(value: string | null): string {
   if (!value) {
@@ -248,160 +252,179 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">{isEditMode ? '修改財產資料' : '新增庫存資料'}</h1>
-        <p className="mt-2 text-slate-500">{isEditMode ? '可編輯現有財產資訊並儲存。' : '填寫下列欄位建立新的庫存資料。'}</p>
-      </section>
+      <PageHeader
+        title={isEditMode ? '編輯庫存' : '新增庫存'}
+        description="以分頁分區方式維護資產資料。"
+      />
 
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        {loading ? <p className="mt-0.5 rounded-[10px] px-3.5 py-3">資料載入中...</p> : null}
-        {errorMessage ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{errorMessage}</p> : null}
-        {successMessage ? <p className="mt-0.5 rounded-[10px] bg-emerald-50 px-3.5 py-3 text-emerald-700">{successMessage}</p> : null}
+      {loading ? <p className="mt-0 rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">資料載入中...</p> : null}
+      {errorMessage ? <p className="mt-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</p> : null}
+      {successMessage ? <p className="mt-0 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{successMessage}</p> : null}
 
-        {!loading ? (
-          <form className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-x-4 gap-y-3.5" onSubmit={(event) => void handleSubmit(event)}>
-            <label className={labelClass}>
-              資產類型
-              <select className={fieldClass} value={formData.asset_type} onChange={(event) => handleInputChange('asset_type', event.target.value)}>
-                {ASSET_TYPE_OPTIONS.map((assetTypeOption) => (
-                  <option key={assetTypeOption.value} value={assetTypeOption.value}>
-                    {assetTypeOption.label}
-                  </option>
-                ))}
-                {!ASSET_TYPE_OPTIONS.some((assetTypeOption) => assetTypeOption.value === formData.asset_type) && formData.asset_type ? (
-                  <option value={formData.asset_type}>{formData.asset_type}</option>
-                ) : null}
-              </select>
-            </label>
+      {!loading ? (
+        <form className="grid gap-4" onSubmit={(event) => void handleSubmit(event)}>
+          <Tabs defaultValue="basic">
+            <TabsList>
+              <TabsTrigger value="basic">基本資料</TabsTrigger>
+              <TabsTrigger value="details">補充欄位</TabsTrigger>
+              <TabsTrigger value="meta">異動紀錄</TabsTrigger>
+            </TabsList>
 
-            <label className={labelClass}>
-              資產狀態
-              <select className={fieldClass} value={formData.asset_status} onChange={(event) => handleInputChange('asset_status', event.target.value)}>
-                {assetStatusOptions.map((statusOption) => (
-                  <option key={statusOption.value} value={statusOption.value}>
-                    {statusOption.label}
-                  </option>
-                ))}
-                {!assetStatusOptions.some((statusOption) => statusOption.value === formData.asset_status) && formData.asset_status ? (
-                  <option value={formData.asset_status}>{formData.asset_status}</option>
-                ) : null}
-              </select>
-            </label>
+            <TabsContent value="basic">
+              <SectionCard>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-1.5">
+                    <Label>資產類型</Label>
+                    <Select value={formData.asset_type} onChange={(event) => handleInputChange('asset_type', event.target.value)}>
+                      {ASSET_TYPE_OPTIONS.map((assetTypeOption) => (
+                        <option key={assetTypeOption.value} value={assetTypeOption.value}>
+                          {assetTypeOption.label}
+                        </option>
+                      ))}
+                      {!ASSET_TYPE_OPTIONS.some((assetTypeOption) => assetTypeOption.value === formData.asset_type) && formData.asset_type ? (
+                        <option value={formData.asset_type}>{formData.asset_type}</option>
+                      ) : null}
+                    </Select>
+                  </div>
 
-            <label className={labelClass}>
-              Key
-              <input className={fieldClass} type="text" value={formData.key} onChange={(event) => handleInputChange('key', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>資產狀態</Label>
+                    <Select value={formData.asset_status} onChange={(event) => handleInputChange('asset_status', event.target.value)}>
+                      {assetStatusOptions.map((statusOption) => (
+                        <option key={statusOption.value} value={statusOption.value}>
+                          {statusOption.label}
+                        </option>
+                      ))}
+                      {!assetStatusOptions.some((statusOption) => statusOption.value === formData.asset_status) && formData.asset_status ? (
+                        <option value={formData.asset_status}>{formData.asset_status}</option>
+                      ) : null}
+                    </Select>
+                  </div>
 
-            <label className={labelClass}>
-              n_property_sn
-              <input className={fieldClass} type="text" value={formData.n_property_sn} onChange={(event) => handleInputChange('n_property_sn', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>Key</Label>
+                    <Input value={formData.key} onChange={(event) => handleInputChange('key', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              property_sn
-              <input className={fieldClass} type="text" value={formData.property_sn} onChange={(event) => handleInputChange('property_sn', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>n_property_sn</Label>
+                    <Input value={formData.n_property_sn} onChange={(event) => handleInputChange('n_property_sn', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              n_item_sn
-              <input className={fieldClass} type="text" value={formData.n_item_sn} onChange={(event) => handleInputChange('n_item_sn', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>property_sn</Label>
+                    <Input value={formData.property_sn} onChange={(event) => handleInputChange('property_sn', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              item_sn
-              <input className={fieldClass} type="text" value={formData.item_sn} onChange={(event) => handleInputChange('item_sn', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>n_item_sn</Label>
+                    <Input value={formData.n_item_sn} onChange={(event) => handleInputChange('n_item_sn', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              品名
-              <input className={fieldClass} type="text" value={formData.name} onChange={(event) => handleInputChange('name', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>item_sn</Label>
+                    <Input value={formData.item_sn} onChange={(event) => handleInputChange('item_sn', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              name_code
-              <input className={fieldClass} type="text" value={formData.name_code} onChange={(event) => handleInputChange('name_code', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>品名</Label>
+                    <Input value={formData.name} onChange={(event) => handleInputChange('name', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              name_code2
-              <input className={fieldClass} type="text" value={formData.name_code2} onChange={(event) => handleInputChange('name_code2', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>型號</Label>
+                    <Input value={formData.model} onChange={(event) => handleInputChange('model', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              型號
-              <input className={fieldClass} type="text" value={formData.model} onChange={(event) => handleInputChange('model', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>規格</Label>
+                    <Input value={formData.specification} onChange={(event) => handleInputChange('specification', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              規格
-              <input className={fieldClass} type="text" value={formData.specification} onChange={(event) => handleInputChange('specification', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>單位</Label>
+                    <Input value={formData.unit} onChange={(event) => handleInputChange('unit', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              單位
-              <input className={fieldClass} type="text" value={formData.unit} onChange={(event) => handleInputChange('unit', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>數量</Label>
+                    <Input type="number" min={1} value={formData.count} onChange={(event) => handleCountChange(event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              數量
-              <input className={fieldClass} type="number" min={1} value={formData.count} onChange={(event) => handleCountChange(event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>購置日期</Label>
+                    <Input type="date" value={formData.purchase_date} onChange={(event) => handleInputChange('purchase_date', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              購置日期
-              <input className={fieldClass} type="date" value={formData.purchase_date} onChange={(event) => handleInputChange('purchase_date', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>到期日</Label>
+                    <Input type="date" value={formData.due_date} onChange={(event) => handleInputChange('due_date', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              到期日
-              <input className={fieldClass} type="date" value={formData.due_date} onChange={(event) => handleInputChange('due_date', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>歸還日</Label>
+                    <Input type="date" value={formData.return_date} onChange={(event) => handleInputChange('return_date', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              歸還日
-              <input className={fieldClass} type="date" value={formData.return_date} onChange={(event) => handleInputChange('return_date', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>放置地點</Label>
+                    <Input value={formData.location} onChange={(event) => handleInputChange('location', event.target.value)} />
+                  </div>
 
-            <label className={labelClass}>
-              放置地點
-              <input className={fieldClass} type="text" value={formData.location} onChange={(event) => handleInputChange('location', event.target.value)} />
-            </label>
+                  <div className="grid gap-1.5">
+                    <Label>保管人</Label>
+                    <Input value={formData.keeper} onChange={(event) => handleInputChange('keeper', event.target.value)} />
+                  </div>
+                </div>
+              </SectionCard>
+            </TabsContent>
 
-            <label className={labelClass}>
-              保管人
-              <input className={fieldClass} type="text" value={formData.keeper} onChange={(event) => handleInputChange('keeper', event.target.value)} />
-            </label>
+            <TabsContent value="details">
+              <SectionCard>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label>name_code</Label>
+                    <Input value={formData.name_code} onChange={(event) => handleInputChange('name_code', event.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>name_code2</Label>
+                    <Input value={formData.name_code2} onChange={(event) => handleInputChange('name_code2', event.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5 md:col-span-2">
+                    <Label>memo</Label>
+                    <Textarea rows={4} value={formData.memo} onChange={(event) => handleInputChange('memo', event.target.value)} />
+                  </div>
+                  <div className="grid gap-1.5 md:col-span-2">
+                    <Label>memo2</Label>
+                    <Textarea rows={4} value={formData.memo2} onChange={(event) => handleInputChange('memo2', event.target.value)} />
+                  </div>
+                </div>
+              </SectionCard>
+            </TabsContent>
 
-            <label className={`${labelClass} col-[1/-1]`}>
-              memo
-              <textarea className={`${fieldClass} resize-y`} value={formData.memo} onChange={(event) => handleInputChange('memo', event.target.value)} rows={3} />
-            </label>
+            <TabsContent value="meta">
+              <SectionCard>
+                {loadedItem ? (
+                  <div className="grid gap-2 rounded-md bg-[hsl(var(--card-soft))] p-3 text-sm text-[hsl(var(--muted-foreground))] md:grid-cols-2">
+                    <div>建立時間：{formatDateTime(loadedItem.created_at)}</div>
+                    <div>建立者：{loadedItem.created_by || '--'}</div>
+                    <div>更新時間：{formatDateTime(loadedItem.updated_at)}</div>
+                    <div>更新者：{loadedItem.updated_by || '--'}</div>
+                    <div>刪除時間：{formatDateTime(loadedItem.deleted_at)}</div>
+                    <div>刪除者：{loadedItem.deleted_by || '--'}</div>
+                  </div>
+                ) : (
+                  <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">新增模式尚無異動紀錄。</p>
+                )}
+              </SectionCard>
+            </TabsContent>
+          </Tabs>
 
-            <label className={`${labelClass} col-[1/-1]`}>
-              memo2
-              <textarea className={`${fieldClass} resize-y`} value={formData.memo2} onChange={(event) => handleInputChange('memo2', event.target.value)} rows={3} />
-            </label>
-
-            {loadedItem ? (
-              <div className="col-[1/-1] grid gap-2 rounded-[10px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 md:grid-cols-2">
-                <div>建立時間：{formatDateTime(loadedItem.created_at)}</div>
-                <div>建立者：{loadedItem.created_by || '--'}</div>
-                <div>更新時間：{formatDateTime(loadedItem.updated_at)}</div>
-                <div>更新者：{loadedItem.updated_by || '--'}</div>
-                <div>刪除時間：{formatDateTime(loadedItem.deleted_at)}</div>
-                <div>刪除者：{loadedItem.deleted_by || '--'}</div>
-              </div>
-            ) : null}
-
-            <div className="col-[1/-1] flex justify-end">
-              <button className={buttonClass} type="submit" disabled={submitting}>
-                {submitButtonLabel}
-              </button>
-            </div>
-          </form>
-        ) : null}
-      </section>
+          <div className="sticky bottom-0 z-10 flex justify-end rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))]/95 p-3 backdrop-blur">
+            <Button type="submit" disabled={submitting}>{submitButtonLabel}</Button>
+          </div>
+        </form>
+      ) : null}
     </>
   )
 }

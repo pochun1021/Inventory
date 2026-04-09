@@ -5,6 +5,14 @@ export type DashboardPayload = {
   pendingFix: number
 }
 
+export type PaginatedResponse<T> = {
+  items: T[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
 export type InventoryItem = {
   id: number
   asset_type: string

@@ -64,10 +64,24 @@ npm run lint     # ESLint 檢查
 - `/inventory`：財產清單
 - `/inventory/new`：新增財產
 - `/inventory/edit/:id`：編輯財產
+- `/issues`：領用清單
+- `/issues/new`：新增領用
+- `/issues/:id`：編輯領用單
+- `/borrows`：借用清單
+- `/borrows/new`：新增借用
+- `/borrows/:id`：編輯借用單
 - `/upload`：Excel 匯入
 - `/donations`：捐贈清單
 - `/donations/new`：新增捐贈
 - `/donations/:id`：編輯捐贈單
+
+## 側邊導覽分類
+
+- 總覽：Dashboard
+- 領用：領用清單、新增領用
+- 借用：借用清單、新增借用
+- 捐贈：捐贈清單、新增捐贈
+- 資產：財產清單、新增庫存、批次上傳
 
 ## 畫面與資料行為
 

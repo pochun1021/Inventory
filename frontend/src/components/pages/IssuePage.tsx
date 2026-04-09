@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
-import type { InventoryItem, IssueRequest } from './types'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { Label } from '../ui/label'
+import { PageHeader } from '../ui/page-header'
+import { SectionCard } from '../ui/section-card'
+import { Select } from '../ui/select'
+import { Textarea } from '../ui/textarea'
+import type { InventoryItem, IssueRequest, PaginatedResponse } from './types'
 
 type IssueLine = {
   item_id: number | ''
@@ -9,8 +16,6 @@ type IssueLine = {
   note: string
 }
 
-const fieldClass = 'rounded-[10px] border border-slate-300 bg-white px-3 py-2.5'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-blue-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-blue-300'
 const emptyLine = (): IssueLine => ({ item_id: '', quantity: 1, note: '' })
 const toast = Swal.mixin({
   toast: true,
@@ -41,12 +46,12 @@ export function IssuePage({ requestId }: IssuePageProps) {
     const loadData = async () => {
       setLoadError('')
       try {
-        const itemsResponse = await fetch(apiUrl('/api/items'))
+        const itemsResponse = await fetch(apiUrl('/api/items?page=1&page_size=100000'))
         if (!itemsResponse.ok) {
           throw new Error('無法載入資料')
         }
-        const itemsPayload = (await itemsResponse.json()) as InventoryItem[]
-        setInventoryItems(itemsPayload)
+        const itemsPayload = (await itemsResponse.json()) as PaginatedResponse<InventoryItem>
+        setInventoryItems(itemsPayload.items)
       } catch {
         setLoadError('目前無法讀取領用資料，請稍後重試。')
       }
@@ -81,7 +86,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
               quantity: item.quantity,
               note: item.note ?? '',
             }))
-            : [emptyLine()]
+            : [emptyLine()],
         )
       } catch {
         setLoadError('目前無法讀取領用單資料，請稍後重試。')
@@ -100,14 +105,6 @@ export function IssuePage({ requestId }: IssuePageProps) {
 
   const handleLineChange = (index: number, patch: Partial<IssueLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
-  }
-
-  const handleAddLine = () => {
-    setLines((prev) => [...prev, emptyLine()])
-  }
-
-  const handleRemoveLine = (index: number) => {
-    setLines((prev) => prev.filter((_, idx) => idx !== index))
   }
 
   const validateLines = () => {
@@ -169,52 +166,44 @@ export function IssuePage({ requestId }: IssuePageProps) {
 
   return (
     <>
-      <section className="rounded-2xl bg-white px-7 py-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h1 className="mt-0">領用管理</h1>
-        <p className="mt-2 text-slate-500">建立領用單，並可一次選擇多個品項。</p>
-      </section>
+      <PageHeader
+        title={isEditing ? '編輯領用單' : '新增領用單'}
+        description="填寫領用人與品項資訊，建立領用交易。"
+      />
 
-      <section className="rounded-2xl bg-white p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h2 className="mt-0 text-lg font-bold">{isEditing ? '編輯領用單' : '新增領用單'}</h2>
-        <div className="mt-4 grid gap-3">
-          <div className="grid gap-2 md:grid-cols-2">
-            <label className="grid gap-2 font-bold">
-              領用人
-              <input className={fieldClass} value={requester} onChange={(event) => setRequester(event.target.value)} />
-            </label>
-            <label className="grid gap-2 font-bold">
-              單位
-              <input className={fieldClass} value={department} onChange={(event) => setDepartment(event.target.value)} />
-            </label>
+      <div className="grid gap-4">
+        <SectionCard title="基本資料">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>領用人</Label>
+              <Input value={requester} onChange={(event) => setRequester(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>單位</Label>
+              <Input value={department} onChange={(event) => setDepartment(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5 md:col-span-2">
+              <Label>用途</Label>
+              <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>領用日期</Label>
+              <Input type="date" value={requestDate} onChange={(event) => setRequestDate(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>備註</Label>
+              <Textarea rows={3} value={memo} onChange={(event) => setMemo(event.target.value)} />
+            </div>
           </div>
-          <label className="grid gap-2 font-bold">
-            用途
-            <input className={fieldClass} value={purpose} onChange={(event) => setPurpose(event.target.value)} />
-          </label>
-          <div className="grid gap-2 md:grid-cols-2">
-            <label className="grid gap-2 font-bold">
-              領用日期
-              <input className={fieldClass} type="date" value={requestDate} onChange={(event) => setRequestDate(event.target.value)} />
-            </label>
-            <label className="grid gap-2 font-bold">
-              備註
-              <input className={fieldClass} value={memo} onChange={(event) => setMemo(event.target.value)} />
-            </label>
-          </div>
-        </div>
+        </SectionCard>
 
-        <div className="mt-6">
-          <div className="flex items-center justify-between">
-            <h3 className="m-0 text-base font-bold">領用品項</h3>
-          </div>
-
-          <div className="mt-3 grid gap-3">
+        <SectionCard title="領用品項">
+          <div className="grid gap-3">
             {lines.map((line, index) => (
-              <div key={`issue-line-${index}`} className="grid gap-2 rounded-xl border border-slate-200 p-4 md:grid-cols-[2fr,1fr,2fr,auto]">
-                <label className="grid gap-2 font-bold">
-                  品項
-                  <select
-                    className={fieldClass}
+              <article key={`issue-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[2fr,1fr,2fr,auto]">
+                <div className="grid gap-1.5">
+                  <Label>品項</Label>
+                  <Select
                     value={line.item_id}
                     onChange={(event) => handleLineChange(index, { item_id: event.target.value ? Number(event.target.value) : '' })}
                   >
@@ -224,48 +213,41 @@ export function IssuePage({ requestId }: IssuePageProps) {
                         {option.label}
                       </option>
                     ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 font-bold">
-                  數量
-                  <input
-                    className={fieldClass}
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>數量</Label>
+                  <Input
                     type="number"
                     min={1}
                     value={line.quantity}
                     onChange={(event) => handleLineChange(index, { quantity: Number(event.target.value) })}
                   />
-                </label>
-                <label className="grid gap-2 font-bold">
-                  備註
-                  <input className={fieldClass} value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} />
-                </label>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    className="cursor-pointer rounded-[10px] border border-slate-300 px-3 py-2.5 text-sm font-bold text-slate-600"
-                    onClick={() => handleRemoveLine(index)}
-                    disabled={lines.length <= 1}
-                  >
-                    移除
-                  </button>
                 </div>
-              </div>
+                <div className="grid gap-1.5">
+                  <Label>備註</Label>
+                  <Input value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} />
+                </div>
+                <div className="flex items-end">
+                  <Button type="button" variant="secondary" onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== index))} disabled={lines.length <= 1}>
+                    移除
+                  </Button>
+                </div>
+              </article>
             ))}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3">
-            <button className={buttonClass} type="button" onClick={handleAddLine}>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine()])}>
               新增品項
-            </button>
-            <button className={buttonClass} type="button" onClick={handleSubmit} disabled={submitting}>
+            </Button>
+            <Button type="button" onClick={() => void handleSubmit()} disabled={submitting}>
               {submitting ? (isEditing ? '更新中...' : '建立中...') : (isEditing ? '更新領用單' : '建立領用單')}
-            </button>
-            {loadError ? <span className="text-sm text-red-600">{loadError}</span> : null}
+            </Button>
           </div>
-        </div>
-      </section>
-
+          {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
+        </SectionCard>
+      </div>
     </>
   )
 }
