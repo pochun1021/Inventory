@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
+import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { Label } from '../ui/label'
+import { PageHeader } from '../ui/page-header'
+import { SectionCard } from '../ui/section-card'
+import { Select } from '../ui/select'
+import { Textarea } from '../ui/textarea'
 import type { BorrowRequest, InventoryItem, PaginatedResponse } from './types'
 
 type BorrowLine = {
@@ -9,8 +16,6 @@ type BorrowLine = {
   note: string
 }
 
-const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
-const buttonClass = 'cursor-pointer rounded-[10px] border-none bg-[hsl(var(--primary))] px-3 py-2.5 font-bold text-[hsl(var(--primary-foreground))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--primary-disabled))] disabled:text-[hsl(var(--primary-foreground))]'
 const emptyLine = (): BorrowLine => ({ item_id: '', quantity: 1, note: '' })
 const toast = Swal.mixin({
   toast: true,
@@ -87,7 +92,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
               quantity: item.quantity,
               note: item.note ?? '',
             }))
-            : [emptyLine()]
+            : [emptyLine()],
         )
       } catch {
         setLoadError('目前無法讀取借用單資料，請稍後重試。')
@@ -106,14 +111,6 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
   const handleLineChange = (index: number, patch: Partial<BorrowLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
-  }
-
-  const handleAddLine = () => {
-    setLines((prev) => [...prev, emptyLine()])
-  }
-
-  const handleRemoveLine = (index: number) => {
-    setLines((prev) => prev.filter((_, idx) => idx !== index))
   }
 
   const validateLines = () => {
@@ -183,65 +180,60 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
   return (
     <>
-      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <h2 className="mt-0 text-lg font-bold">{isEditing ? '編輯借用單' : '新增借用單'}</h2>
-        <div className="mt-4 grid gap-3">
-          <div className="grid gap-2 md:grid-cols-2">
-            <label className="grid gap-2 font-bold">
-              借用人
-              <input className={fieldClass} value={borrower} onChange={(event) => setBorrower(event.target.value)} />
-            </label>
-            <label className="grid gap-2 font-bold">
-              單位
-              <input className={fieldClass} value={department} onChange={(event) => setDepartment(event.target.value)} />
-            </label>
-          </div>
-          <label className="grid gap-2 font-bold">
-            用途
-            <input className={fieldClass} value={purpose} onChange={(event) => setPurpose(event.target.value)} />
-          </label>
-          <div className="grid gap-2 md:grid-cols-3">
-            <label className="grid gap-2 font-bold">
-              借用日期
-              <input className={fieldClass} type="date" value={borrowDate} onChange={(event) => setBorrowDate(event.target.value)} />
-            </label>
-            <label className="grid gap-2 font-bold">
-              預計歸還
-              <input className={fieldClass} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-            </label>
-            <label className="grid gap-2 font-bold">
-              實際歸還
-              <input className={fieldClass} type="date" value={returnDate} onChange={(event) => setReturnDate(event.target.value)} />
-            </label>
-          </div>
-          <div className="grid gap-2 md:grid-cols-2">
-            <label className="grid gap-2 font-bold">
-              狀態
-              <select className={fieldClass} value={status} onChange={(event) => setStatus(event.target.value)}>
+      <PageHeader
+        title={isEditing ? '編輯借用單' : '新增借用單'}
+        description="建立借用紀錄並追蹤歸還狀態。"
+      />
+
+      <div className="grid gap-4">
+        <SectionCard title="基本資料">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-1.5">
+              <Label>借用人</Label>
+              <Input value={borrower} onChange={(event) => setBorrower(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>單位</Label>
+              <Input value={department} onChange={(event) => setDepartment(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5 md:col-span-2">
+              <Label>用途</Label>
+              <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>借用日期</Label>
+              <Input type="date" value={borrowDate} onChange={(event) => setBorrowDate(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>預計歸還</Label>
+              <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>實際歸還</Label>
+              <Input type="date" value={returnDate} onChange={(event) => setReturnDate(event.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>狀態</Label>
+              <Select value={status} onChange={(event) => setStatus(event.target.value)}>
                 <option value="borrowed">借出中</option>
                 <option value="returned">已歸還</option>
                 <option value="overdue">逾期</option>
-              </select>
-            </label>
-            <label className="grid gap-2 font-bold">
-              備註
-              <input className={fieldClass} value={memo} onChange={(event) => setMemo(event.target.value)} />
-            </label>
+              </Select>
+            </div>
+            <div className="grid gap-1.5 md:col-span-2">
+              <Label>備註</Label>
+              <Textarea rows={3} value={memo} onChange={(event) => setMemo(event.target.value)} />
+            </div>
           </div>
-        </div>
+        </SectionCard>
 
-        <div className="mt-6">
-          <div className="flex items-center justify-between">
-            <h3 className="m-0 text-base font-bold">借用品項</h3>
-          </div>
-
-          <div className="mt-3 grid gap-3">
+        <SectionCard title="借用品項">
+          <div className="grid gap-3">
             {lines.map((line, index) => (
-              <div key={`borrow-line-${index}`} className="grid gap-2 rounded-xl border border-[hsl(var(--border))] p-4 md:grid-cols-[2fr,1fr,2fr,auto]">
-                <label className="grid gap-2 font-bold">
-                  品項
-                  <select
-                    className={fieldClass}
+              <article key={`borrow-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[2fr,1fr,2fr,auto]">
+                <div className="grid gap-1.5">
+                  <Label>品項</Label>
+                  <Select
                     value={line.item_id}
                     onChange={(event) => handleLineChange(index, { item_id: event.target.value ? Number(event.target.value) : '' })}
                   >
@@ -251,48 +243,41 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                         {option.label}
                       </option>
                     ))}
-                  </select>
-                </label>
-                <label className="grid gap-2 font-bold">
-                  數量
-                  <input
-                    className={fieldClass}
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>數量</Label>
+                  <Input
                     type="number"
                     min={1}
                     value={line.quantity}
                     onChange={(event) => handleLineChange(index, { quantity: Number(event.target.value) })}
                   />
-                </label>
-                <label className="grid gap-2 font-bold">
-                  備註
-                  <input className={fieldClass} value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} />
-                </label>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    className="cursor-pointer rounded-[10px] border border-[hsl(var(--border))] px-3 py-2.5 text-sm font-bold text-slate-600"
-                    onClick={() => handleRemoveLine(index)}
-                    disabled={lines.length <= 1}
-                  >
-                    移除
-                  </button>
                 </div>
-              </div>
+                <div className="grid gap-1.5">
+                  <Label>備註</Label>
+                  <Input value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} />
+                </div>
+                <div className="flex items-end">
+                  <Button type="button" variant="secondary" onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== index))} disabled={lines.length <= 1}>
+                    移除
+                  </Button>
+                </div>
+              </article>
             ))}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3">
-            <button className={buttonClass} type="button" onClick={handleAddLine}>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine()])}>
               新增品項
-            </button>
-            <button className={buttonClass} type="button" onClick={handleSubmit} disabled={submitting}>
+            </Button>
+            <Button type="button" onClick={() => void handleSubmit()} disabled={submitting}>
               {submitting ? (isEditing ? '更新中...' : '建立中...') : (isEditing ? '更新借用單' : '建立借用單')}
-            </button>
-            {loadError ? <span className="text-sm text-red-600">{loadError}</span> : null}
+            </Button>
           </div>
-        </div>
-      </section>
-
+          {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
+        </SectionCard>
+      </div>
     </>
   )
 }

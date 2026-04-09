@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { Plus } from 'lucide-react'
 import { apiUrl } from '../../api'
 import { DataPagination } from '../ui/data-pagination'
+import { Button } from '../ui/button'
+import { FilterBar } from '../ui/filter-bar'
+import { Input } from '../ui/input'
+import { Label } from '../ui/label'
+import { PageHeader } from '../ui/page-header'
+import { SectionCard } from '../ui/section-card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import type { DonationRequest, PaginatedResponse } from './types'
-
-const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
-const tableHeaderClass = 'whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left'
-const tableCellClass = 'border border-[hsl(var(--border))] p-2 text-left align-top break-words'
 
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
@@ -88,76 +92,113 @@ export function DonationListPage() {
 
   return (
     <>
-      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <div className="mb-4 grid gap-2">
-          <label htmlFor="donation-search" className="font-bold">
-            關鍵字搜尋
-          </label>
-          <input
-            className={fieldClass}
-            id="donation-search"
-            type="search"
-            placeholder="輸入捐贈人、受贈對象、品項..."
-            value={keyword}
-            onChange={(event) => {
-              setKeyword(event.target.value)
-              setPage(1)
-            }}
-          />
-          <p className="mt-1 text-[0.95rem] text-slate-600">共 {total} 筆資料</p>
-        </div>
+      <PageHeader
+        title="捐贈清單"
+        description="查詢捐贈交易與受贈流向。"
+        actions={
+          <Link to="/donations/new">
+            <Button>
+              <Plus className="size-4" />
+              新增捐贈
+            </Button>
+          </Link>
+        }
+      />
 
-        {loading ? <p className="mt-0.5 rounded-[10px] px-3.5 py-3">資料載入中...</p> : null}
-        {loadError ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{loadError}</p> : null}
+      <SectionCard>
+        <FilterBar className="xl:grid-cols-[2fr_1fr]">
+          <div className="grid gap-1.5">
+            <Label htmlFor="donation-search">關鍵字搜尋</Label>
+            <Input
+              id="donation-search"
+              type="search"
+              placeholder="輸入捐贈人、受贈對象、品項..."
+              value={keyword}
+              onChange={(event) => {
+                setKeyword(event.target.value)
+                setPage(1)
+              }}
+            />
+          </div>
+          <div className="flex items-end text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</div>
+        </FilterBar>
+
+        {loading ? <p className="m-0 rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">資料載入中...</p> : null}
+        {loadError ? <p className="m-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p> : null}
 
         {!loading && !loadError ? (
           <>
-            <div className="w-full overflow-x-auto">
-              <table className="mt-2 w-full table-fixed border-collapse bg-[hsl(var(--card))]">
-                <thead>
-                  <tr>
+            <div className="hidden overflow-x-auto md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
                     {['#', '捐贈日期', '捐贈人/單位', '受贈對象', '用途', '品項', '備註'].map((header) => (
-                      <th key={header} className={tableHeaderClass}>{header}</th>
+                      <TableHead key={header}>{header}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {requests.length === 0 ? (
-                    <tr>
-                      <td className={`${tableCellClass} text-center text-slate-500`} colSpan={7}>
+                    <TableRow>
+                      <TableCell className="text-center text-[hsl(var(--muted-foreground))]" colSpan={7}>
                         目前沒有符合條件的捐贈單。
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ) : (
                     requests.map((request) => (
-                      <tr key={request.id}>
-                        <td className={tableCellClass}>
-                          <Link className="font-bold text-blue-700 no-underline" to="/donations/$requestId" params={{ requestId: String(request.id) }}>
+                      <TableRow key={request.id}>
+                        <TableCell>
+                          <Link className="font-semibold text-blue-700 no-underline hover:underline" to="/donations/$requestId" params={{ requestId: String(request.id) }}>
                             {request.id}
                           </Link>
-                        </td>
-                        <td className={tableCellClass}>{request.donation_date || '--'}</td>
-                        <td className={tableCellClass}>
-                          <div className="font-bold">{request.donor || '--'}</div>
-                          <div className="text-sm text-slate-500">{request.department || ''}</div>
-                        </td>
-                        <td className={tableCellClass}>{request.recipient || '--'}</td>
-                        <td className={tableCellClass}>{request.purpose || '--'}</td>
-                        <td className={tableCellClass}>
+                        </TableCell>
+                        <TableCell>{request.donation_date || '--'}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold">{request.donor || '--'}</div>
+                          <div className="text-xs text-[hsl(var(--muted-foreground))]">{request.department || ''}</div>
+                        </TableCell>
+                        <TableCell>{request.recipient || '--'}</TableCell>
+                        <TableCell>{request.purpose || '--'}</TableCell>
+                        <TableCell>
                           <div className="grid gap-1">
                             {request.items.map((item) => (
-                              <div key={item.id} className="text-sm">
+                              <div key={item.id} className="text-xs">
                                 {(item.item_name || `#${item.item_id}`)} x {item.quantity}
                               </div>
                             ))}
                           </div>
-                        </td>
-                        <td className={tableCellClass}>{request.memo || '--'}</td>
-                      </tr>
+                        </TableCell>
+                        <TableCell>{request.memo || '--'}</TableCell>
+                      </TableRow>
                     ))
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="grid gap-3 md:hidden">
+              {requests.length === 0 ? (
+                <p className="m-0 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] px-3 py-2 text-sm text-[hsl(var(--muted-foreground))]">
+                  目前沒有符合條件的捐贈單。
+                </p>
+              ) : (
+                requests.map((request) => (
+                  <article key={request.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                    <div className="flex items-center justify-between">
+                      <Link className="font-semibold text-blue-700 no-underline" to="/donations/$requestId" params={{ requestId: String(request.id) }}>
+                        #{request.id}
+                      </Link>
+                      <span className="text-xs text-[hsl(var(--muted-foreground))]">{request.donation_date || '--'}</span>
+                    </div>
+                    <p className="mt-2 mb-0 text-sm font-semibold">{request.donor || '--'}</p>
+                    <p className="mt-0.5 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{request.department || '--'}</p>
+                    <p className="mt-2 mb-0 text-sm">受贈：{request.recipient || '--'}</p>
+                    <p className="mt-2 mb-0 text-xs text-[hsl(var(--muted-foreground))]">
+                      品項：{request.items.map((item) => `${item.item_name || `#${item.item_id}`} x ${item.quantity}`).join('，') || '--'}
+                    </p>
+                  </article>
+                ))
+              )}
             </div>
 
             <DataPagination
@@ -173,7 +214,7 @@ export function DonationListPage() {
             />
           </>
         ) : null}
-      </section>
+      </SectionCard>
     </>
   )
 }

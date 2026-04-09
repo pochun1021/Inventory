@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
+import { MoreHorizontal, Plus } from 'lucide-react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { DataPagination } from '../ui/data-pagination'
+import { Button } from '../ui/button'
+import { Dialog } from '../ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu'
+import { FilterBar } from '../ui/filter-bar'
+import { Input } from '../ui/input'
+import { Label } from '../ui/label'
+import { PageHeader } from '../ui/page-header'
+import { SectionCard } from '../ui/section-card'
+import { Select } from '../ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
 import type { InventoryItem, PaginatedResponse } from './types'
 
@@ -13,9 +24,6 @@ const ASSET_TYPE_LABEL_MAP: Record<string, string> = {
 }
 
 const CHINESE_CHARACTER_REGEX = /[\u4e00-\u9fff]/
-const fieldClass = 'rounded-[10px] border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-3 py-2.5'
-const tableHeaderClass = 'whitespace-nowrap border border-[hsl(var(--border))] bg-[hsl(var(--secondary))] p-2 text-left'
-const tableCellClass = 'border border-[hsl(var(--border))] p-2 text-left align-top break-words'
 const SCAN_MAX_KEY_INTERVAL_MS = 45
 const SCAN_MIN_LENGTH = 4
 
@@ -85,6 +93,7 @@ export function InventoryListPage() {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState<InventoryItem | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const scanBufferRef = useRef<ScanBuffer>({ value: '', lastTs: 0 })
@@ -225,6 +234,9 @@ export function InventoryListPage() {
     return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || ''
   }
 
+  const confirmDeleteLabel =
+    confirmDeleteItem ? confirmDeleteItem.name || getPrimarySerial(confirmDeleteItem) || String(confirmDeleteItem.id) : ''
+
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const now = Date.now()
     const buffer = scanBufferRef.current
@@ -257,19 +269,6 @@ export function InventoryListPage() {
       return
     }
 
-    const result = await Swal.fire({
-      title: '確認刪除',
-      text: `確定要刪除財產「${item.name || getPrimarySerial(item) || item.id}」嗎？`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonText: '刪除',
-      cancelButtonText: '取消',
-    })
-
-    if (!result.isConfirmed) {
-      return
-    }
-
     setLoadError('')
     setActionMessage('')
     setDeletingItemId(item.id)
@@ -285,6 +284,7 @@ export function InventoryListPage() {
 
       setActionMessage('財產資料已刪除。')
       setReloadKey((previous) => previous + 1)
+      setConfirmDeleteItem(null)
     } catch {
       setLoadError('刪除財產資料失敗，請稍後再試。')
     } finally {
@@ -305,146 +305,188 @@ export function InventoryListPage() {
 
   return (
     <>
-      <section className="rounded-2xl bg-[hsl(var(--card))] p-6 shadow-[0_12px_30px_rgba(31,41,55,0.12)]">
-        <div className="mb-4 grid grid-cols-1 gap-2">
-          <label htmlFor="search-input" className="font-bold">
-            關鍵字搜尋
-          </label>
-          <input
-            className={fieldClass}
-            id="search-input"
-            ref={searchInputRef}
-            type="search"
-            placeholder="可輸入/掃描財產編號、品名、型號..."
-            value={keyword}
-            onKeyDown={handleSearchKeyDown}
-            onChange={(event) => {
-              if (lastInputSourceRef.current !== 'scan') {
-                lastInputSourceRef.current = 'manual'
-              }
-              setKeyword(event.target.value)
-              setPage(1)
-            }}
-          />
+      <PageHeader
+        title="財產清單"
+        description="管理資產資料，支援條件過濾、掃碼查詢與刪除。"
+        actions={
+          <Link to="/inventory/new">
+            <Button>
+              <Plus className="size-4" />
+              新增庫存
+            </Button>
+          </Link>
+        }
+      />
 
-          <label htmlFor="asset-type-filter" className="font-bold">
-            資產類型篩選
-          </label>
-          <select
-            className={fieldClass}
-            id="asset-type-filter"
-            value={selectedAssetType}
-            onChange={(event) => {
-              setSelectedAssetType(event.target.value)
-              setPage(1)
-            }}
-          >
-            {assetTypeOptions.map((assetTypeValue) => (
-              <option key={assetTypeValue} value={assetTypeValue}>
-                {assetTypeValue === 'all' ? '全部類別' : toAssetTypeLabel(assetTypeValue)}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="correction-filter" className="font-bold">
-            待修正篩選
-          </label>
-          <select
-            className={fieldClass}
-            id="correction-filter"
-            value={selectedCorrectionStatus}
-            onChange={(event) => {
-              setSelectedCorrectionStatus(event.target.value as 'all' | 'needs_fix')
-              setPage(1)
-            }}
-          >
-            <option value="all">全部資料</option>
-            <option value="needs_fix">僅顯示待修正資料</option>
-          </select>
-
-          <label className="mt-1 inline-flex items-center gap-2 font-bold">
-            <input
-              type="checkbox"
-              checked={showDonated}
+      <SectionCard>
+        <FilterBar className="xl:grid-cols-[2fr_1fr_1fr_1fr]">
+          <div className="grid gap-1.5 xl:col-span-2">
+            <Label htmlFor="search-input">關鍵字搜尋</Label>
+            <Input
+              id="search-input"
+              ref={searchInputRef}
+              type="search"
+              placeholder="可輸入/掃描財產編號、品名、型號..."
+              value={keyword}
+              onKeyDown={handleSearchKeyDown}
               onChange={(event) => {
-                setShowDonated(event.target.checked)
+                if (lastInputSourceRef.current !== 'scan') {
+                  lastInputSourceRef.current = 'manual'
+                }
+                setKeyword(event.target.value)
                 setPage(1)
               }}
             />
-            顯示已捐贈資料
-          </label>
+          </div>
 
-          <p className="mt-1 text-[0.95rem] text-slate-600">共 {total} 筆資料</p>
-          {correctionSummary !== null ? <p className="mt-1 text-[0.95rem] text-slate-600">本頁待修正：{correctionSummary} 筆</p> : null}
-        </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="asset-type-filter">資產類型篩選</Label>
+            <Select
+              id="asset-type-filter"
+              value={selectedAssetType}
+              onChange={(event) => {
+                setSelectedAssetType(event.target.value)
+                setPage(1)
+              }}
+            >
+              {assetTypeOptions.map((assetTypeValue) => (
+                <option key={assetTypeValue} value={assetTypeValue}>
+                  {assetTypeValue === 'all' ? '全部類別' : toAssetTypeLabel(assetTypeValue)}
+                </option>
+              ))}
+            </Select>
+          </div>
 
-        {loading ? <p className="mt-0.5 rounded-[10px] px-3.5 py-3">資料載入中...</p> : null}
-        {loadError ? <p className="mt-0.5 rounded-[10px] bg-red-50 px-3.5 py-3 text-red-700">{loadError}</p> : null}
-        {actionMessage ? <p className="mt-0.5 rounded-[10px] bg-emerald-50 px-3.5 py-3 text-emerald-700">{actionMessage}</p> : null}
+          <div className="grid gap-1.5">
+            <Label htmlFor="correction-filter">待修正篩選</Label>
+            <Select
+              id="correction-filter"
+              value={selectedCorrectionStatus}
+              onChange={(event) => {
+                setSelectedCorrectionStatus(event.target.value as 'all' | 'needs_fix')
+                setPage(1)
+              }}
+            >
+              <option value="all">全部資料</option>
+              <option value="needs_fix">僅顯示待修正資料</option>
+            </Select>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 xl:col-span-4">
+            <Label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={showDonated}
+                onChange={(event) => {
+                  setShowDonated(event.target.checked)
+                  setPage(1)
+                }}
+              />
+              顯示已捐贈資料
+            </Label>
+            <div className="text-sm text-[hsl(var(--muted-foreground))]">
+              共 {total} 筆資料{correctionSummary !== null ? `，本頁待修正 ${correctionSummary} 筆` : ''}
+            </div>
+          </div>
+        </FilterBar>
+
+        {loading ? <p className="m-0 rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">資料載入中...</p> : null}
+        {loadError ? <p className="m-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p> : null}
+        {actionMessage ? <p className="m-0 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actionMessage}</p> : null}
 
         {!loading && !loadError ? (
           <>
-            <div className="w-full overflow-x-auto">
-              <table className="mt-2 w-full table-fixed border-collapse bg-[hsl(var(--card))]">
-                <thead>
-                  <tr>
-                    {['#', '資產類型', '財產序號', '品名', '型號', '規格', '單位', '購置日期', '放置地點', '保管人', '資產狀態', '操作'].map((header) => (
-                      <th key={header} className={tableHeaderClass}>{header}</th>
+            <div className="hidden overflow-x-auto md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {['#', '資產類型', '財產序號', '品名', '型號', '放置地點', '保管人', '資產狀態', '操作'].map((header) => (
+                      <TableHead key={header}>{header}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {items.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} className="border border-[hsl(var(--border))] p-2 text-center text-slate-500">
-                        查無符合條件的財產資料
-                      </td>
-                    </tr>
+                    <TableRow>
+                      <TableCell className="text-center text-[hsl(var(--muted-foreground))]" colSpan={9}>
+                        查無符合條件的財產資料。
+                      </TableCell>
+                    </TableRow>
                   ) : (
                     items.map((item) => (
-                      <tr key={item.id}>
-                        <td className={`${tableCellClass} whitespace-nowrap`}>
+                      <TableRow key={item.id}>
+                        <TableCell>
                           {item.id ? (
-                            <Link
-                              className="font-bold text-blue-700 no-underline hover:underline"
-                              to="/inventory/edit/$itemId"
-                              params={{ itemId: String(item.id) }}
-                            >
+                            <Link className="font-semibold text-blue-700 no-underline hover:underline" to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
                               {item.id}
                             </Link>
                           ) : (
                             '--'
                           )}
-                        </td>
-                        <td className={tableCellClass}>{toAssetTypeLabel(item.asset_type)}</td>
-                        <td className={tableCellClass}>{getPrimarySerial(item) || '--'}</td>
-                        <td className={tableCellClass}>{item.name || '--'}</td>
-                        <td className={tableCellClass}>{item.model || '--'}</td>
-                        <td className={tableCellClass}>{item.specification || '--'}</td>
-                        <td className={tableCellClass}>{item.unit || '--'}</td>
-                        <td className={`${tableCellClass} whitespace-nowrap`}>{item.purchase_date ?? '--'}</td>
-                        <td className={tableCellClass}>{item.location || '--'}</td>
-                        <td className={tableCellClass}>{item.keeper || '--'}</td>
-                        <td className={`${tableCellClass} whitespace-nowrap`}>
-                          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">
-                            {toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}
-                          </span>
-                        </td>
-                        <td className={`${tableCellClass} whitespace-nowrap`}>
-                          <button
-                            type="button"
-                            className="cursor-pointer rounded-[10px] border-none bg-red-600 px-3 py-2.5 font-bold text-white disabled:cursor-not-allowed disabled:bg-red-300"
-                            onClick={() => void handleDeleteItem(item)}
-                            disabled={deletingItemId === item.id}
-                          >
-                            {deletingItemId === item.id ? '刪除中...' : '刪除'}
-                          </button>
-                        </td>
-                      </tr>
+                        </TableCell>
+                        <TableCell>{toAssetTypeLabel(item.asset_type)}</TableCell>
+                        <TableCell>{getPrimarySerial(item) || '--'}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold">{item.name || '--'}</div>
+                          <div className="text-xs text-[hsl(var(--muted-foreground))]">{item.model || '--'}</div>
+                        </TableCell>
+                        <TableCell>{item.specification || '--'}</TableCell>
+                        <TableCell>{item.location || '--'}</TableCell>
+                        <TableCell>{item.keeper || '--'}</TableCell>
+                        <TableCell>{toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}</TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger>
+                              <MoreHorizontal className="size-4" />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              <Link
+                                className="flex items-center rounded-sm px-2 py-1.5 text-sm text-[hsl(var(--foreground))] no-underline hover:bg-[hsl(var(--secondary))]"
+                                to="/inventory/edit/$itemId"
+                                params={{ itemId: String(item.id) }}
+                              >
+                                編輯
+                              </Link>
+                              <DropdownMenuItem className="text-red-600" onClick={() => setConfirmDeleteItem(item)}>
+                                刪除
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
                     ))
                   )}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="grid gap-3 md:hidden">
+              {items.length === 0 ? (
+                <p className="m-0 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] px-3 py-2 text-sm text-[hsl(var(--muted-foreground))]">
+                  查無符合條件的財產資料。
+                </p>
+              ) : (
+                items.map((item) => (
+                  <article key={item.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
+                    <div className="flex items-center justify-between">
+                      <p className="m-0 text-sm font-semibold">{item.name || '--'}</p>
+                      <span className="text-xs text-[hsl(var(--muted-foreground))]">#{item.id}</span>
+                    </div>
+                    <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{getPrimarySerial(item) || '--'}</p>
+                    <p className="mt-2 mb-0 text-sm">類型：{toAssetTypeLabel(item.asset_type)}</p>
+                    <p className="mt-1 mb-0 text-sm">地點：{item.location || '--'}</p>
+                    <p className="mt-1 mb-0 text-sm">狀態：{toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}</p>
+                    <div className="mt-3 flex gap-2">
+                      <Link className="flex-1" to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
+                        <Button className="w-full" size="sm" variant="secondary">編輯</Button>
+                      </Link>
+                      <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
+                        刪除
+                      </Button>
+                    </div>
+                  </article>
+                ))
+              )}
             </div>
 
             <DataPagination
@@ -460,7 +502,32 @@ export function InventoryListPage() {
             />
           </>
         ) : null}
-      </section>
+      </SectionCard>
+
+      <Dialog
+        open={Boolean(confirmDeleteItem)}
+        onClose={() => setConfirmDeleteItem(null)}
+        title="確認刪除"
+        description={`確定要刪除財產「${confirmDeleteLabel}」嗎？`}
+        actions={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmDeleteItem(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (confirmDeleteItem) {
+                  void handleDeleteItem(confirmDeleteItem)
+                }
+              }}
+              disabled={deletingItemId === confirmDeleteItem?.id}
+            >
+              {deletingItemId === confirmDeleteItem?.id ? '刪除中...' : '刪除'}
+            </Button>
+          </>
+        }
+      />
     </>
   )
 }
