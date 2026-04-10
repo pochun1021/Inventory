@@ -7,6 +7,7 @@ import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
+import { buildGroupedItemOptions } from './itemOptionGroups'
 import type { InventoryItem, IssueRequest, PaginatedResponse } from './types'
 
 type IssueLine = {
@@ -16,6 +17,7 @@ type IssueLine = {
 }
 
 const emptyLine = (): IssueLine => ({ item_id: '', quantity: 1, note: '' })
+const GROUP_OPTION_PREFIX = '__group__:'
 const toast = Swal.mixin({
   toast: true,
   position: 'top-end',
@@ -109,15 +111,21 @@ export function IssuePage({ requestId }: IssuePageProps) {
     })
   }, [inventoryItems, isEditing, selectedItemIds])
 
-  const itemOptions = useMemo(() => {
-    return selectableItems.map((item) => ({
-      value: item.id,
-      label: `${item.name || '未命名'} ${item.model ? `(${item.model})` : ''} ${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn ? `｜${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn}` : ''}`.trim(),
-    }))
-  }, [selectableItems])
+  const itemOptionGroups = useMemo(() => buildGroupedItemOptions(selectableItems), [selectableItems])
 
   const handleLineChange = (index: number, patch: Partial<IssueLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
+  }
+
+  const handleItemSelectChange = (index: number, rawValue: string) => {
+    if (!rawValue) {
+      handleLineChange(index, { item_id: '' })
+      return
+    }
+    if (rawValue.startsWith(GROUP_OPTION_PREFIX)) {
+      return
+    }
+    handleLineChange(index, { item_id: Number(rawValue) })
   }
 
   const getLineValidationError = () => {
@@ -233,14 +241,23 @@ export function IssuePage({ requestId }: IssuePageProps) {
                   <Label>品項</Label>
                   <Select
                     value={line.item_id}
-                    onChange={(event) => handleLineChange(index, { item_id: event.target.value ? Number(event.target.value) : '' })}
+                    onChange={(event) => handleItemSelectChange(index, event.target.value)}
                   >
                     <option value="">請選擇品項</option>
-                    {itemOptions.map((option) => (
-                      <option key={option.value} value={option.value} disabled={selectedByOtherLines.has(option.value)}>
-                        {option.label}
-                      </option>
-                    ))}
+                    {itemOptionGroups.flatMap((group) => [
+                      <option
+                        key={`group-${group.groupLabel}`}
+                        value={`${GROUP_OPTION_PREFIX}${group.groupLabel}`}
+                        style={{ color: 'hsl(var(--foreground))', fontWeight: 700 }}
+                      >
+                        {`==== ${group.groupLabel} ====`}
+                      </option>,
+                      ...group.options.map((option) => (
+                        <option key={option.value} value={option.value} disabled={selectedByOtherLines.has(option.value)}>
+                          {`  ${option.label}`}
+                        </option>
+                      )),
+                    ])}
                   </Select>
                 </div>
                 <div className="grid gap-1.5">

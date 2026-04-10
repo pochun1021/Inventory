@@ -7,6 +7,7 @@ import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
+import { buildGroupedItemOptions } from './itemOptionGroups'
 import type { DonationRequest, InventoryItem, PaginatedResponse } from './types'
 
 type DonationLine = {
@@ -18,6 +19,7 @@ type DonationLine = {
 const FIXED_DONOR = '固定捐贈人'
 const FIXED_DEPARTMENT = '固定單位'
 const emptyLine = (): DonationLine => ({ item_id: '', quantity: 1, note: '' })
+const GROUP_OPTION_PREFIX = '__group__:'
 const toast = Swal.mixin({
   toast: true,
   position: 'top-end',
@@ -99,7 +101,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
     void loadRequest()
   }, [isEditing, requestId])
 
-  const itemOptions = useMemo(() => {
+  const selectableItems = useMemo(() => {
     if (!isEditing || !requestId) {
       return inventoryItems.filter((item) => !item.donated_at)
     }
@@ -112,8 +114,21 @@ export function DonationPage({ requestId }: DonationPageProps) {
     })
   }, [inventoryItems, isEditing, requestId])
 
+  const itemOptionGroups = useMemo(() => buildGroupedItemOptions(selectableItems), [selectableItems])
+
   const handleLineChange = (index: number, patch: Partial<DonationLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
+  }
+
+  const handleItemSelectChange = (index: number, rawValue: string) => {
+    if (!rawValue) {
+      handleLineChange(index, { item_id: '' })
+      return
+    }
+    if (rawValue.startsWith(GROUP_OPTION_PREFIX)) {
+      return
+    }
+    handleLineChange(index, { item_id: Number(rawValue) })
   }
 
   const validateLines = () => {
@@ -225,14 +240,23 @@ export function DonationPage({ requestId }: DonationPageProps) {
                   <Label>品項</Label>
                   <Select
                     value={line.item_id}
-                    onChange={(event) => handleLineChange(index, { item_id: event.target.value ? Number(event.target.value) : '' })}
+                    onChange={(event) => handleItemSelectChange(index, event.target.value)}
                   >
                     <option value="">請選擇品項</option>
-                    {itemOptions.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {`${item.name || '未命名'} ${item.model ? `(${item.model})` : ''} ${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn ? `｜${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn}` : ''}`.trim()}
-                      </option>
-                    ))}
+                    {itemOptionGroups.flatMap((group) => [
+                      <option
+                        key={`group-${group.groupLabel}`}
+                        value={`${GROUP_OPTION_PREFIX}${group.groupLabel}`}
+                        style={{ color: 'hsl(var(--foreground))', fontWeight: 700 }}
+                      >
+                        {`==== ${group.groupLabel} ====`}
+                      </option>,
+                      ...group.options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {`  ${option.label}`}
+                        </option>
+                      )),
+                    ])}
                   </Select>
                 </div>
                 <div className="grid gap-1.5">
