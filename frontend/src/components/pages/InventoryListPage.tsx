@@ -10,7 +10,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { FilterBar } from '../ui/filter-bar'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
@@ -305,18 +304,14 @@ export function InventoryListPage() {
 
   return (
     <>
-      <PageHeader
-        title="財產清單"
-        description="管理資產資料，支援條件過濾、掃碼查詢與刪除。"
-        actions={
-          <Link to="/inventory/new">
-            <Button>
-              <Plus className="size-4" />
-              新增庫存
-            </Button>
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link to="/inventory/new">
+          <Button>
+            <Plus className="size-4" />
+            新增庫存
+          </Button>
+        </Link>
+      </div>
 
       <SectionCard>
         <FilterBar className="xl:grid-cols-[2fr_1fr_1fr_1fr]">

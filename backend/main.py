@@ -790,10 +790,12 @@ def create_issue_request_api(request: IssueRequestCreate, background_tasks: Back
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-    _ensure_available_item_ids([item.item_id for item in request.items])
-    request_id = create_issue_request(issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
+        if item.quantity != 1:
+            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
+    try:
+        request_id = create_issue_request(issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = get_issue_request(request_id)
     if row is None:
         log_inventory_action(
@@ -816,10 +818,12 @@ def update_issue_request_api(request_id: int, request: IssueRequestCreate, backg
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-    _ensure_available_item_ids([item.item_id for item in request.items])
-    updated = update_issue_request(request_id, issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
+        if item.quantity != 1:
+            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
+    try:
+        updated = update_issue_request(request_id, issue_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not updated:
         log_inventory_action(
             action="update",
@@ -848,7 +852,10 @@ def update_issue_request_api(request_id: int, request: IssueRequestCreate, backg
 
 @app.delete("/api/issues/{request_id}")
 def delete_issue_request_api(request_id: int, background_tasks: BackgroundTasks):
-    deleted = delete_issue_request(request_id)
+    try:
+        deleted = delete_issue_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
         log_inventory_action(
             action="delete",
@@ -917,10 +924,12 @@ def create_borrow_request_api(request: BorrowRequestCreate, background_tasks: Ba
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-    _ensure_available_item_ids([item.item_id for item in request.items])
-    request_id = create_borrow_request(borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+        if item.quantity != 1:
+            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
+    try:
+        request_id = create_borrow_request(borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = get_borrow_request(request_id)
     if row is None:
         log_inventory_action(
@@ -943,10 +952,12 @@ def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, bac
     if not request.items:
         raise HTTPException(status_code=400, detail="items is required")
     for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-    _ensure_available_item_ids([item.item_id for item in request.items])
-    updated = update_borrow_request(request_id, borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+        if item.quantity != 1:
+            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
+    try:
+        updated = update_borrow_request(request_id, borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not updated:
         log_inventory_action(
             action="update",
@@ -975,7 +986,10 @@ def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, bac
 
 @app.delete("/api/borrows/{request_id}")
 def delete_borrow_request_api(request_id: int, background_tasks: BackgroundTasks):
-    deleted = delete_borrow_request(request_id)
+    try:
+        deleted = delete_borrow_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
         log_inventory_action(
             action="delete",
@@ -1044,9 +1058,8 @@ def create_donation_request_api(request: DonationRequestCreate):
     if not request.recipient.strip():
         raise HTTPException(status_code=400, detail="recipient is required")
     for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-    _ensure_available_item_ids([item.item_id for item in request.items], enforce_unique=True)
+        if item.quantity != 1:
+            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
     try:
         request_id = create_donation_request(
             donation_request_to_db_payload(request),
@@ -1077,13 +1090,8 @@ def update_donation_request_api(request_id: int, request: DonationRequestCreate)
     if not request.recipient.strip():
         raise HTTPException(status_code=400, detail="recipient is required")
     for item in request.items:
-        if item.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-    _ensure_available_item_ids(
-        [item.item_id for item in request.items],
-        allow_donation_request_id=request_id,
-        enforce_unique=True,
-    )
+        if item.quantity != 1:
+            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
     try:
         updated = update_donation_request(
             request_id,
@@ -1119,7 +1127,10 @@ def update_donation_request_api(request_id: int, request: DonationRequestCreate)
 
 @app.delete("/api/donations/{request_id}")
 def delete_donation_request_api(request_id: int):
-    deleted = delete_donation_request(request_id)
+    try:
+        deleted = delete_donation_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
         log_inventory_action(
             action="delete",

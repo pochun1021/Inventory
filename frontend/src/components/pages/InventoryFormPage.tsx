@@ -3,7 +3,6 @@ import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs'
@@ -95,11 +94,9 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 function toSubmitPayload(formData: InventoryFormData) {
-  const normalizedCount = Number.isFinite(formData.count) && formData.count > 0 ? Math.floor(formData.count) : 1
-
   return {
     ...formData,
-    count: normalizedCount,
+    count: 1,
     purchase_date: formData.purchase_date || null,
     due_date: formData.due_date || null,
     return_date: formData.return_date || null,
@@ -209,14 +206,6 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     }))
   }
 
-  const handleCountChange = (value: string) => {
-    const nextValue = Number(value)
-    setFormData((previousData) => ({
-      ...previousData,
-      count: Number.isFinite(nextValue) ? nextValue : 0,
-    }))
-  }
-
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setErrorMessage('')
@@ -252,11 +241,6 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
   return (
     <>
-      <PageHeader
-        title={isEditMode ? '編輯庫存' : '新增庫存'}
-        description="以分頁分區方式維護資產資料。"
-      />
-
       {loading ? <p className="mt-0 rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">資料載入中...</p> : null}
       {errorMessage ? <p className="mt-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</p> : null}
       {successMessage ? <p className="mt-0 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{successMessage}</p> : null}
@@ -348,7 +332,10 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
                   <div className="grid gap-1.5">
                     <Label>數量</Label>
-                    <Input type="number" min={1} value={formData.count} onChange={(event) => handleCountChange(event.target.value)} />
+                    <Input type="number" min={1} max={1} value={1} disabled />
+                    {loadedItem && loadedItem.count > 1 ? (
+                      <p className="m-0 text-xs text-amber-700">此筆為歷史資料（count &gt; 1），目前單件模式僅允許新異動固定為 1。</p>
+                    ) : null}
                   </div>
 
                   <div className="grid gap-1.5">

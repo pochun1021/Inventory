@@ -8,7 +8,6 @@ import { Button } from '../ui/button'
 import { FilterBar } from '../ui/filter-bar'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
@@ -112,18 +111,14 @@ export function BorrowListPage() {
 
   return (
     <>
-      <PageHeader
-        title="借用清單"
-        description="追蹤借出、歸還與逾期狀態。"
-        actions={
-          <Link to="/borrows/new">
-            <Button>
-              <Plus className="size-4" />
-              新增借用
-            </Button>
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link to="/borrows/new">
+          <Button>
+            <Plus className="size-4" />
+            新增借用
+          </Button>
+        </Link>
+      </div>
 
       <SectionCard>
         <FilterBar className="xl:grid-cols-[2fr_1fr_1fr]">

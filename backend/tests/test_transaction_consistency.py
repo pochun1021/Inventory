@@ -1,0 +1,133 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+import db
+
+
+class TransactionConsistencyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._original_db_path = db.DB_PATH
+        self._original_lock_path = db.LOCK_PATH
+
+        db.DB_PATH = Path(self._tmpdir.name) / "inventory.xlsx"
+        db.LOCK_PATH = Path(self._tmpdir.name) / "inventory.xlsx.lock"
+        db.init_db()
+
+    def tearDown(self) -> None:
+        db.DB_PATH = self._original_db_path
+        db.LOCK_PATH = self._original_lock_path
+        self._tmpdir.cleanup()
+
+    def _create_item(self, *, asset_status: str = "0", count: int = 1) -> int:
+        return db.create_item(
+            {
+                "asset_type": "A1",
+                "asset_status": asset_status,
+                "name": "測試品項",
+                "model": "M1",
+                "count": count,
+            }
+        )
+
+    def _issue_payload(self) -> dict:
+        return {
+            "requester": "tester",
+            "department": "qa",
+            "purpose": "test",
+            "request_date": "2026-04-10",
+            "memo": "",
+        }
+
+    def _borrow_payload(self, *, status: str) -> dict:
+        return {
+            "borrower": "tester",
+            "department": "qa",
+            "purpose": "test",
+            "borrow_date": "2026-04-10",
+            "due_date": "2026-04-20",
+            "return_date": "",
+            "status": status,
+            "memo": "",
+        }
+
+    def _donation_payload(self) -> dict:
+        return {
+            "donor": "tester",
+            "department": "qa",
+            "recipient": "receiver",
+            "purpose": "test",
+            "donation_date": "2026-04-10",
+            "memo": "",
+        }
+
+    def test_quantity_must_be_one(self) -> None:
+        item_id = self._create_item()
+        with self.assertRaisesRegex(ValueError, "quantity must be 1"):
+            db.create_issue_request(
+                self._issue_payload(),
+                [{"item_id": item_id, "quantity": 2, "note": ""}],
+            )
+
+    def test_issue_request_updates_status_only(self) -> None:
+        item_id = self._create_item(count=5)
+
+        request_id = db.create_issue_request(
+            self._issue_payload(),
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+        item_after_create = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_create)
+        self.assertEqual(item_after_create["count"], 1)
+        self.assertEqual(item_after_create["asset_status"], "1")
+
+        db.delete_issue_request(request_id)
+        item_after_delete = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_delete)
+        self.assertEqual(item_after_delete["count"], 1)
+        self.assertEqual(item_after_delete["asset_status"], "0")
+
+    def test_borrow_return_flow_updates_status_only(self) -> None:
+        item_id = self._create_item()
+
+        request_id = db.create_borrow_request(
+            self._borrow_payload(status="borrowed"),
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+        item_after_borrow = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_borrow)
+        self.assertEqual(item_after_borrow["count"], 1)
+        self.assertEqual(item_after_borrow["asset_status"], "2")
+
+        db.update_borrow_request(
+            request_id,
+            self._borrow_payload(status="returned"),
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+        item_after_return = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_return)
+        self.assertEqual(item_after_return["count"], 1)
+        self.assertEqual(item_after_return["asset_status"], "0")
+
+    def test_donation_sets_status_and_reverts_on_delete(self) -> None:
+        item_id = self._create_item()
+
+        request_id = db.create_donation_request(
+            self._donation_payload(),
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+        item_after_create = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_create)
+        self.assertEqual(item_after_create["count"], 1)
+        self.assertEqual(item_after_create["asset_status"], "3")
+
+        db.delete_donation_request(request_id)
+        item_after_delete = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_delete)
+        self.assertEqual(item_after_delete["count"], 1)
+        self.assertEqual(item_after_delete["asset_status"], "0")
+
+
+if __name__ == "__main__":
+    unittest.main()

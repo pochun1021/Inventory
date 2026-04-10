@@ -4,7 +4,6 @@ import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
@@ -121,7 +120,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
     if (lines.length === 0) {
       return false
     }
-    return lines.every((line) => line.item_id !== '' && line.quantity > 0)
+    return lines.every((line) => line.item_id !== '' && line.quantity === 1)
   }
 
   const handleSubmit = async () => {
@@ -130,7 +129,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
       return
     }
     if (!validateLines()) {
-      void toast.fire({ icon: 'error', title: '請確認每筆捐贈品項已選擇品項且數量大於 0。' })
+      void toast.fire({ icon: 'error', title: '單件模式下，每筆捐贈品項數量必須為 1。' })
       return
     }
 
@@ -150,7 +149,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
           memo,
           items: lines.map((line) => ({
             item_id: line.item_id,
-            quantity: line.quantity,
+            quantity: 1,
             note: line.note,
           })),
         }),
@@ -188,13 +187,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
   }
 
   return (
-    <>
-      <PageHeader
-        title={isEditing ? '編輯捐贈單' : '新增捐贈單'}
-        description="建立捐贈交易並標記對應庫存。"
-      />
-
-      <div className="grid gap-4">
+    <div className="grid gap-4">
         <SectionCard title="基本資料">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="grid gap-1.5">
@@ -247,8 +240,9 @@ export function DonationPage({ requestId }: DonationPageProps) {
                   <Input
                     type="number"
                     min={1}
-                    value={line.quantity}
-                    onChange={(event) => handleLineChange(index, { quantity: Number(event.target.value) })}
+                    max={1}
+                    value={1}
+                    disabled
                   />
                 </div>
                 <div className="grid gap-1.5">
@@ -275,6 +269,5 @@ export function DonationPage({ requestId }: DonationPageProps) {
           {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
         </SectionCard>
       </div>
-    </>
   )
 }
