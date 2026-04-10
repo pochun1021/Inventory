@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from db import (
+    archive_old_logs,
     create_asset_status_code,
     create_item,
     create_items_bulk,
@@ -397,6 +398,15 @@ def _normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
     if page_size < 1:
         raise HTTPException(status_code=400, detail="page_size must be greater than 0")
     return page, page_size
+
+
+def _normalize_log_scope(scope: str) -> str:
+    normalized = scope.strip().lower()
+    if not normalized:
+        return "hot"
+    if normalized not in {"hot", "all"}:
+        raise HTTPException(status_code=400, detail="scope must be one of: hot, all")
+    return normalized
 
 
 def _paginate_rows[T](rows: list[T], page: int, page_size: int) -> tuple[list[T], int, int]:
@@ -1222,12 +1232,15 @@ def list_movement_ledger_api(
     end_at: str = "",
     action: str = "",
     entity: str = "",
+    scope: str = "hot",
     item_id: int | None = None,
     entity_id: int | None = None,
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
+    normalized_scope = _normalize_log_scope(scope)
+    archive_old_logs()
     start_time, end_time = _parse_datetime_range_filters(start_at, end_at)
     rows = list_movement_ledger(
         start_at=start_time,
@@ -1236,24 +1249,10 @@ def list_movement_ledger_api(
         entity=entity,
         item_id=item_id,
         entity_id=entity_id,
+        scope=normalized_scope,
     )
     paged_items, total, total_pages = _paginate_rows(rows, page, page_size)
     models = [MovementLedgerEntry(**row) for row in paged_items]
-    log_inventory_action(
-        action="read",
-        entity="movement_ledger",
-        detail={
-            "count": len(models),
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "mode": "list",
-            "action_filter": action,
-            "entity_filter": entity,
-            "item_id_filter": item_id,
-            "entity_id_filter": entity_id,
-        },
-    )
     return MovementLedgerListResponse(items=models, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
@@ -1263,12 +1262,15 @@ def list_operation_logs_api(
     end_at: str = "",
     action: str = "",
     entity: str = "",
+    scope: str = "hot",
     item_id: int | None = None,
     entity_id: int | None = None,
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
+    normalized_scope = _normalize_log_scope(scope)
+    archive_old_logs()
     start_time, end_time = _parse_datetime_range_filters(start_at, end_at)
     rows = list_operation_logs(
         start_at=start_time,
@@ -1277,24 +1279,10 @@ def list_operation_logs_api(
         entity=entity,
         item_id=item_id,
         entity_id=entity_id,
+        scope=normalized_scope,
     )
     paged_items, total, total_pages = _paginate_rows(rows, page, page_size)
     models = [OperationLogEntry(**row) for row in paged_items]
-    log_inventory_action(
-        action="read",
-        entity="operation_log",
-        detail={
-            "count": len(models),
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "mode": "list",
-            "action_filter": action,
-            "entity_filter": entity,
-            "item_id_filter": item_id,
-            "entity_id_filter": entity_id,
-        },
-    )
     return OperationLogListResponse(items=models, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 

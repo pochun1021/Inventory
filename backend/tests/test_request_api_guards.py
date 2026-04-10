@@ -14,14 +14,17 @@ class RequestApiGuardTests(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._original_db_path = db.DB_PATH
         self._original_lock_path = db.LOCK_PATH
+        self._original_log_archive_dir = db.LOG_ARCHIVE_DIR
 
         db.DB_PATH = Path(self._tmpdir.name) / "inventory.xlsx"
         db.LOCK_PATH = Path(self._tmpdir.name) / "inventory.xlsx.lock"
+        db.LOG_ARCHIVE_DIR = Path(self._tmpdir.name) / "log_archive"
         db.init_db()
 
     def tearDown(self) -> None:
         db.DB_PATH = self._original_db_path
         db.LOCK_PATH = self._original_lock_path
+        db.LOG_ARCHIVE_DIR = self._original_log_archive_dir
         self._tmpdir.cleanup()
 
     def _create_item(self, *, asset_status: str = "0") -> int:
@@ -107,6 +110,12 @@ class RequestApiGuardTests(unittest.TestCase):
         created = app_main.create_borrow_request_api(request, BackgroundTasks())
         self.assertEqual(created.status, "borrowed")
         self.assertTrue(created.is_due_soon)
+
+    def test_logs_api_rejects_invalid_scope(self) -> None:
+        with self.assertRaises(HTTPException) as exc:
+            app_main.list_operation_logs_api(scope="archive-only", page=1, page_size=10)
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, "scope must be one of: hot, all")
 
 
 if __name__ == "__main__":

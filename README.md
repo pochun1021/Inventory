@@ -139,6 +139,7 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 
 - `GET /api/logs/movements`
 - `GET /api/logs/operations`
+  - 可選參數：`scope=hot|all`（預設 `hot`，僅查近 90 天）
 
 ## 交易規則（重要）
 

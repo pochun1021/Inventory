@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "inventory.xlsx"
 LOCK_PATH = BASE_DIR / "inventory.xlsx.lock"
 ASSET_CATEGORY_NAME_PATH = BASE_DIR.parent / "asset_category_name.xlsx"
+LOG_ARCHIVE_DIR = BASE_DIR / "log_archive"
+HOT_LOG_RETENTION_DAYS = 90
+ARCHIVE_FILE_PATTERN = re.compile(r"^logs_(\d{6})\.xlsx$")
 
 SHEETS: dict[str, list[str]] = {
     "inventory_items": [
@@ -1095,6 +1099,154 @@ def _matches_item_filter_from_detail(detail: dict[str, Any], item_id: int) -> bo
     return False
 
 
+def _month_key_from_datetime(value: datetime) -> str:
+    return value.strftime("%Y%m")
+
+
+def _archive_workbook_path(month_key: str) -> Path:
+    return LOG_ARCHIVE_DIR / f"logs_{month_key}.xlsx"
+
+
+def _ensure_archive_dir() -> None:
+    LOG_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_archive_month_keys() -> list[str]:
+    if not LOG_ARCHIVE_DIR.exists():
+        return []
+    keys: list[str] = []
+    for path in LOG_ARCHIVE_DIR.iterdir():
+        match = ARCHIVE_FILE_PATTERN.match(path.name)
+        if match:
+            keys.append(match.group(1))
+    return sorted(set(keys))
+
+
+def _month_bounds(month_key: str) -> tuple[datetime, datetime] | None:
+    if len(month_key) != 6 or not month_key.isdigit():
+        return None
+    year = int(month_key[:4])
+    month = int(month_key[4:6])
+    if month < 1 or month > 12:
+        return None
+    start = datetime(year, month, 1)
+    if month == 12:
+        next_month = datetime(year + 1, 1, 1)
+    else:
+        next_month = datetime(year, month + 1, 1)
+    end = next_month - timedelta(seconds=1)
+    return start, end
+
+
+def _month_intersects_range(month_key: str, start_at: datetime | None, end_at: datetime | None) -> bool:
+    bounds = _month_bounds(month_key)
+    if bounds is None:
+        return False
+    month_start, month_end = bounds
+    if start_at is not None and month_end < start_at:
+        return False
+    if end_at is not None and month_start > end_at:
+        return False
+    return True
+
+
+def _candidate_archive_month_keys(start_at: datetime | None, end_at: datetime | None) -> list[str]:
+    keys = _list_archive_month_keys()
+    if start_at is None and end_at is None:
+        return keys
+    return [key for key in keys if _month_intersects_range(key, start_at, end_at)]
+
+
+def _load_archive_workbook(path: Path) -> Workbook:
+    if path.exists():
+        wb = load_workbook(path)
+    else:
+        wb = Workbook()
+        default_sheet = wb.active
+        wb.remove(default_sheet)
+    _ensure_sheet(wb, "operation_logs", SHEETS["operation_logs"])
+    _ensure_sheet(wb, "movement_ledger", SHEETS["movement_ledger"])
+    return wb
+
+
+def _append_rows_to_archive(sheet_name: str, rows: list[dict[str, Any]], month_key: str) -> None:
+    if not rows:
+        return
+    _ensure_archive_dir()
+    archive_path = _archive_workbook_path(month_key)
+    lock_path = archive_path.with_suffix(".lock")
+    lock = FileLock(str(lock_path))
+    with lock:
+        wb = _load_archive_workbook(archive_path)
+        ws = wb[sheet_name]
+        headers = SHEETS[sheet_name]
+        for row in rows:
+            ws.append([row.get(header, "") for header in headers])
+        wb.save(archive_path)
+
+
+def archive_old_logs(*, retention_days: int = HOT_LOG_RETENTION_DAYS) -> dict[str, int]:
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    with _locked_workbook() as wb:
+        operation_rows = _read_rows(wb["operation_logs"])
+        movement_rows = _read_rows(wb["movement_ledger"])
+
+        kept_operations: list[dict[str, Any]] = []
+        kept_movements: list[dict[str, Any]] = []
+        archived_operations_by_month: dict[str, list[dict[str, Any]]] = {}
+        archived_movements_by_month: dict[str, list[dict[str, Any]]] = {}
+
+        for row in operation_rows:
+            created_time = _parse_log_time(row.get("created_at"))
+            if created_time is None or created_time >= cutoff:
+                kept_operations.append(row)
+                continue
+            month_key = _month_key_from_datetime(created_time)
+            archived_operations_by_month.setdefault(month_key, []).append(row)
+
+        for row in movement_rows:
+            created_time = _parse_log_time(row.get("created_at"))
+            if created_time is None or created_time >= cutoff:
+                kept_movements.append(row)
+                continue
+            month_key = _month_key_from_datetime(created_time)
+            archived_movements_by_month.setdefault(month_key, []).append(row)
+
+        operation_archived = len(operation_rows) - len(kept_operations)
+        movement_archived = len(movement_rows) - len(kept_movements)
+        if operation_archived:
+            _write_rows(wb["operation_logs"], SHEETS["operation_logs"], kept_operations)
+        if movement_archived:
+            _write_rows(wb["movement_ledger"], SHEETS["movement_ledger"], kept_movements)
+        if operation_archived or movement_archived:
+            wb.save(DB_PATH)
+
+    for month_key, rows in archived_operations_by_month.items():
+        _append_rows_to_archive("operation_logs", rows, month_key)
+    for month_key, rows in archived_movements_by_month.items():
+        _append_rows_to_archive("movement_ledger", rows, month_key)
+
+    return {
+        "operation_logs_archived": operation_archived,
+        "movement_ledger_archived": movement_archived,
+    }
+
+
+def _list_archive_sheet_rows(sheet_name: str, *, start_at: datetime | None, end_at: datetime | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for month_key in _candidate_archive_month_keys(start_at, end_at):
+        archive_path = _archive_workbook_path(month_key)
+        if not archive_path.exists():
+            continue
+        lock = FileLock(str(archive_path.with_suffix(".lock")))
+        with lock:
+            wb = _load_archive_workbook(archive_path)
+            if sheet_name not in wb.sheetnames:
+                continue
+            rows.extend(_read_rows(wb[sheet_name]))
+    return rows
+
+
 def list_movement_ledger(
     *,
     start_at: datetime | None = None,
@@ -1103,10 +1255,13 @@ def list_movement_ledger(
     entity: str = "",
     item_id: int | None = None,
     entity_id: int | None = None,
+    scope: str = "hot",
 ) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         movement_rows = _read_rows(wb["movement_ledger"])
         inventory_rows = _read_rows(wb["inventory_items"])
+    if scope == "all":
+        movement_rows.extend(_list_archive_sheet_rows("movement_ledger", start_at=start_at, end_at=end_at))
 
     inventory_map = {
         _to_int(row.get("id")): {
@@ -1161,9 +1316,12 @@ def list_operation_logs(
     entity: str = "",
     item_id: int | None = None,
     entity_id: int | None = None,
+    scope: str = "hot",
 ) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         rows = _read_rows(wb["operation_logs"])
+    if scope == "all":
+        rows.extend(_list_archive_sheet_rows("operation_logs", start_at=start_at, end_at=end_at))
 
     normalized_action = _to_str(action).strip().lower()
     normalized_entity = _to_str(entity).strip().lower()
@@ -1172,17 +1330,21 @@ def list_operation_logs(
         row_action = _to_str(row.get("action")).strip()
         row_entity = _to_str(row.get("entity")).strip()
         row_entity_id = _to_int(row.get("entity_id"))
-        detail = _parse_json_detail(row.get("detail"))
+        detail: dict[str, Any] = {}
         if normalized_action and row_action.lower() != normalized_action:
             continue
         if normalized_entity and row_entity.lower() != normalized_entity:
             continue
         if entity_id is not None and row_entity_id != entity_id:
             continue
-        if item_id is not None and not _matches_item_filter_from_detail(detail, item_id):
-            continue
+        if item_id is not None:
+            detail = _parse_json_detail(row.get("detail"))
+            if not _matches_item_filter_from_detail(detail, item_id):
+                continue
         if not _matches_time_filter(created_at=row.get("created_at"), start_at=start_at, end_at=end_at):
             continue
+        if not detail:
+            detail = _parse_json_detail(row.get("detail"))
         filtered.append(
             {
                 "id": _to_int(row.get("id")),

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import type { MovementLedgerEntry, OperationLogEntry, PaginatedResponse } from './types'
 
 type LogTab = 'movements' | 'operations'
+type LogScope = 'hot' | 'all'
 
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
@@ -26,10 +27,15 @@ function parseInitialTab(value: string | null): LogTab {
   return value === 'operations' ? 'operations' : 'movements'
 }
 
+function parseInitialScope(value: string | null): LogScope {
+  return value === 'all' ? 'all' : 'hot'
+}
+
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   return {
     tab: parseInitialTab(params.get('tab')),
+    scope: parseInitialScope(params.get('scope')),
     startAt: params.get('start_at') ?? '',
     endAt: params.get('end_at') ?? '',
     action: params.get('action') ?? '',
@@ -52,6 +58,7 @@ function safeJsonPreview(value: unknown): string {
 export function LogsPage() {
   const initialState = readInitialState()
   const [tab, setTab] = useState<LogTab>(initialState.tab)
+  const [scope, setScope] = useState<LogScope>(initialState.scope)
   const [startAt, setStartAt] = useState(initialState.startAt)
   const [endAt, setEndAt] = useState(initialState.endAt)
   const [action, setAction] = useState(initialState.action)
@@ -72,6 +79,9 @@ export function LogsPage() {
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('tab', tab)
+    if (scope !== 'hot') {
+      params.set('scope', scope)
+    }
     if (startAt) {
       params.set('start_at', startAt)
     }
@@ -97,7 +107,7 @@ export function LogsPage() {
       params.set('page_size', String(pageSize))
     }
     window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`)
-  }, [tab, startAt, endAt, action, entity, itemId, entityId, page, pageSize])
+  }, [tab, scope, startAt, endAt, action, entity, itemId, entityId, page, pageSize])
 
   useEffect(() => {
     const loadRows = async () => {
@@ -107,6 +117,7 @@ export function LogsPage() {
         const params = new URLSearchParams({
           page: String(page),
           page_size: String(pageSize),
+          scope,
         })
         if (startAt) {
           params.set('start_at', startAt)
@@ -149,7 +160,7 @@ export function LogsPage() {
     }
 
     void loadRows()
-  }, [endpoint, tab, startAt, endAt, action, entity, itemId, entityId, page, pageSize])
+  }, [endpoint, tab, scope, startAt, endAt, action, entity, itemId, entityId, page, pageSize])
 
   return (
     <SectionCard>
@@ -163,6 +174,16 @@ export function LogsPage() {
           }}
         >
           異動流水帳
+        </Button>
+        <Button
+          type="button"
+          variant={scope === 'all' ? 'default' : 'secondary'}
+          onClick={() => {
+            setScope((current) => (current === 'hot' ? 'all' : 'hot'))
+            setPage(1)
+          }}
+        >
+          包含歷史資料
         </Button>
         <Button
           type="button"

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import db
+import main as app_main
 
 
 class MovementAndLogQueryTests(unittest.TestCase):
@@ -11,14 +12,17 @@ class MovementAndLogQueryTests(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._original_db_path = db.DB_PATH
         self._original_lock_path = db.LOCK_PATH
+        self._original_log_archive_dir = db.LOG_ARCHIVE_DIR
 
         db.DB_PATH = Path(self._tmpdir.name) / "inventory.xlsx"
         db.LOCK_PATH = Path(self._tmpdir.name) / "inventory.xlsx.lock"
+        db.LOG_ARCHIVE_DIR = Path(self._tmpdir.name) / "log_archive"
         db.init_db()
 
     def tearDown(self) -> None:
         db.DB_PATH = self._original_db_path
         db.LOCK_PATH = self._original_lock_path
+        db.LOG_ARCHIVE_DIR = self._original_log_archive_dir
         self._tmpdir.cleanup()
 
     def _create_item(self, *, name: str = "測試品項") -> int:
@@ -128,6 +132,56 @@ class MovementAndLogQueryTests(unittest.TestCase):
         future_end = future_start + timedelta(days=1)
         self.assertEqual(db.list_movement_ledger(start_at=future_start, end_at=future_end), [])
         self.assertEqual(db.list_operation_logs(start_at=future_start, end_at=future_end), [])
+
+    def test_archive_old_logs_moves_old_data_and_scope_all_can_read(self) -> None:
+        item_id = self._create_item(name="歸檔測試")
+        request_id = db.create_issue_request(
+            {
+                "requester": "tester",
+                "department": "qa",
+                "purpose": "archive",
+                "request_date": "2026-04-10",
+                "memo": "",
+            },
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+        db.log_inventory_action(action="update", entity="issue_request", entity_id=request_id, detail={"item_id": item_id})
+
+        old_time = (datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d %H:%M:%S")
+        with db._locked_workbook() as wb:  # type: ignore[attr-defined]
+            movement_rows = db._read_rows(wb["movement_ledger"])  # type: ignore[attr-defined]
+            operation_rows = db._read_rows(wb["operation_logs"])  # type: ignore[attr-defined]
+            for row in movement_rows:
+                row["created_at"] = old_time
+            for row in operation_rows:
+                row["created_at"] = old_time
+            db._write_rows(wb["movement_ledger"], db.SHEETS["movement_ledger"], movement_rows)  # type: ignore[attr-defined]
+            db._write_rows(wb["operation_logs"], db.SHEETS["operation_logs"], operation_rows)  # type: ignore[attr-defined]
+            wb.save(db.DB_PATH)
+
+        archive_result = db.archive_old_logs(retention_days=90)
+        self.assertGreaterEqual(archive_result["movement_ledger_archived"], 1)
+        self.assertGreaterEqual(archive_result["operation_logs_archived"], 1)
+
+        hot_movements = db.list_movement_ledger(entity="issue_request", entity_id=request_id, scope="hot")
+        hot_operations = db.list_operation_logs(entity="issue_request", entity_id=request_id, scope="hot")
+        self.assertEqual(hot_movements, [])
+        self.assertEqual(hot_operations, [])
+
+        all_movements = db.list_movement_ledger(entity="issue_request", entity_id=request_id, scope="all")
+        all_operations = db.list_operation_logs(entity="issue_request", entity_id=request_id, scope="all")
+        self.assertGreaterEqual(len(all_movements), 1)
+        self.assertGreaterEqual(len(all_operations), 1)
+
+    def test_logs_api_does_not_write_read_logs(self) -> None:
+        db.log_inventory_action(action="update", entity="inventory_item", entity_id=1001, detail={"item_id": 1})
+        before_count = len(db.list_operation_logs(scope="hot"))
+
+        response = app_main.list_operation_logs_api(page=1, page_size=10)
+        self.assertGreaterEqual(response.total, 1)
+
+        after_count = len(db.list_operation_logs(scope="hot"))
+        self.assertEqual(after_count, before_count)
 
 
 if __name__ == "__main__":
