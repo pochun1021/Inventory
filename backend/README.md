@@ -1,37 +1,27 @@
- Backend（FastAPI）
+# Backend（FastAPI）
 
-本目錄為資產管理系統的後端服務，負責：
-
-- 提供 Dashboard 與庫存 CRUD API
-- 提供 Excel（`.xlsx`）批次匯入 API
-- 管理 XLSX 資料檔與資料表初始化
-- 記錄操作日誌（create/read/update/delete/import/purge）
-- 提供前端靜態資源（當 `frontend/dist` 存在時）
+本目錄提供 Inventory 系統後端 API，資料以 XLSX 儲存，涵蓋資產、領用、借用、捐贈與批次匯入。
 
 ## 技術棧
 
 - Python 3.14+
-- FastAPI
-- Uvicorn
-- XLSX（openpyxl）
-- filelock（檔案鎖）
-- openpyxl（讀取 xlsx）
-- Google Sheets API（同步領用/借用清單，可選）
+- FastAPI + Uvicorn
+- openpyxl + filelock
+- Google Sheets API（選配）
 
-## 目錄說明
+## 主要檔案
 
 ```text
 backend/
-├─ main.py         # API 路由、Pydantic schema、靜態檔回傳
-├─ db.py           # 資料表建立、查詢與 CRUD、操作日誌
-├─ xlsx_import.py  # Excel 匯入與欄位驗證
-├─ pyproject.toml  # Python 套件與相依設定
-└─ inventory.xlsx  # XLSX 資料檔（執行後產生）
+├─ main.py            # API routes、schema、前端靜態檔回傳
+├─ db.py              # XLSX schema、CRUD、驗證與交易邏輯
+├─ xlsx_import.py     # 批次匯入驗證與轉換
+├─ google_sheets.py   # Google Sheets 同步（選配）
+├─ tests/
+└─ pyproject.toml
 ```
 
 ## 安裝與啟動
-
-### 使用 uv（建議）
 
 ```bash
 cd backend
@@ -39,56 +29,73 @@ uv sync
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 使用 venv + pip
+文件網址：
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-啟動後可透過以下位址確認：
-
-- API 文件（Swagger）：`http://localhost:8000/docs`
-- OpenAPI JSON：`http://localhost:8000/openapi.json`
+- `http://localhost:8000/docs`
+- `http://localhost:8000/openapi.json`
 
 ## API 一覽
 
 ### Dashboard
 
 - `GET /api/data`
-  - 回傳系統狀態、資產總數、待修改資料數。
 
-### 庫存資料
+### Lookup（資產狀態）
 
-- `GET /api/items`：列出所有未刪除資料
-- `GET /api/items?include_donated=true`：列出包含已捐贈資料
-- `GET /api/items/{item_id}`：取得單筆資料
-- `POST /api/items`：新增資料
-- `PUT /api/items/{item_id}`：更新資料
-- `DELETE /api/items/{item_id}`：軟刪除資料
+- `GET /api/lookups/asset-status`
+- `POST /api/lookups/asset-status`
+- `PUT /api/lookups/asset-status/{code}`
+- `DELETE /api/lookups/asset-status/{code}`
 
-### 捐贈資料
+### 資產
 
-- `GET /api/donations`：列出捐贈單
-- `GET /api/donations/{request_id}`：取得單筆捐贈單
-- `POST /api/donations`：建立捐贈單（`recipient` 必填）
-- `PUT /api/donations/{request_id}`：更新捐贈單（`recipient` 必填）
-- `DELETE /api/donations/{request_id}`：刪除捐贈單，解除關聯品項的捐贈標記
+- `GET /api/items`
+- `GET /api/items/{item_id}`
+- `POST /api/items`
+- `PUT /api/items/{item_id}`
+- `DELETE /api/items/{item_id}`
 
-### 批次匯入
+### 領用
+
+- `GET /api/issues`
+- `GET /api/issues/{request_id}`
+- `POST /api/issues`
+- `PUT /api/issues/{request_id}`
+- `DELETE /api/issues/{request_id}`
+
+### 借用
+
+- `GET /api/borrows`
+- `GET /api/borrows/{request_id}`
+- `POST /api/borrows`
+- `PUT /api/borrows/{request_id}`
+- `DELETE /api/borrows/{request_id}`
+
+### 捐贈
+
+- `GET /api/donations`
+- `GET /api/donations/{request_id}`
+- `POST /api/donations`
+- `PUT /api/donations/{request_id}`
+- `DELETE /api/donations/{request_id}`
+
+### 匯入
 
 - `POST /api/items/import`
   - `multipart/form-data`
-  - 欄位：
-    - `file`：`.xlsx` 檔案
-    - `asset_type`：類別代碼（`11` / `A1` / `A2`）
+  - `file`：`.xlsx`
+  - `asset_type`：`11` / `A1` / `A2`
+
+## 規則與資料行為
+
+- 領用/借用/捐贈為單件模式：`quantity` 必須是 `1`
+- 捐贈單建立與更新時 `recipient` 必填
+- API 會驗證 item 可用性，避免重複占用
+- 刪除採軟刪除，超過 6 個月自動清除
 
 ## Excel 欄位需求
 
-匯入檔案表頭必須包含：
+匯入檔案必須包含：
 
 - `備註`
 - `規格(大小/容量)`
@@ -100,40 +107,17 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `放置地點`
 - `保管人（單位）`
 
-> `類別` 不從 Excel 欄位讀取，而是使用上傳時傳入的 `asset_type`。
+`類別` 由 `asset_type` 決定，不讀取 Excel 欄位。
 
-## 資料儲存與資料保留策略
+## Google Sheets 同步（選配）
 
-- 啟動時會自動初始化 XLSX 工作表（若不存在則建立）。
-- 刪除採 **軟刪除**（`deleted_at` 標記）。
-- 啟動時會清除超過 6 個月的軟刪除資料（永久刪除）。
+領用/借用資料在新增、更新、刪除後可背景同步到 Google Sheets。預設關閉。
 
-## 開發備註
+可設定環境變數：
 
-- 後端程式會優先嘗試回傳 `frontend/dist/index.html`；若不存在則退回 `frontend/index.html`。
-- 若僅開發 API，可直接使用 `/docs` 驗證端點。
-
-## Google Sheets 同步（即時）
-
-每次「領用/借用」資料新增、更新、刪除後，會即時同步整張清單到 Google Sheets。此功能預設關閉，採 OAuth 用戶授權：
-
-- `client_secrets.json` 放在 `backend/` 目錄（或用環境變數指定路徑）
-- 第一次啟動會打開瀏覽器完成授權，token 會寫到 `backend/google_token.json`
-
-環境變數（選填）：
-
-- `GOOGLE_SHEETS_CLIENT_SECRETS_FILE`（預設 `backend/client_secrets.json`，也支援舊的 `GOOGLE_SHEETS_CREDENTIALS_FILE`）
-- `GOOGLE_SHEETS_TOKEN_FILE`（預設 `backend/google_token.json`）
-- `GOOGLE_SHEETS_SPREADSHEET_ID`（若未提供，會自動建立 Spreadsheet，並存到 `backend/google_sheets_state.json`）
-- `GOOGLE_SHEETS_SPREADSHEET_TITLE`（自動建立時的標題，預設 `Inventory Requests`）
-- `GOOGLE_SHEETS_ISSUE_SHEET_NAME`（預設 `IssueRequests`）
-- `GOOGLE_SHEETS_BORROW_SHEET_NAME`（預設 `BorrowRequests`）
-
-同步欄位會以 request + item 展開，每個 item 一列。若清單為空會保留標題列。
-
-## 常見問題
-
-- **上傳 xlsx 失敗**
-  - 請確認檔案格式為 `.xlsx`，且標題列包含所有必要欄位。
-- **資料刪除後仍可追蹤到筆數差異**
-  - 軟刪除資料不會出現在清單 API；到期（6 個月）才會被永久刪除。
+- `GOOGLE_SHEETS_CLIENT_SECRETS_FILE`（亦支援 `GOOGLE_SHEETS_CREDENTIALS_FILE`）
+- `GOOGLE_SHEETS_TOKEN_FILE`
+- `GOOGLE_SHEETS_SPREADSHEET_ID`
+- `GOOGLE_SHEETS_SPREADSHEET_TITLE`
+- `GOOGLE_SHEETS_ISSUE_SHEET_NAME`
+- `GOOGLE_SHEETS_BORROW_SHEET_NAME`
