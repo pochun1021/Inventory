@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import BackgroundTasks, HTTPException
@@ -87,6 +88,25 @@ class RequestApiGuardTests(unittest.TestCase):
             app_main.create_borrow_request_api(request, BackgroundTasks())
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(exc.exception.detail, f"item_id {item_id} is unavailable")
+
+    def test_borrow_api_overrides_manual_status_and_returns_due_soon_flag(self) -> None:
+        item_id = self._create_item(asset_status="0")
+        due_soon_date = date.today() + timedelta(days=1)
+        request = app_main.BorrowRequestCreate(
+            borrower="tester",
+            department="qa",
+            purpose="test",
+            borrow_date=date.today().isoformat(),
+            due_date=due_soon_date.isoformat(),
+            return_date=None,
+            status="returned",
+            memo="",
+            items=[{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+
+        created = app_main.create_borrow_request_api(request, BackgroundTasks())
+        self.assertEqual(created.status, "borrowed")
+        self.assertTrue(created.is_due_soon)
 
 
 if __name__ == "__main__":

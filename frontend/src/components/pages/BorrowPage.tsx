@@ -248,6 +248,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                 <option value="returned">已歸還</option>
                 <option value="overdue">逾期</option>
               </Select>
+              <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">送出後會由系統依預計歸還日與實際歸還日自動判定狀態。</p>
             </div>
             <div className="grid gap-1.5 md:col-span-2">
               <Label>備註</Label>

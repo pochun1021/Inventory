@@ -166,6 +166,7 @@ class BorrowRequestCreate(BaseModel):
 
 class BorrowRequest(BorrowRequestCreate):
     id: int
+    is_due_soon: bool = False
     items: list[BorrowItem]
 
 
@@ -484,6 +485,7 @@ def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
         due_date=due_date,
         return_date=return_date,
         status=_coerce_str(row["status"]),
+        is_due_soon=bool(row.get("is_due_soon")),
         memo=_coerce_str(row["memo"]),
         items=items,
     )

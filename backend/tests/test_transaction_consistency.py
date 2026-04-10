@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 import db
@@ -128,6 +129,112 @@ class TransactionConsistencyTests(unittest.TestCase):
         self.assertIsNotNone(item_after_return)
         self.assertEqual(item_after_return["count"], 1)
         self.assertEqual(item_after_return["asset_status"], "0")
+
+    def test_borrow_status_is_derived_from_dates(self) -> None:
+        self.assertEqual(
+            db._derive_borrow_status(due_date_value="2026-04-20", return_date_value="", today=date(2026, 4, 20)),
+            "borrowed",
+        )
+        self.assertEqual(
+            db._derive_borrow_status(due_date_value="2026-04-20", return_date_value="", today=date(2026, 4, 21)),
+            "overdue",
+        )
+        self.assertEqual(
+            db._derive_borrow_status(due_date_value="2026-04-20", return_date_value="2026-04-19", today=date(2026, 4, 21)),
+            "returned",
+        )
+
+    def test_due_soon_rule_matches_three_day_window(self) -> None:
+        self.assertTrue(
+            db._is_due_soon(due_date_value="2026-04-20", return_date_value="", today=date(2026, 4, 17), days=3)
+        )
+        self.assertFalse(
+            db._is_due_soon(due_date_value="2026-04-21", return_date_value="", today=date(2026, 4, 17), days=3)
+        )
+        self.assertFalse(
+            db._is_due_soon(due_date_value="2026-04-16", return_date_value="", today=date(2026, 4, 17), days=3)
+        )
+        self.assertFalse(
+            db._is_due_soon(due_date_value="2026-04-18", return_date_value="2026-04-17", today=date(2026, 4, 17), days=3)
+        )
+
+    def test_create_borrow_request_ignores_manual_status_input(self) -> None:
+        item_id = self._create_item()
+        request_id = db.create_borrow_request(
+            {
+                "borrower": "tester",
+                "department": "qa",
+                "purpose": "test",
+                "borrow_date": "2026-04-10",
+                "due_date": "2999-12-31",
+                "return_date": "",
+                "status": "returned",
+                "memo": "",
+            },
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+        request = db.get_borrow_request(request_id)
+        self.assertIsNotNone(request)
+        self.assertEqual(request["status"], "borrowed")
+
+        item = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item)
+        self.assertEqual(item["asset_status"], "2")
+
+    def test_update_borrow_request_ignores_manual_status_input(self) -> None:
+        item_id = self._create_item()
+        request_id = db.create_borrow_request(
+            self._borrow_payload(status="borrowed"),
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+
+        db.update_borrow_request(
+            request_id,
+            {
+                "borrower": "tester",
+                "department": "qa",
+                "purpose": "test",
+                "borrow_date": "2026-04-10",
+                "due_date": "2999-12-31",
+                "return_date": "",
+                "status": "returned",
+                "memo": "",
+            },
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+
+        request = db.get_borrow_request(request_id)
+        self.assertIsNotNone(request)
+        self.assertEqual(request["status"], "borrowed")
+
+    def test_list_borrow_requests_syncs_stale_status(self) -> None:
+        item_id = self._create_item()
+        request_id = db.create_borrow_request(
+            {
+                "borrower": "tester",
+                "department": "qa",
+                "purpose": "test",
+                "borrow_date": "2020-01-01",
+                "due_date": "2020-01-02",
+                "return_date": "",
+                "status": "borrowed",
+                "memo": "",
+            },
+            [{"item_id": item_id, "quantity": 1, "note": ""}],
+        )
+
+        with db._locked_workbook() as wb:
+            ws = wb["borrow_requests"]
+            rows = db._read_rows(ws)
+            for row in rows:
+                if int(row.get("id") or 0) == request_id:
+                    row["status"] = "returned"
+            db._write_rows(ws, db.SHEETS["borrow_requests"], rows)
+            wb.save(db.DB_PATH)
+
+        requests = db.list_borrow_requests()
+        target = next(row for row in requests if int(row.get("id") or 0) == request_id)
+        self.assertEqual(target["status"], "overdue")
 
     def test_issue_update_rejects_unavailable_item_and_keeps_original_status(self) -> None:
         issue_item_id = self._create_item()
