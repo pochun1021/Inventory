@@ -112,3 +112,27 @@ export type DonationRequest = {
   memo: string
   items: DonationItem[]
 }
+
+export type MovementLedgerEntry = {
+  id: number
+  item_id: number
+  item_name: string
+  item_model: string
+  from_status: string
+  to_status: string
+  action: string
+  entity: string
+  entity_id?: number | null
+  operator: string
+  created_at: string
+}
+
+export type OperationLogEntry = {
+  id: number
+  action: string
+  entity: string
+  entity_id?: number | null
+  status: string
+  detail: Record<string, unknown>
+  created_at: string
+}

@@ -42,13 +42,14 @@ class TransactionConsistencyTests(unittest.TestCase):
         }
 
     def _borrow_payload(self, *, status: str) -> dict:
+        return_date = "2026-04-12" if status == "returned" else ""
         return {
             "borrower": "tester",
             "department": "qa",
             "purpose": "test",
             "borrow_date": "2026-04-10",
             "due_date": "2026-04-20",
-            "return_date": "",
+            "return_date": return_date,
             "status": status,
             "memo": "",
         }

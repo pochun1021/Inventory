@@ -1,6 +1,6 @@
 import { type ReactNode, useMemo, useState } from 'react'
 import { Link, Outlet, useLocation } from '@tanstack/react-router'
-import { Boxes, ChevronDown, ClipboardList, FilePlus2, HandCoins, Handshake, LayoutDashboard, Menu, Upload, X } from 'lucide-react'
+import { Boxes, ChevronDown, ClipboardList, FilePlus2, HandCoins, Handshake, LayoutDashboard, Logs, Menu, Upload, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 type NavigationLink = {
@@ -70,6 +70,10 @@ const NAVIGATION_SECTIONS: NavigationSection[] = [
       { to: '/upload', label: '批次上傳', icon: <Upload className="size-4" />, exact: true },
     ],
   },
+  {
+    title: '稽核',
+    links: [{ to: '/logs', label: '日誌查詢', icon: <Logs className="size-4" />, exact: true }],
+  },
 ]
 
 type PageMeta = {
@@ -119,6 +123,9 @@ function resolvePageMeta(pathname: string): PageMeta {
   }
   if (pathname === '/upload') {
     return { title: '批次上傳', description: '透過 xlsx 匯入資產資料' }
+  }
+  if (pathname === '/logs') {
+    return { title: '日誌查詢', description: '檢視異動流水帳與操作日誌' }
   }
 
   return { title: '頁面', description: '系統頁面' }
