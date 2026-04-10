@@ -4,7 +4,6 @@ import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
@@ -179,13 +178,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   }
 
   return (
-    <>
-      <PageHeader
-        title={isEditing ? '編輯借用單' : '新增借用單'}
-        description="建立借用紀錄並追蹤歸還狀態。"
-      />
-
-      <div className="grid gap-4">
+    <div className="grid gap-4">
         <SectionCard title="基本資料">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="grid gap-1.5">
@@ -279,6 +272,5 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
         </SectionCard>
       </div>
-    </>
   )
 }

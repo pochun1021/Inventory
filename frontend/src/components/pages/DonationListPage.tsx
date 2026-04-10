@@ -7,7 +7,6 @@ import { Button } from '../ui/button'
 import { FilterBar } from '../ui/filter-bar'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import type { DonationRequest, PaginatedResponse } from './types'
@@ -92,18 +91,14 @@ export function DonationListPage() {
 
   return (
     <>
-      <PageHeader
-        title="捐贈清單"
-        description="查詢捐贈交易與受贈流向。"
-        actions={
-          <Link to="/donations/new">
-            <Button>
-              <Plus className="size-4" />
-              新增捐贈
-            </Button>
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link to="/donations/new">
+          <Button>
+            <Plus className="size-4" />
+            新增捐贈
+          </Button>
+        </Link>
+      </div>
 
       <SectionCard>
         <FilterBar className="xl:grid-cols-[2fr_1fr]">

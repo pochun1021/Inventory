@@ -7,7 +7,6 @@ import { Button } from '../ui/button'
 import { FilterBar } from '../ui/filter-bar'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import type { IssueRequest, PaginatedResponse } from './types'
@@ -92,18 +91,14 @@ export function IssueListPage() {
 
   return (
     <>
-      <PageHeader
-        title="領用清單"
-        description="檢視、搜尋與維護領用申請資料。"
-        actions={
-          <Link to="/issues/new">
-            <Button>
-              <Plus className="size-4" />
-              新增領用
-            </Button>
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link to="/issues/new">
+          <Button>
+            <Plus className="size-4" />
+            新增領用
+          </Button>
+        </Link>
+      </div>
 
       <SectionCard>
         <FilterBar className="xl:grid-cols-[2fr_1fr]">

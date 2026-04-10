@@ -4,7 +4,6 @@ import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { PageHeader } from '../ui/page-header'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
@@ -188,13 +187,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
   }
 
   return (
-    <>
-      <PageHeader
-        title={isEditing ? '編輯捐贈單' : '新增捐贈單'}
-        description="建立捐贈交易並標記對應庫存。"
-      />
-
-      <div className="grid gap-4">
+    <div className="grid gap-4">
         <SectionCard title="基本資料">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="grid gap-1.5">
@@ -276,6 +269,5 @@ export function DonationPage({ requestId }: DonationPageProps) {
           {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
         </SectionCard>
       </div>
-    </>
   )
 }
