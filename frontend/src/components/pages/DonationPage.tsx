@@ -121,7 +121,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
     if (lines.length === 0) {
       return false
     }
-    return lines.every((line) => line.item_id !== '' && line.quantity > 0)
+    return lines.every((line) => line.item_id !== '' && line.quantity === 1)
   }
 
   const handleSubmit = async () => {
@@ -130,7 +130,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
       return
     }
     if (!validateLines()) {
-      void toast.fire({ icon: 'error', title: '請確認每筆捐贈品項已選擇品項且數量大於 0。' })
+      void toast.fire({ icon: 'error', title: '單件模式下，每筆捐贈品項數量必須為 1。' })
       return
     }
 
@@ -150,7 +150,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
           memo,
           items: lines.map((line) => ({
             item_id: line.item_id,
-            quantity: line.quantity,
+            quantity: 1,
             note: line.note,
           })),
         }),
@@ -247,8 +247,9 @@ export function DonationPage({ requestId }: DonationPageProps) {
                   <Input
                     type="number"
                     min={1}
-                    value={line.quantity}
-                    onChange={(event) => handleLineChange(index, { quantity: Number(event.target.value) })}
+                    max={1}
+                    value={1}
+                    disabled
                   />
                 </div>
                 <div className="grid gap-1.5">

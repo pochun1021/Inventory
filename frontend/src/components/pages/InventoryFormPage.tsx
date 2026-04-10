@@ -95,11 +95,9 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 function toSubmitPayload(formData: InventoryFormData) {
-  const normalizedCount = Number.isFinite(formData.count) && formData.count > 0 ? Math.floor(formData.count) : 1
-
   return {
     ...formData,
-    count: normalizedCount,
+    count: 1,
     purchase_date: formData.purchase_date || null,
     due_date: formData.due_date || null,
     return_date: formData.return_date || null,
@@ -206,14 +204,6 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     setFormData((previousData) => ({
       ...previousData,
       [field]: value,
-    }))
-  }
-
-  const handleCountChange = (value: string) => {
-    const nextValue = Number(value)
-    setFormData((previousData) => ({
-      ...previousData,
-      count: Number.isFinite(nextValue) ? nextValue : 0,
     }))
   }
 
@@ -348,7 +338,10 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
                   <div className="grid gap-1.5">
                     <Label>數量</Label>
-                    <Input type="number" min={1} value={formData.count} onChange={(event) => handleCountChange(event.target.value)} />
+                    <Input type="number" min={1} max={1} value={1} disabled />
+                    {loadedItem && loadedItem.count > 1 ? (
+                      <p className="m-0 text-xs text-amber-700">此筆為歷史資料（count &gt; 1），目前單件模式僅允許新異動固定為 1。</p>
+                    ) : null}
                   </div>
 
                   <div className="grid gap-1.5">

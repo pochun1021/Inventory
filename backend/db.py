@@ -330,9 +330,7 @@ def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_nu
     serial_for_key = _inventory_property_number(row_for_key)
     name_code, name_code2 = _normalize_name_codes(item_data.get("name_code"), item_data.get("name_code2"))
     now = _now_str()
-    count = _to_int(item_data.get("count"), default=1)
-    if count <= 0:
-        count = 1
+    count = 1
     row = {
         "id": new_id,
         "asset_type": asset_type,
@@ -871,9 +869,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                 item_sn = _to_str(item_data.get("item_sn")).strip()
                 property_number = n_property_sn or property_sn or n_item_sn or item_sn
                 name_code, name_code2 = _normalize_name_codes(item_data.get("name_code"), item_data.get("name_code2"))
-                count = _to_int(item_data.get("count"), default=1)
-                if count <= 0:
-                    count = 1
+                count = 1
                 next_key = _to_str(item_data.get("key")).strip()
                 if not next_key:
                     tmp_row = {
@@ -1039,17 +1035,21 @@ def validate_item_ids_available(
     return True, None
 
 
-def _sum_item_quantities(items: list[dict[str, Any]]) -> dict[int, int]:
-    quantity_map: dict[int, int] = {}
+def _normalize_request_item_ids(items: list[dict[str, Any]]) -> list[int]:
+    item_ids: list[int] = []
+    seen: set[int] = set()
     for item in items:
         item_id = _to_int(item.get("item_id"))
         quantity = _to_int(item.get("quantity"))
         if item_id <= 0:
             raise ValueError(f"item_id {item_id} not found")
-        if quantity <= 0:
-            raise ValueError("quantity must be greater than 0")
-        quantity_map[item_id] = quantity_map.get(item_id, 0) + quantity
-    return quantity_map
+        if quantity != 1:
+            raise ValueError("quantity must be 1 in single-item mode")
+        if item_id in seen:
+            raise ValueError("item_id cannot be duplicated")
+        seen.add(item_id)
+        item_ids.append(item_id)
+    return item_ids
 
 
 def _active_inventory_rows_map(inventory_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -1060,37 +1060,25 @@ def _active_inventory_rows_map(inventory_rows: list[dict[str, Any]]) -> dict[int
     }
 
 
-def _set_inventory_status_from_count(row: dict[str, Any], *, depleted_status: str) -> None:
-    count = _to_int(row.get("count"), default=0)
-    row["asset_status"] = depleted_status if count <= 0 else "0"
+def _set_inventory_status(row: dict[str, Any], status: str) -> None:
+    row["asset_status"] = status
     row["updated_at"] = _now_str()
     row["updated_by"] = "system"
 
 
-def _apply_inventory_request_delta(
+def _validate_item_status(
     *,
-    inventory_rows: list[dict[str, Any]],
-    old_quantity_map: dict[int, int],
-    new_quantity_map: dict[int, int],
-    depleted_status: str,
-) -> None:
-    inventory_map = _active_inventory_rows_map(inventory_rows)
-    target_ids = set(old_quantity_map) | set(new_quantity_map)
-    for item_id in target_ids:
-        row = inventory_map.get(item_id)
-        if row is None:
-            raise ValueError(f"item_id {item_id} not found")
-        if _to_str(row.get("asset_status")) == "3" and old_quantity_map.get(item_id, 0) <= 0:
-            raise ValueError(f"item_id {item_id} is already donated")
-
-        current_count = _to_int(row.get("count"), default=0)
-        restored_count = current_count + old_quantity_map.get(item_id, 0)
-        next_count = restored_count - new_quantity_map.get(item_id, 0)
-        if restored_count < 0 or next_count < 0:
-            raise ValueError(f"item_id {item_id} quantity is insufficient")
-
-        row["count"] = str(next_count)
-        _set_inventory_status_from_count(row, depleted_status=depleted_status)
+    inventory_map: dict[int, dict[str, Any]],
+    item_id: int,
+    allowed_statuses: set[str],
+) -> dict[str, Any]:
+    row = inventory_map.get(item_id)
+    if row is None:
+        raise ValueError(f"item_id {item_id} not found")
+    status = _to_str(row.get("asset_status")).strip()
+    if status not in allowed_statuses:
+        raise ValueError(f"item_id {item_id} is unavailable")
+    return row
 
 def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
     with _locked_workbook() as wb:
@@ -1100,13 +1088,11 @@ def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
-        quantity_map = _sum_item_quantities(items)
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map={},
-            new_quantity_map=quantity_map,
-            depleted_status="1",
-        )
+        selected_item_ids = _normalize_request_item_ids(items)
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+        for item_id in selected_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+            _set_inventory_status(row, "1")
         request_id = _next_id(request_rows)
         request_rows.append(
             {
@@ -1126,7 +1112,7 @@ def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any
                     "id": next_item_id + index,
                     "request_id": request_id,
                     "item_id": item["item_id"],
-                    "quantity": item["quantity"],
+                    "quantity": 1,
                     "note": item.get("note", ""),
                 }
             )
@@ -1209,14 +1195,19 @@ def update_issue_request(request_id: int, request_data: dict[str, Any], items: l
             return False
 
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        old_quantity_map = _sum_item_quantities(old_items)
-        new_quantity_map = _sum_item_quantities(items)
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map=old_quantity_map,
-            new_quantity_map=new_quantity_map,
-            depleted_status="1",
-        )
+        old_item_ids = {_to_int(row.get("item_id")) for row in old_items}
+        new_item_ids = set(_normalize_request_item_ids(items))
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+
+        for item_id in new_item_ids - old_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+            _set_inventory_status(row, "1")
+        for item_id in new_item_ids & old_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0", "1"})
+            _set_inventory_status(row, "1")
+        for item_id in old_item_ids - new_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"1"})
+            _set_inventory_status(row, "0")
 
         item_rows = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         next_item_id = _next_id(item_rows)
@@ -1226,7 +1217,7 @@ def update_issue_request(request_id: int, request_data: dict[str, Any], items: l
                     "id": next_item_id + index,
                     "request_id": request_id,
                     "item_id": item["item_id"],
-                    "quantity": item["quantity"],
+                    "quantity": 1,
                     "note": item.get("note", ""),
                 }
             )
@@ -1250,13 +1241,11 @@ def delete_issue_request(request_id: int) -> bool:
         if not deleted:
             return False
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        old_quantity_map = _sum_item_quantities(old_items)
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map=old_quantity_map,
-            new_quantity_map={},
-            depleted_status="1",
-        )
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+        for old_item in old_items:
+            item_id = _to_int(old_item.get("item_id"))
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"1"})
+            _set_inventory_status(row, "0")
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         _write_rows(request_ws, SHEETS["issue_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["issue_items"], remaining_items)
@@ -1274,22 +1263,11 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
 
-        quantity_map = _sum_item_quantities(items)
-        if len(quantity_map) != len(items):
-            raise ValueError("item_id cannot be duplicated")
-
+        selected_item_ids = _normalize_request_item_ids(items)
         inventory_map = _active_inventory_rows_map(inventory_rows)
-        for item_id, requested_quantity in quantity_map.items():
-            row = inventory_map.get(item_id)
-            if row is None:
-                raise ValueError(f"item_id {item_id} not found")
-            if _to_str(row.get("asset_status")) == "3":
-                raise ValueError(f"item_id {item_id} is already donated")
-            current_count = _to_int(row.get("count"), default=0)
-            if current_count <= 0:
-                raise ValueError(f"item_id {item_id} quantity is insufficient")
-            if requested_quantity != current_count:
-                raise ValueError(f"item_id {item_id} donation quantity must equal available count")
+        for item_id in selected_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+            _set_inventory_status(row, "3")
 
         request_id = _next_id(request_rows)
         request_rows.append(
@@ -1312,17 +1290,10 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
                     "id": next_item_id + index,
                     "request_id": request_id,
                     "item_id": item["item_id"],
-                    "quantity": item["quantity"],
+                    "quantity": 1,
                     "note": item.get("note", ""),
                 }
             )
-
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map={},
-            new_quantity_map=quantity_map,
-            depleted_status="3",
-        )
 
         _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
@@ -1394,29 +1365,20 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
         if request_row is None:
             return False
 
-        new_quantity_map = _sum_item_quantities(items)
-        if len(new_quantity_map) != len(items):
-            raise ValueError("item_id cannot be duplicated")
+        new_item_ids = set(_normalize_request_item_ids(items))
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        old_quantity_map = _sum_item_quantities(old_items)
+        old_item_ids = {_to_int(row.get("item_id")) for row in old_items}
 
         inventory_map = _active_inventory_rows_map(inventory_rows)
-        donation_request_map = {
-            _to_int(row.get("item_id")): _to_int(row.get("request_id"))
-            for row in item_rows
-        }
-        for item_id, requested_quantity in new_quantity_map.items():
-            row = inventory_map.get(item_id)
-            if row is None:
-                raise ValueError(f"item_id {item_id} not found")
-            donated_request_id = donation_request_map.get(item_id, 0)
-            if donated_request_id not in (0, request_id):
-                raise ValueError(f"item_id {item_id} is already donated")
-            restored_count = _to_int(row.get("count"), default=0) + old_quantity_map.get(item_id, 0)
-            if restored_count <= 0:
-                raise ValueError(f"item_id {item_id} quantity is insufficient")
-            if requested_quantity != restored_count:
-                raise ValueError(f"item_id {item_id} donation quantity must equal available count")
+        for item_id in new_item_ids - old_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+            _set_inventory_status(row, "3")
+        for item_id in new_item_ids & old_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0", "3"})
+            _set_inventory_status(row, "3")
+        for item_id in old_item_ids - new_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"3"})
+            _set_inventory_status(row, "0")
 
         request_row.update(
             {
@@ -1437,17 +1399,10 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
                     "id": next_item_id + index,
                     "request_id": request_id,
                     "item_id": item["item_id"],
-                    "quantity": item["quantity"],
+                    "quantity": 1,
                     "note": item.get("note", ""),
                 }
             )
-
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map=old_quantity_map,
-            new_quantity_map=new_quantity_map,
-            depleted_status="3",
-        )
 
         _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
@@ -1471,14 +1426,12 @@ def delete_donation_request(request_id: int) -> bool:
             return False
 
         removed_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        removed_quantity_map = _sum_item_quantities(removed_items)
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map=removed_quantity_map,
-            new_quantity_map={},
-            depleted_status="3",
-        )
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+        for removed_item in removed_items:
+            item_id = _to_int(removed_item.get("item_id"))
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"3"})
+            _set_inventory_status(row, "0")
 
         _write_rows(request_ws, SHEETS["donation_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["donation_items"], remaining_items)
@@ -1500,13 +1453,12 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
-        new_quantity_map = _sum_item_quantities(items) if _borrow_status_uses_inventory(request_data.get("status")) else {}
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map={},
-            new_quantity_map=new_quantity_map,
-            depleted_status="2",
-        )
+        selected_item_ids = _normalize_request_item_ids(items)
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+        for item_id in selected_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+            if _borrow_status_uses_inventory(request_data.get("status")):
+                _set_inventory_status(row, "2")
         request_id = _next_id(request_rows)
         request_rows.append(
             {
@@ -1529,7 +1481,7 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
                     "id": next_item_id + index,
                     "request_id": request_id,
                     "item_id": item["item_id"],
-                    "quantity": item["quantity"],
+                    "quantity": 1,
                     "note": item.get("note", ""),
                 }
             )
@@ -1617,14 +1569,27 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
             return False
 
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        old_quantity_map = _sum_item_quantities(old_items) if _borrow_status_uses_inventory(previous_status) else {}
-        new_quantity_map = _sum_item_quantities(items) if _borrow_status_uses_inventory(request_data.get("status")) else {}
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map=old_quantity_map,
-            new_quantity_map=new_quantity_map,
-            depleted_status="2",
-        )
+        old_item_ids = {_to_int(row.get("item_id")) for row in old_items}
+        new_item_ids = set(_normalize_request_item_ids(items))
+        old_active_ids = old_item_ids if _borrow_status_uses_inventory(previous_status) else set()
+        new_active_ids = new_item_ids if _borrow_status_uses_inventory(request_data.get("status")) else set()
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+
+        for item_id in new_item_ids - old_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+            if item_id in new_active_ids:
+                _set_inventory_status(row, "2")
+        for item_id in new_item_ids & old_item_ids:
+            allowed_statuses = {"0", "2"} if item_id in old_active_ids else {"0"}
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses=allowed_statuses)
+            if item_id in new_active_ids:
+                _set_inventory_status(row, "2")
+            else:
+                _set_inventory_status(row, "0")
+        for item_id in old_item_ids - new_item_ids:
+            allowed_statuses = {"0", "2"} if item_id in old_active_ids else {"0"}
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses=allowed_statuses)
+            _set_inventory_status(row, "0")
 
         item_rows = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         next_item_id = _next_id(item_rows)
@@ -1634,7 +1599,7 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
                     "id": next_item_id + index,
                     "request_id": request_id,
                     "item_id": item["item_id"],
-                    "quantity": item["quantity"],
+                    "quantity": 1,
                     "note": item.get("note", ""),
                 }
             )
@@ -1659,17 +1624,12 @@ def delete_borrow_request(request_id: int) -> bool:
             return False
         request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        old_quantity_map = (
-            _sum_item_quantities(old_items)
-            if request_row is not None and _borrow_status_uses_inventory(request_row.get("status"))
-            else {}
-        )
-        _apply_inventory_request_delta(
-            inventory_rows=inventory_rows,
-            old_quantity_map=old_quantity_map,
-            new_quantity_map={},
-            depleted_status="2",
-        )
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+        if request_row is not None and _borrow_status_uses_inventory(request_row.get("status")):
+            for old_item in old_items:
+                item_id = _to_int(old_item.get("item_id"))
+                row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"2"})
+                _set_inventory_status(row, "0")
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         _write_rows(request_ws, SHEETS["borrow_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["borrow_items"], remaining_items)
