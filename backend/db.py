@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1445,7 +1445,75 @@ def _borrow_status_uses_inventory(status: Any) -> bool:
     return normalized in {"borrowed", "overdue"}
 
 
+def _parse_request_date(value: Any) -> date | None:
+    raw = _to_str(value).strip()
+    if not raw:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _derive_borrow_status(*, due_date_value: Any, return_date_value: Any, today: date | None = None) -> str:
+    now = today or date.today()
+    return_date = _parse_request_date(return_date_value)
+    if return_date is not None:
+        return "returned"
+
+    due_date = _parse_request_date(due_date_value)
+    if due_date is not None and due_date < now:
+        return "overdue"
+    return "borrowed"
+
+
+def _is_due_soon(*, due_date_value: Any, return_date_value: Any, today: date | None = None, days: int = 3) -> bool:
+    now = today or date.today()
+    if _parse_request_date(return_date_value) is not None:
+        return False
+    due_date = _parse_request_date(due_date_value)
+    if due_date is None:
+        return False
+    delta = (due_date - now).days
+    return 0 <= delta <= days
+
+
+def _normalize_borrow_status_in_place(row: dict[str, Any], *, today: date | None = None) -> bool:
+    next_status = _derive_borrow_status(
+        due_date_value=row.get("due_date"),
+        return_date_value=row.get("return_date"),
+        today=today,
+    )
+    previous_status = _to_str(row.get("status")).strip()
+    if previous_status == next_status:
+        return False
+    row["status"] = next_status
+    return True
+
+
+def _to_borrow_api_row(row: dict[str, Any], *, today: date | None = None) -> dict[str, Any]:
+    normalized = dict(row)
+    normalized["status"] = _derive_borrow_status(
+        due_date_value=row.get("due_date"),
+        return_date_value=row.get("return_date"),
+        today=today,
+    )
+    normalized["is_due_soon"] = _is_due_soon(
+        due_date_value=row.get("due_date"),
+        return_date_value=row.get("return_date"),
+        today=today,
+        days=3,
+    )
+    return normalized
+
+
 def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
+    next_status = _derive_borrow_status(
+        due_date_value=request_data.get("due_date"),
+        return_date_value=request_data.get("return_date"),
+    )
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
         item_ws = wb["borrow_items"]
@@ -1457,7 +1525,7 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
         inventory_map = _active_inventory_rows_map(inventory_rows)
         for item_id in selected_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            if _borrow_status_uses_inventory(request_data.get("status")):
+            if _borrow_status_uses_inventory(next_status):
                 _set_inventory_status(row, "2")
         request_id = _next_id(request_rows)
         request_rows.append(
@@ -1469,7 +1537,7 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
                 "borrow_date": request_data["borrow_date"],
                 "due_date": request_data["due_date"],
                 "return_date": request_data["return_date"],
-                "status": request_data["status"],
+                "status": next_status,
                 "memo": request_data["memo"],
                 "created_at": _now_str(),
             }
@@ -1494,17 +1562,37 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
 
 def list_borrow_requests() -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
-        rows = _read_rows(wb["borrow_requests"])
-    return sorted(rows, key=lambda row: _to_int(row.get("id")), reverse=True)
+        ws = wb["borrow_requests"]
+        rows = _read_rows(ws)
+        status_changed = False
+        for row in rows:
+            if _normalize_borrow_status_in_place(row):
+                status_changed = True
+        if status_changed:
+            _write_rows(ws, SHEETS["borrow_requests"], rows)
+            wb.save(DB_PATH)
+    return sorted((_to_borrow_api_row(row) for row in rows), key=lambda row: _to_int(row.get("id")), reverse=True)
 
 
 def get_borrow_request(request_id: int) -> dict[str, Any] | None:
     with _locked_workbook() as wb:
-        rows = _read_rows(wb["borrow_requests"])
-    for row in rows:
-        if _to_int(row.get("id")) == request_id:
-            return row
-    return None
+        ws = wb["borrow_requests"]
+        rows = _read_rows(ws)
+        status_changed = False
+        target_row: dict[str, Any] | None = None
+        for row in rows:
+            if _to_int(row.get("id")) != request_id:
+                continue
+            if _normalize_borrow_status_in_place(row):
+                status_changed = True
+            target_row = row
+            break
+        if status_changed:
+            _write_rows(ws, SHEETS["borrow_requests"], rows)
+            wb.save(DB_PATH)
+    if target_row is None:
+        return None
+    return _to_borrow_api_row(target_row)
 
 
 def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
@@ -1539,6 +1627,10 @@ def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
 
 
 def update_borrow_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
+    next_status = _derive_borrow_status(
+        due_date_value=request_data.get("due_date"),
+        return_date_value=request_data.get("return_date"),
+    )
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
         item_ws = wb["borrow_items"]
@@ -1550,7 +1642,10 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
         previous_status = ""
         for row in request_rows:
             if _to_int(row.get("id")) == request_id:
-                previous_status = _to_str(row.get("status"))
+                previous_status = _derive_borrow_status(
+                    due_date_value=row.get("due_date"),
+                    return_date_value=row.get("return_date"),
+                )
                 row.update(
                     {
                         "borrower": request_data["borrower"],
@@ -1559,7 +1654,7 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
                         "borrow_date": request_data["borrow_date"],
                         "due_date": request_data["due_date"],
                         "return_date": request_data["return_date"],
-                        "status": request_data["status"],
+                        "status": next_status,
                         "memo": request_data["memo"],
                     }
                 )
@@ -1572,7 +1667,7 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
         old_item_ids = {_to_int(row.get("item_id")) for row in old_items}
         new_item_ids = set(_normalize_request_item_ids(items))
         old_active_ids = old_item_ids if _borrow_status_uses_inventory(previous_status) else set()
-        new_active_ids = new_item_ids if _borrow_status_uses_inventory(request_data.get("status")) else set()
+        new_active_ids = new_item_ids if _borrow_status_uses_inventory(next_status) else set()
         inventory_map = _active_inventory_rows_map(inventory_rows)
 
         for item_id in new_item_ids - old_item_ids:
@@ -1625,7 +1720,13 @@ def delete_borrow_request(request_id: int) -> bool:
         request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
         inventory_map = _active_inventory_rows_map(inventory_rows)
-        if request_row is not None and _borrow_status_uses_inventory(request_row.get("status")):
+        request_status = ""
+        if request_row is not None:
+            request_status = _derive_borrow_status(
+                due_date_value=request_row.get("due_date"),
+                return_date_value=request_row.get("return_date"),
+            )
+        if request_row is not None and _borrow_status_uses_inventory(request_status):
             for old_item in old_items:
                 item_id = _to_int(old_item.get("item_id"))
                 row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"2"})
@@ -1686,6 +1787,10 @@ def _create_borrow_request_locked(
     request_data: dict[str, Any],
     items: list[dict[str, Any]],
 ) -> int:
+    next_status = _derive_borrow_status(
+        due_date_value=request_data.get("due_date"),
+        return_date_value=request_data.get("return_date"),
+    )
     request_id = _next_id(request_rows)
     request_rows.append(
         {
@@ -1696,7 +1801,7 @@ def _create_borrow_request_locked(
             "borrow_date": request_data["borrow_date"],
             "due_date": request_data["due_date"],
             "return_date": request_data["return_date"],
-            "status": request_data["status"],
+            "status": next_status,
             "memo": request_data["memo"],
             "created_at": _now_str(),
         }

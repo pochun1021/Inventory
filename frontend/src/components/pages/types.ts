@@ -88,6 +88,7 @@ export type BorrowRequest = {
   due_date: string | null
   return_date: string | null
   status: string
+  is_due_soon: boolean
   memo: string
   items: BorrowItem[]
 }

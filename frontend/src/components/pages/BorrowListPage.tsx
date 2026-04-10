@@ -19,6 +19,16 @@ const statusLabelMap: Record<string, string> = {
   overdue: '逾期',
 }
 
+const statusBadgeClassMap: Record<string, string> = {
+  borrowed: 'border-sky-200 bg-sky-100 text-sky-800',
+  returned: 'border-emerald-200 bg-emerald-100 text-emerald-800',
+  overdue: 'border-red-200 bg-red-100 text-red-800',
+}
+
+function getStatusBadgeClass(status: string): string {
+  return statusBadgeClassMap[status] || 'border-[hsl(var(--border))] bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))]'
+}
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
     return fallback
@@ -192,9 +202,12 @@ export function BorrowListPage() {
                         <TableCell>
                           <div className="text-xs">預計：{request.due_date || '--'}</div>
                           <div className="text-xs">實際：{request.return_date || '--'}</div>
-                          <Badge className="mt-1" variant="secondary">
-                            {statusLabelMap[request.status] || request.status || '--'}
-                          </Badge>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <Badge className={getStatusBadgeClass(request.status)} variant="outline">
+                              {statusLabelMap[request.status] || request.status || '--'}
+                            </Badge>
+                            {request.is_due_soon ? <Badge variant="outline">即將到期（3 天內）</Badge> : null}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="grid gap-1">
@@ -225,7 +238,12 @@ export function BorrowListPage() {
                       <Link className="font-semibold text-blue-700 no-underline" to="/borrows/$requestId" params={{ requestId: String(request.id) }}>
                         #{request.id}
                       </Link>
-                      <Badge variant="secondary">{statusLabelMap[request.status] || request.status || '--'}</Badge>
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <Badge className={getStatusBadgeClass(request.status)} variant="outline">
+                          {statusLabelMap[request.status] || request.status || '--'}
+                        </Badge>
+                        {request.is_due_soon ? <Badge variant="outline">即將到期（3 天內）</Badge> : null}
+                      </div>
                     </div>
                     <p className="mt-2 mb-0 text-sm font-semibold">{request.borrower || '--'}</p>
                     <p className="mt-0.5 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{request.department || '--'}</p>

@@ -153,6 +153,7 @@ export function DashboardPage() {
   const pendingFixCount = dashboardData?.pendingFix ?? 0
   const totalRecords = issues.length + borrows.length + donations.length
   const overdueBorrowCount = borrows.filter((request) => request.status === 'overdue').length
+  const dueSoonBorrowCount = borrows.filter((request) => request.is_due_soon).length
   const donatedItemsCount = items.filter((item) => item.asset_status?.trim() === '3').length
   const maxCategoryCount = itemCategoryDistribution[0]?.count ?? 1
 
@@ -208,6 +209,34 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         ))}
+      </section>
+
+      <section className="grid gap-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>異常提醒</CardTitle>
+                <CardDescription>優先處理可能造成資料錯誤或流程延遲的項目。</CardDescription>
+              </div>
+              <AlertTriangle className="size-5 text-[hsl(var(--muted-foreground))]" />
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-2">
+            <div className="rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900">
+              待修正資產資料：<strong>{pendingFixCount}</strong> 筆
+            </div>
+            <div className="rounded-lg border border-red-300 bg-red-100 px-3 py-2 text-sm font-medium text-red-800">
+              逾期借用：<strong>{overdueBorrowCount}</strong> 筆
+            </div>
+            <div className="rounded-lg border border-orange-300 bg-orange-100 px-3 py-2 text-sm font-medium text-orange-800">
+              3 天內到期借用：<strong>{dueSoonBorrowCount}</strong> 筆
+            </div>
+            <div className="rounded-lg border border-sky-300 bg-sky-100 px-3 py-2 text-sm font-medium text-sky-800">
+              已捐贈狀態資產：<strong>{donatedItemsCount}</strong> 筆
+            </div>
+          </CardContent>
+        </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
@@ -310,26 +339,6 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </div>
-      </section>
-
-      <section className="grid gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle>異常提醒</CardTitle>
-            <CardDescription>優先處理可能造成資料錯誤或流程延遲的項目。</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              待修正資產資料：<strong>{pendingFixCount}</strong> 筆
-            </div>
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              逾期借用：<strong>{overdueBorrowCount}</strong> 筆
-            </div>
-            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
-              已捐贈狀態資產：<strong>{donatedItemsCount}</strong> 筆
-            </div>
-          </CardContent>
-        </Card>
       </section>
     </>
   )
