@@ -212,14 +212,14 @@ export function DashboardPage() {
       </section>
 
       <section className="grid gap-4">
-        <Card className="border-red-200 bg-red-50/70">
+        <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle>異常提醒</CardTitle>
                 <CardDescription>優先處理可能造成資料錯誤或流程延遲的項目。</CardDescription>
               </div>
-              <AlertTriangle className="size-5 text-red-600" />
+              <AlertTriangle className="size-5 text-[hsl(var(--muted-foreground))]" />
             </div>
           </CardHeader>
           <CardContent className="grid gap-2">

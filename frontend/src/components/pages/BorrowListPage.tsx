@@ -19,6 +19,16 @@ const statusLabelMap: Record<string, string> = {
   overdue: '逾期',
 }
 
+const statusBadgeClassMap: Record<string, string> = {
+  borrowed: 'border-sky-200 bg-sky-100 text-sky-800',
+  returned: 'border-emerald-200 bg-emerald-100 text-emerald-800',
+  overdue: 'border-red-200 bg-red-100 text-red-800',
+}
+
+function getStatusBadgeClass(status: string): string {
+  return statusBadgeClassMap[status] || 'border-[hsl(var(--border))] bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))]'
+}
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
     return fallback
@@ -193,7 +203,9 @@ export function BorrowListPage() {
                           <div className="text-xs">預計：{request.due_date || '--'}</div>
                           <div className="text-xs">實際：{request.return_date || '--'}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            <Badge variant="secondary">{statusLabelMap[request.status] || request.status || '--'}</Badge>
+                            <Badge className={getStatusBadgeClass(request.status)} variant="outline">
+                              {statusLabelMap[request.status] || request.status || '--'}
+                            </Badge>
                             {request.is_due_soon ? <Badge variant="outline">即將到期（3 天內）</Badge> : null}
                           </div>
                         </TableCell>
@@ -227,7 +239,9 @@ export function BorrowListPage() {
                         #{request.id}
                       </Link>
                       <div className="flex flex-wrap justify-end gap-1">
-                        <Badge variant="secondary">{statusLabelMap[request.status] || request.status || '--'}</Badge>
+                        <Badge className={getStatusBadgeClass(request.status)} variant="outline">
+                          {statusLabelMap[request.status] || request.status || '--'}
+                        </Badge>
                         {request.is_due_soon ? <Badge variant="outline">即將到期（3 天內）</Badge> : null}
                       </div>
                     </div>
