@@ -101,29 +101,51 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     void loadRequest()
   }, [isEditing, requestId])
 
+  const selectedItemIds = useMemo(
+    () => new Set(lines.map((line) => line.item_id).filter((itemId): itemId is number => itemId !== '')),
+    [lines],
+  )
+
+  const selectableItems = useMemo(() => {
+    return inventoryItems.filter((item) => {
+      if (item.asset_status === '0') {
+        return true
+      }
+      return isEditing && selectedItemIds.has(item.id)
+    })
+  }, [inventoryItems, isEditing, selectedItemIds])
+
   const itemOptions = useMemo(() => {
-    return inventoryItems.map((item) => ({
+    return selectableItems.map((item) => ({
       value: item.id,
       label: `${item.name || '未命名'} ${item.model ? `(${item.model})` : ''} ${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn ? `｜${item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn}` : ''}`.trim(),
     }))
-  }, [inventoryItems])
+  }, [selectableItems])
 
   const handleLineChange = (index: number, patch: Partial<BorrowLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
   }
 
-  const validateLines = () => {
+  const getLineValidationError = () => {
     if (lines.length === 0) {
-      return false
+      return '請至少新增一筆借用品項。'
     }
-    return lines.every((line) => line.item_id !== '' && line.quantity === 1)
+    if (!lines.every((line) => line.item_id !== '' && line.quantity === 1)) {
+      return '單件模式下，每筆借用品項數量必須為 1。'
+    }
+    const pickedIds = lines.map((line) => line.item_id).filter((itemId): itemId is number => itemId !== '')
+    if (new Set(pickedIds).size !== pickedIds.length) {
+      return '同一張借用單不可重複選取同一品項。'
+    }
+    return null
   }
 
   const normalizeDate = (value: string) => (value ? value : null)
 
   const handleSubmit = async () => {
-    if (!validateLines()) {
-      void toast.fire({ icon: 'error', title: '單件模式下，每筆借用品項數量必須為 1。' })
+    const validationError = getLineValidationError()
+    if (validationError) {
+      void toast.fire({ icon: 'error', title: validationError })
       return
     }
 
@@ -152,7 +174,9 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       })
 
       if (!response.ok) {
-        throw new Error('建立失敗')
+        const payload = await response.json().catch(() => null)
+        const detail = typeof payload?.detail === 'string' ? payload.detail : null
+        throw new Error(detail ?? '建立失敗')
       }
 
       await response.json()
@@ -170,8 +194,12 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         setLines([emptyLine()])
         void toast.fire({ icon: 'success', title: '借用單已建立。' })
       }
-    } catch {
-      void toast.fire({ icon: 'error', title: isEditing ? '更新借用單失敗，請稍後再試。' : '建立借用單失敗，請稍後再試。' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      void toast.fire({
+        icon: 'error',
+        title: message || (isEditing ? '更新借用單失敗，請稍後再試。' : '建立借用單失敗，請稍後再試。'),
+      })
     } finally {
       setSubmitting(false)
     }
@@ -222,7 +250,14 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
         <SectionCard title="借用品項">
           <div className="grid gap-3">
-            {lines.map((line, index) => (
+            {lines.map((line, index) => {
+              const selectedByOtherLines = new Set(
+                lines
+                  .filter((_, idx) => idx !== index)
+                  .map((itemLine) => itemLine.item_id)
+                  .filter((itemId): itemId is number => itemId !== ''),
+              )
+              return (
               <article key={`borrow-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[2fr,1fr,2fr,auto]">
                 <div className="grid gap-1.5">
                   <Label>品項</Label>
@@ -232,7 +267,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                   >
                     <option value="">請選擇品項</option>
                     {itemOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
+                      <option key={option.value} value={option.value} disabled={selectedByOtherLines.has(option.value)}>
                         {option.label}
                       </option>
                     ))}
@@ -258,7 +293,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                   </Button>
                 </div>
               </article>
-            ))}
+              )
+            })}
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">

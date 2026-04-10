@@ -70,6 +70,25 @@ class TransactionConsistencyTests(unittest.TestCase):
                 [{"item_id": item_id, "quantity": 2, "note": ""}],
             )
 
+    def test_item_id_cannot_be_duplicated(self) -> None:
+        item_id = self._create_item()
+        with self.assertRaisesRegex(ValueError, "item_id cannot be duplicated"):
+            db.create_issue_request(
+                self._issue_payload(),
+                [
+                    {"item_id": item_id, "quantity": 1, "note": ""},
+                    {"item_id": item_id, "quantity": 1, "note": ""},
+                ],
+            )
+
+    def test_create_request_rejects_unavailable_item(self) -> None:
+        unavailable_item_id = self._create_item(asset_status="2")
+        with self.assertRaisesRegex(ValueError, f"item_id {unavailable_item_id} is unavailable"):
+            db.create_issue_request(
+                self._issue_payload(),
+                [{"item_id": unavailable_item_id, "quantity": 1, "note": ""}],
+            )
+
     def test_issue_request_updates_status_only(self) -> None:
         item_id = self._create_item(count=5)
 
@@ -109,6 +128,33 @@ class TransactionConsistencyTests(unittest.TestCase):
         self.assertIsNotNone(item_after_return)
         self.assertEqual(item_after_return["count"], 1)
         self.assertEqual(item_after_return["asset_status"], "0")
+
+    def test_issue_update_rejects_unavailable_item_and_keeps_original_status(self) -> None:
+        issue_item_id = self._create_item()
+        occupied_item_id = self._create_item()
+
+        issue_request_id = db.create_issue_request(
+            self._issue_payload(),
+            [{"item_id": issue_item_id, "quantity": 1, "note": ""}],
+        )
+        db.create_borrow_request(
+            self._borrow_payload(status="borrowed"),
+            [{"item_id": occupied_item_id, "quantity": 1, "note": ""}],
+        )
+
+        with self.assertRaisesRegex(ValueError, f"item_id {occupied_item_id} is unavailable"):
+            db.update_issue_request(
+                issue_request_id,
+                self._issue_payload(),
+                [{"item_id": occupied_item_id, "quantity": 1, "note": ""}],
+            )
+
+        issue_item_after = db.get_item_by_id(issue_item_id)
+        occupied_item_after = db.get_item_by_id(occupied_item_id)
+        self.assertIsNotNone(issue_item_after)
+        self.assertIsNotNone(occupied_item_after)
+        self.assertEqual(issue_item_after["asset_status"], "1")
+        self.assertEqual(occupied_item_after["asset_status"], "2")
 
     def test_donation_sets_status_and_reverts_on_delete(self) -> None:
         item_id = self._create_item()
