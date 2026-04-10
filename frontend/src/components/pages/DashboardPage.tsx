@@ -11,7 +11,6 @@ import {
   Server,
 } from 'lucide-react'
 import { apiUrl } from '../../api'
-import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
 import type { BorrowRequest, DashboardPayload, DonationRequest, InventoryItem, IssueRequest, PaginatedResponse } from './types'
 import { Badge } from '../ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
@@ -26,9 +25,8 @@ type RecentActivity = {
   requestId: string
 }
 
-type StatusDistribution = {
-  code: string
-  label: string
+type ItemCategoryDistribution = {
+  name: string
   count: number
 }
 
@@ -62,7 +60,6 @@ export function DashboardPage() {
   const [issues, setIssues] = useState<IssueRequest[]>([])
   const [borrows, setBorrows] = useState<BorrowRequest[]>([])
   const [donations, setDonations] = useState<DonationRequest[]>([])
-  const [assetStatusLabelMap, setAssetStatusLabelMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
@@ -94,42 +91,23 @@ export function DashboardPage() {
     void loadDashboard()
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    const loadAssetStatusLabels = async () => {
-      try {
-        const options = await fetchAssetStatusOptions()
-        if (!cancelled) {
-          setAssetStatusLabelMap(buildAssetStatusLabelMap(options))
-        }
-      } catch {
-        if (!cancelled) {
-          setAssetStatusLabelMap({})
-        }
-      }
-    }
-
-    void loadAssetStatusLabels()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const statusDistribution = useMemo<StatusDistribution[]>(() => {
+  const itemCategoryDistribution = useMemo<ItemCategoryDistribution[]>(() => {
     const groupedCounts = new Map<string, number>()
     for (const item of items) {
-      const statusCode = item.asset_status?.trim() || 'unknown'
-      groupedCounts.set(statusCode, (groupedCounts.get(statusCode) ?? 0) + 1)
+      if (item.asset_status?.trim() !== '0') {
+        continue
+      }
+      const itemName = item.name?.trim() || '未命名品項'
+      groupedCounts.set(itemName, (groupedCounts.get(itemName) ?? 0) + 1)
     }
 
     return Array.from(groupedCounts.entries())
-      .map(([code, count]) => ({
-        code,
-        label: toAssetStatusLabel(code, assetStatusLabelMap),
+      .map(([name, count]) => ({
+        name,
         count,
       }))
-      .sort((left, right) => right.count - left.count)
-  }, [assetStatusLabelMap, items])
+      .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
+  }, [items])
 
   const recentActivities = useMemo<RecentActivity[]>(() => {
     const issueActivities = issues.map<RecentActivity>((request) => ({
@@ -176,7 +154,7 @@ export function DashboardPage() {
   const totalRecords = issues.length + borrows.length + donations.length
   const overdueBorrowCount = borrows.filter((request) => request.status === 'overdue').length
   const donatedItemsCount = items.filter((item) => item.asset_status?.trim() === '3').length
-  const maxStatusCount = statusDistribution[0]?.count ?? 1
+  const maxCategoryCount = itemCategoryDistribution[0]?.count ?? 1
 
   const kpiCards = [
     {
@@ -237,24 +215,24 @@ export function DashboardPage() {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>資產狀態分布</CardTitle>
-                <CardDescription>依 `asset_status` 統計目前資產。</CardDescription>
+                <CardTitle>庫存物品種類分布</CardTitle>
+                <CardDescription>依庫存中物品名稱統計（僅 `asset_status=0`）。</CardDescription>
               </div>
               <ChartNoAxesColumn className="size-4 text-[hsl(var(--muted-foreground))]" />
             </div>
           </CardHeader>
           <CardContent className="grid gap-3">
             {loading ? <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">資料載入中...</p> : null}
-            {!loading && statusDistribution.length === 0 ? (
+            {!loading && itemCategoryDistribution.length === 0 ? (
               <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">目前沒有資產資料可統計。</p>
             ) : null}
             {!loading &&
-              statusDistribution.map((item) => {
-                const widthPercent = Math.max(8, Math.round((item.count / maxStatusCount) * 100))
+              itemCategoryDistribution.map((item) => {
+                const widthPercent = Math.max(8, Math.round((item.count / maxCategoryCount) * 100))
                 return (
-                  <div key={item.code} className="grid gap-1">
+                  <div key={item.name} className="grid gap-1">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{item.label}</span>
+                      <span className="font-medium">{item.name}</span>
                       <span className="text-[hsl(var(--muted-foreground))]">{item.count}</span>
                     </div>
                     <div className="h-2 rounded-full bg-[hsl(var(--secondary))]">
