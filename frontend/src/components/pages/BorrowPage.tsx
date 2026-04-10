@@ -150,10 +150,25 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
   const normalizeDate = (value: string) => (value ? value : null)
 
+  const getDateValidationError = () => {
+    if (borrowDate && dueDate && borrowDate > dueDate) {
+      return '預計歸還日期不可早於借用日期。'
+    }
+    if (borrowDate && returnDate && returnDate < borrowDate) {
+      return '實際歸還日期不可早於借用日期。'
+    }
+    return null
+  }
+
   const handleSubmit = async () => {
     const validationError = getLineValidationError()
     if (validationError) {
       void toast.fire({ icon: 'error', title: validationError })
+      return
+    }
+    const dateValidationError = getDateValidationError()
+    if (dateValidationError) {
+      void toast.fire({ icon: 'error', title: dateValidationError })
       return
     }
 
@@ -231,15 +246,31 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
             </div>
             <div className="grid gap-1.5">
               <Label>借用日期</Label>
-              <Input type="date" value={borrowDate} onChange={(event) => setBorrowDate(event.target.value)} />
+              <Input
+                type="date"
+                value={borrowDate}
+                max={returnDate || dueDate || undefined}
+                onChange={(event) => setBorrowDate(event.target.value)}
+              />
             </div>
             <div className="grid gap-1.5">
               <Label>預計歸還</Label>
-              <Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+              <Input
+                type="date"
+                value={dueDate}
+                min={borrowDate || undefined}
+                max={returnDate || undefined}
+                onChange={(event) => setDueDate(event.target.value)}
+              />
             </div>
             <div className="grid gap-1.5">
               <Label>實際歸還</Label>
-              <Input type="date" value={returnDate} onChange={(event) => setReturnDate(event.target.value)} />
+              <Input
+                type="date"
+                value={returnDate}
+                min={borrowDate || undefined}
+                onChange={(event) => setReturnDate(event.target.value)}
+              />
             </div>
             <div className="grid gap-1.5">
               <Label>狀態</Label>
