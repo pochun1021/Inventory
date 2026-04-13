@@ -19,7 +19,7 @@
 - 代碼維護：資產狀態 lookup（CRUD）
 - Excel 匯入：`POST /api/items/import`
 - 資料保留：軟刪除資料逾 6 個月自動清除
-- 操作日誌：create/read/update/delete/import/purge/sync
+- 日誌查詢：異動流水帳與操作日誌（可依時間/動作/實體/品項/單據篩選）
 
 ## 專案結構
 
@@ -82,6 +82,7 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 - `/borrows`、`/borrows/new`、`/borrows/:requestId`：借用
 - `/donations`、`/donations/new`、`/donations/:requestId`：捐贈
 - `/upload`：批次上傳
+- `/logs`：異動流水帳與操作日誌查詢
 
 ## API 概覽
 
@@ -133,6 +134,12 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 - `POST /api/items/import`（`multipart/form-data`）
   - `file`：`.xlsx`
   - `asset_type`：`11` / `A1` / `A2`
+
+### 日誌查詢
+
+- `GET /api/logs/movements`
+- `GET /api/logs/operations`
+  - 可選參數：`scope=hot|all`（預設 `hot`，僅查近 90 天）
 
 ## 交易規則（重要）
 

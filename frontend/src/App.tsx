@@ -9,6 +9,7 @@ import { InventoryFormPage } from './components/pages/InventoryFormPage'
 import { InventoryListPage } from './components/pages/InventoryListPage'
 import { IssueListPage } from './components/pages/IssueListPage'
 import { IssuePage } from './components/pages/IssuePage'
+import { LogsPage } from './components/pages/LogsPage'
 import { UploadPage } from './components/pages/UploadPage'
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
 
@@ -24,7 +25,7 @@ function NotFoundPage() {
         <CardTitle>找不到頁面</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">請使用側邊導覽前往 Dashboard、財產、領用、借用、捐贈或上傳頁面。</p>
+        <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">請使用側邊導覽前往 Dashboard、財產、領用、借用、捐贈、上傳或日誌頁面。</p>
       </CardContent>
     </Card>
   )
@@ -168,6 +169,12 @@ const uploadRoute = createRoute({
   component: UploadPage,
 })
 
+const logsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/logs',
+  component: LogsPage,
+})
+
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
   inventoryRoute,
@@ -183,6 +190,7 @@ const routeTree = rootRoute.addChildren([
   donationCreateRoute,
   donationEditRoute,
   uploadRoute,
+  logsRoute,
 ])
 
 const router = createRouter({ routeTree, defaultPreload: 'intent' })

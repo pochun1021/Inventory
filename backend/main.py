@@ -1,6 +1,7 @@
 from datetime import date, datetime
 import math
 from pathlib import Path
+from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from db import (
+    archive_old_logs,
     create_asset_status_code,
     create_item,
     create_items_bulk,
@@ -34,6 +36,8 @@ from db import (
     list_donation_items,
     list_donation_requests,
     list_items,
+    list_movement_ledger,
+    list_operation_logs,
     log_inventory_action,
     purge_soft_deleted_items,
     update_asset_status_code,
@@ -229,6 +233,46 @@ class DonationRequestListResponse(BaseModel):
     total_pages: int
 
 
+class MovementLedgerEntry(BaseModel):
+    id: int
+    item_id: int
+    item_name: str = ""
+    item_model: str = ""
+    from_status: str = ""
+    to_status: str = ""
+    action: str = ""
+    entity: str = ""
+    entity_id: int | None = None
+    operator: str = ""
+    created_at: str = ""
+
+
+class MovementLedgerListResponse(BaseModel):
+    items: list[MovementLedgerEntry]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class OperationLogEntry(BaseModel):
+    id: int
+    action: str = ""
+    entity: str = ""
+    entity_id: int | None = None
+    status: str = ""
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
+class OperationLogListResponse(BaseModel):
+    items: list[OperationLogEntry]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
 class ImportErrorDetail(BaseModel):
     row: int
     message: str
@@ -253,6 +297,33 @@ def _parse_purchase_date(value: str) -> date:
 def _parse_datetime(value: str) -> datetime | None:
     if not value:
         return None
+
+
+def _parse_datetime_filter_value(value: str, *, field_name: str, is_end: bool = False) -> datetime | None:
+    raw_value = value.strip()
+    if not raw_value:
+        return None
+    date_formats = [
+        ("%Y-%m-%d %H:%M:%S", False),
+        ("%Y-%m-%d", True),
+    ]
+    for fmt, is_date_only in date_formats:
+        try:
+            parsed = datetime.strptime(raw_value, fmt)
+        except ValueError:
+            continue
+        if is_date_only and is_end:
+            return parsed.replace(hour=23, minute=59, second=59)
+        return parsed
+    raise HTTPException(status_code=400, detail=f"invalid {field_name} format")
+
+
+def _parse_datetime_range_filters(start_at: str, end_at: str) -> tuple[datetime | None, datetime | None]:
+    start_time = _parse_datetime_filter_value(start_at, field_name="start_at")
+    end_time = _parse_datetime_filter_value(end_at, field_name="end_at", is_end=True)
+    if start_time and end_time and start_time > end_time:
+        raise HTTPException(status_code=400, detail="start_at must be earlier than or equal to end_at")
+    return start_time, end_time
     try:
         return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
     except ValueError:
@@ -327,6 +398,15 @@ def _normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
     if page_size < 1:
         raise HTTPException(status_code=400, detail="page_size must be greater than 0")
     return page, page_size
+
+
+def _normalize_log_scope(scope: str) -> str:
+    normalized = scope.strip().lower()
+    if not normalized:
+        return "hot"
+    if normalized not in {"hot", "all"}:
+        raise HTTPException(status_code=400, detail="scope must be one of: hot, all")
+    return normalized
 
 
 def _paginate_rows[T](rows: list[T], page: int, page_size: int) -> tuple[list[T], int, int]:
@@ -1144,6 +1224,66 @@ def delete_donation_request_api(request_id: int):
         raise HTTPException(status_code=404, detail="Donation request not found")
     log_inventory_action(action="delete", entity="donation_request", entity_id=request_id)
     return {"success": True}
+
+
+@app.get("/api/logs/movements", response_model=MovementLedgerListResponse, response_model_by_alias=False)
+def list_movement_ledger_api(
+    start_at: str = "",
+    end_at: str = "",
+    action: str = "",
+    entity: str = "",
+    scope: str = "hot",
+    item_id: int | None = None,
+    entity_id: int | None = None,
+    page: int = Query(default=1),
+    page_size: int = Query(default=10),
+):
+    page, page_size = _normalize_pagination(page, page_size)
+    normalized_scope = _normalize_log_scope(scope)
+    archive_old_logs()
+    start_time, end_time = _parse_datetime_range_filters(start_at, end_at)
+    rows = list_movement_ledger(
+        start_at=start_time,
+        end_at=end_time,
+        action=action,
+        entity=entity,
+        item_id=item_id,
+        entity_id=entity_id,
+        scope=normalized_scope,
+    )
+    paged_items, total, total_pages = _paginate_rows(rows, page, page_size)
+    models = [MovementLedgerEntry(**row) for row in paged_items]
+    return MovementLedgerListResponse(items=models, page=page, page_size=page_size, total=total, total_pages=total_pages)
+
+
+@app.get("/api/logs/operations", response_model=OperationLogListResponse, response_model_by_alias=False)
+def list_operation_logs_api(
+    start_at: str = "",
+    end_at: str = "",
+    action: str = "",
+    entity: str = "",
+    scope: str = "hot",
+    item_id: int | None = None,
+    entity_id: int | None = None,
+    page: int = Query(default=1),
+    page_size: int = Query(default=10),
+):
+    page, page_size = _normalize_pagination(page, page_size)
+    normalized_scope = _normalize_log_scope(scope)
+    archive_old_logs()
+    start_time, end_time = _parse_datetime_range_filters(start_at, end_at)
+    rows = list_operation_logs(
+        start_at=start_time,
+        end_at=end_time,
+        action=action,
+        entity=entity,
+        item_id=item_id,
+        entity_id=entity_id,
+        scope=normalized_scope,
+    )
+    paged_items, total, total_pages = _paginate_rows(rows, page, page_size)
+    models = [OperationLogEntry(**row) for row in paged_items]
+    return OperationLogListResponse(items=models, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
 @app.post("/api/items/import", response_model=ImportResponse)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "inventory.xlsx"
 LOCK_PATH = BASE_DIR / "inventory.xlsx.lock"
 ASSET_CATEGORY_NAME_PATH = BASE_DIR.parent / "asset_category_name.xlsx"
+LOG_ARCHIVE_DIR = BASE_DIR / "log_archive"
+HOT_LOG_RETENTION_DAYS = 90
+ARCHIVE_FILE_PATTERN = re.compile(r"^logs_(\d{6})\.xlsx$")
 
 SHEETS: dict[str, list[str]] = {
     "inventory_items": [
@@ -62,6 +66,17 @@ SHEETS: dict[str, list[str]] = {
         "entity_id",
         "status",
         "detail",
+        "created_at",
+    ],
+    "movement_ledger": [
+        "id",
+        "item_id",
+        "from_status",
+        "to_status",
+        "action",
+        "entity",
+        "entity_id",
+        "operator",
         "created_at",
     ],
     "issue_requests": [
@@ -173,6 +188,7 @@ STRING_FIELDS: dict[str, list[str]] = {
     ],
     "donation_items": ["note"],
     "asset_status_codes": ["code", "description", "created_at", "updated_at"],
+    "movement_ledger": ["from_status", "to_status", "action", "entity", "operator", "created_at"],
 }
 
 REMOVED_SHEETS = {
@@ -988,6 +1004,362 @@ def log_inventory_action(
         wb.save(DB_PATH)
 
 
+def _append_movement_ledger_entry(
+    movement_rows: list[dict[str, Any]],
+    *,
+    item_id: int,
+    from_status: str,
+    to_status: str,
+    action: str,
+    entity: str,
+    entity_id: int | None,
+    operator: str = "system",
+) -> None:
+    movement_rows.append(
+        {
+            "id": _next_id(movement_rows),
+            "item_id": item_id,
+            "from_status": from_status,
+            "to_status": to_status,
+            "action": action,
+            "entity": entity,
+            "entity_id": entity_id if entity_id is not None else "",
+            "operator": operator,
+            "created_at": _now_str(),
+        }
+    )
+
+
+def _set_inventory_status_with_movement(
+    *,
+    movement_rows: list[dict[str, Any]],
+    row: dict[str, Any],
+    item_id: int,
+    status: str,
+    action: str,
+    entity: str,
+    entity_id: int | None,
+    operator: str = "system",
+) -> None:
+    previous_status = _to_str(row.get("asset_status")).strip()
+    _set_inventory_status(row, status)
+    _append_movement_ledger_entry(
+        movement_rows,
+        item_id=item_id,
+        from_status=previous_status,
+        to_status=status,
+        action=action,
+        entity=entity,
+        entity_id=entity_id,
+        operator=operator,
+    )
+
+
+def _parse_log_time(value: Any) -> datetime | None:
+    raw = _to_str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _matches_time_filter(*, created_at: Any, start_at: datetime | None, end_at: datetime | None) -> bool:
+    if start_at is None and end_at is None:
+        return True
+    created_time = _parse_log_time(created_at)
+    if created_time is None:
+        return False
+    if start_at is not None and created_time < start_at:
+        return False
+    if end_at is not None and created_time > end_at:
+        return False
+    return True
+
+
+def _parse_json_detail(value: Any) -> dict[str, Any]:
+    raw = _to_str(value).strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _matches_item_filter_from_detail(detail: dict[str, Any], item_id: int) -> bool:
+    detail_item_id = _to_int(detail.get("item_id"))
+    if detail_item_id == item_id:
+        return True
+    item_ids = detail.get("item_ids")
+    if isinstance(item_ids, list):
+        return item_id in {_to_int(value) for value in item_ids}
+    return False
+
+
+def _month_key_from_datetime(value: datetime) -> str:
+    return value.strftime("%Y%m")
+
+
+def _archive_workbook_path(month_key: str) -> Path:
+    return LOG_ARCHIVE_DIR / f"logs_{month_key}.xlsx"
+
+
+def _ensure_archive_dir() -> None:
+    LOG_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_archive_month_keys() -> list[str]:
+    if not LOG_ARCHIVE_DIR.exists():
+        return []
+    keys: list[str] = []
+    for path in LOG_ARCHIVE_DIR.iterdir():
+        match = ARCHIVE_FILE_PATTERN.match(path.name)
+        if match:
+            keys.append(match.group(1))
+    return sorted(set(keys))
+
+
+def _month_bounds(month_key: str) -> tuple[datetime, datetime] | None:
+    if len(month_key) != 6 or not month_key.isdigit():
+        return None
+    year = int(month_key[:4])
+    month = int(month_key[4:6])
+    if month < 1 or month > 12:
+        return None
+    start = datetime(year, month, 1)
+    if month == 12:
+        next_month = datetime(year + 1, 1, 1)
+    else:
+        next_month = datetime(year, month + 1, 1)
+    end = next_month - timedelta(seconds=1)
+    return start, end
+
+
+def _month_intersects_range(month_key: str, start_at: datetime | None, end_at: datetime | None) -> bool:
+    bounds = _month_bounds(month_key)
+    if bounds is None:
+        return False
+    month_start, month_end = bounds
+    if start_at is not None and month_end < start_at:
+        return False
+    if end_at is not None and month_start > end_at:
+        return False
+    return True
+
+
+def _candidate_archive_month_keys(start_at: datetime | None, end_at: datetime | None) -> list[str]:
+    keys = _list_archive_month_keys()
+    if start_at is None and end_at is None:
+        return keys
+    return [key for key in keys if _month_intersects_range(key, start_at, end_at)]
+
+
+def _load_archive_workbook(path: Path) -> Workbook:
+    if path.exists():
+        wb = load_workbook(path)
+    else:
+        wb = Workbook()
+        default_sheet = wb.active
+        wb.remove(default_sheet)
+    _ensure_sheet(wb, "operation_logs", SHEETS["operation_logs"])
+    _ensure_sheet(wb, "movement_ledger", SHEETS["movement_ledger"])
+    return wb
+
+
+def _append_rows_to_archive(sheet_name: str, rows: list[dict[str, Any]], month_key: str) -> None:
+    if not rows:
+        return
+    _ensure_archive_dir()
+    archive_path = _archive_workbook_path(month_key)
+    lock_path = archive_path.with_suffix(".lock")
+    lock = FileLock(str(lock_path))
+    with lock:
+        wb = _load_archive_workbook(archive_path)
+        ws = wb[sheet_name]
+        headers = SHEETS[sheet_name]
+        for row in rows:
+            ws.append([row.get(header, "") for header in headers])
+        wb.save(archive_path)
+
+
+def archive_old_logs(*, retention_days: int = HOT_LOG_RETENTION_DAYS) -> dict[str, int]:
+    cutoff = datetime.now() - timedelta(days=retention_days)
+    with _locked_workbook() as wb:
+        operation_rows = _read_rows(wb["operation_logs"])
+        movement_rows = _read_rows(wb["movement_ledger"])
+
+        kept_operations: list[dict[str, Any]] = []
+        kept_movements: list[dict[str, Any]] = []
+        archived_operations_by_month: dict[str, list[dict[str, Any]]] = {}
+        archived_movements_by_month: dict[str, list[dict[str, Any]]] = {}
+
+        for row in operation_rows:
+            created_time = _parse_log_time(row.get("created_at"))
+            if created_time is None or created_time >= cutoff:
+                kept_operations.append(row)
+                continue
+            month_key = _month_key_from_datetime(created_time)
+            archived_operations_by_month.setdefault(month_key, []).append(row)
+
+        for row in movement_rows:
+            created_time = _parse_log_time(row.get("created_at"))
+            if created_time is None or created_time >= cutoff:
+                kept_movements.append(row)
+                continue
+            month_key = _month_key_from_datetime(created_time)
+            archived_movements_by_month.setdefault(month_key, []).append(row)
+
+        operation_archived = len(operation_rows) - len(kept_operations)
+        movement_archived = len(movement_rows) - len(kept_movements)
+        if operation_archived:
+            _write_rows(wb["operation_logs"], SHEETS["operation_logs"], kept_operations)
+        if movement_archived:
+            _write_rows(wb["movement_ledger"], SHEETS["movement_ledger"], kept_movements)
+        if operation_archived or movement_archived:
+            wb.save(DB_PATH)
+
+    for month_key, rows in archived_operations_by_month.items():
+        _append_rows_to_archive("operation_logs", rows, month_key)
+    for month_key, rows in archived_movements_by_month.items():
+        _append_rows_to_archive("movement_ledger", rows, month_key)
+
+    return {
+        "operation_logs_archived": operation_archived,
+        "movement_ledger_archived": movement_archived,
+    }
+
+
+def _list_archive_sheet_rows(sheet_name: str, *, start_at: datetime | None, end_at: datetime | None) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for month_key in _candidate_archive_month_keys(start_at, end_at):
+        archive_path = _archive_workbook_path(month_key)
+        if not archive_path.exists():
+            continue
+        lock = FileLock(str(archive_path.with_suffix(".lock")))
+        with lock:
+            wb = _load_archive_workbook(archive_path)
+            if sheet_name not in wb.sheetnames:
+                continue
+            rows.extend(_read_rows(wb[sheet_name]))
+    return rows
+
+
+def list_movement_ledger(
+    *,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    action: str = "",
+    entity: str = "",
+    item_id: int | None = None,
+    entity_id: int | None = None,
+    scope: str = "hot",
+) -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        movement_rows = _read_rows(wb["movement_ledger"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+    if scope == "all":
+        movement_rows.extend(_list_archive_sheet_rows("movement_ledger", start_at=start_at, end_at=end_at))
+
+    inventory_map = {
+        _to_int(row.get("id")): {
+            "item_name": _to_str(row.get("name")),
+            "item_model": _to_str(row.get("model")),
+        }
+        for row in inventory_rows
+    }
+    normalized_action = _to_str(action).strip().lower()
+    normalized_entity = _to_str(entity).strip().lower()
+    filtered: list[dict[str, Any]] = []
+    for row in movement_rows:
+        row_action = _to_str(row.get("action")).strip()
+        row_entity = _to_str(row.get("entity")).strip()
+        row_item_id = _to_int(row.get("item_id"))
+        row_entity_id = _to_int(row.get("entity_id"))
+        if normalized_action and row_action.lower() != normalized_action:
+            continue
+        if normalized_entity and row_entity.lower() != normalized_entity:
+            continue
+        if item_id is not None and row_item_id != item_id:
+            continue
+        if entity_id is not None and row_entity_id != entity_id:
+            continue
+        if not _matches_time_filter(created_at=row.get("created_at"), start_at=start_at, end_at=end_at):
+            continue
+        item_info = inventory_map.get(row_item_id, {})
+        filtered.append(
+            {
+                "id": _to_int(row.get("id")),
+                "item_id": row_item_id,
+                "item_name": _to_str(item_info.get("item_name")),
+                "item_model": _to_str(item_info.get("item_model")),
+                "from_status": _to_str(row.get("from_status")),
+                "to_status": _to_str(row.get("to_status")),
+                "action": row_action,
+                "entity": row_entity,
+                "entity_id": row_entity_id if row_entity_id > 0 else None,
+                "operator": _to_str(row.get("operator")),
+                "created_at": _to_str(row.get("created_at")),
+            }
+        )
+
+    return sorted(filtered, key=lambda entry: _to_int(entry.get("id")), reverse=True)
+
+
+def list_operation_logs(
+    *,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    action: str = "",
+    entity: str = "",
+    item_id: int | None = None,
+    entity_id: int | None = None,
+    scope: str = "hot",
+) -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["operation_logs"])
+    if scope == "all":
+        rows.extend(_list_archive_sheet_rows("operation_logs", start_at=start_at, end_at=end_at))
+
+    normalized_action = _to_str(action).strip().lower()
+    normalized_entity = _to_str(entity).strip().lower()
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        row_action = _to_str(row.get("action")).strip()
+        row_entity = _to_str(row.get("entity")).strip()
+        row_entity_id = _to_int(row.get("entity_id"))
+        detail: dict[str, Any] = {}
+        if normalized_action and row_action.lower() != normalized_action:
+            continue
+        if normalized_entity and row_entity.lower() != normalized_entity:
+            continue
+        if entity_id is not None and row_entity_id != entity_id:
+            continue
+        if item_id is not None:
+            detail = _parse_json_detail(row.get("detail"))
+            if not _matches_item_filter_from_detail(detail, item_id):
+                continue
+        if not _matches_time_filter(created_at=row.get("created_at"), start_at=start_at, end_at=end_at):
+            continue
+        if not detail:
+            detail = _parse_json_detail(row.get("detail"))
+        filtered.append(
+            {
+                "id": _to_int(row.get("id")),
+                "action": row_action,
+                "entity": row_entity,
+                "entity_id": row_entity_id if row_entity_id > 0 else None,
+                "status": _to_str(row.get("status")),
+                "detail": detail,
+                "created_at": _to_str(row.get("created_at")),
+            }
+        )
+
+    return sorted(filtered, key=lambda entry: _to_int(entry.get("id")), reverse=True)
+
+
 def get_order_sn(name: str) -> dict[str, Any] | None:
     with _locked_workbook() as wb:
         ws = wb["order_sn"]
@@ -1085,15 +1457,25 @@ def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any
         request_ws = wb["issue_requests"]
         item_ws = wb["issue_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
         selected_item_ids = _normalize_request_item_ids(items)
         inventory_map = _active_inventory_rows_map(inventory_rows)
+        request_id = _next_id(request_rows)
         for item_id in selected_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            _set_inventory_status(row, "1")
-        request_id = _next_id(request_rows)
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="1",
+                action="create",
+                entity="issue_request",
+                entity_id=request_id,
+            )
         request_rows.append(
             {
                 "id": request_id,
@@ -1119,6 +1501,7 @@ def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any
         _write_rows(request_ws, SHEETS["issue_requests"], request_rows)
         _write_rows(item_ws, SHEETS["issue_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return request_id
 
@@ -1174,9 +1557,11 @@ def update_issue_request(request_id: int, request_data: dict[str, Any], items: l
         request_ws = wb["issue_requests"]
         item_ws = wb["issue_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
         updated = False
         for row in request_rows:
             if _to_int(row.get("id")) == request_id:
@@ -1201,13 +1586,37 @@ def update_issue_request(request_id: int, request_data: dict[str, Any], items: l
 
         for item_id in new_item_ids - old_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            _set_inventory_status(row, "1")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="1",
+                action="update",
+                entity="issue_request",
+                entity_id=request_id,
+            )
         for item_id in new_item_ids & old_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0", "1"})
-            _set_inventory_status(row, "1")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="1",
+                action="update",
+                entity="issue_request",
+                entity_id=request_id,
+            )
         for item_id in old_item_ids - new_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"1"})
-            _set_inventory_status(row, "0")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="0",
+                action="update",
+                entity="issue_request",
+                entity_id=request_id,
+            )
 
         item_rows = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         next_item_id = _next_id(item_rows)
@@ -1224,6 +1633,7 @@ def update_issue_request(request_id: int, request_data: dict[str, Any], items: l
         _write_rows(request_ws, SHEETS["issue_requests"], request_rows)
         _write_rows(item_ws, SHEETS["issue_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return True
 
@@ -1233,9 +1643,11 @@ def delete_issue_request(request_id: int) -> bool:
         request_ws = wb["issue_requests"]
         item_ws = wb["issue_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
         remaining_requests = [row for row in request_rows if _to_int(row.get("id")) != request_id]
         deleted = len(remaining_requests) != len(request_rows)
         if not deleted:
@@ -1245,11 +1657,20 @@ def delete_issue_request(request_id: int) -> bool:
         for old_item in old_items:
             item_id = _to_int(old_item.get("item_id"))
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"1"})
-            _set_inventory_status(row, "0")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="0",
+                action="delete",
+                entity="issue_request",
+                entity_id=request_id,
+            )
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         _write_rows(request_ws, SHEETS["issue_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["issue_items"], remaining_items)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return True
 
@@ -1259,17 +1680,26 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
         request_ws = wb["donation_requests"]
         item_ws = wb["donation_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
 
         selected_item_ids = _normalize_request_item_ids(items)
         inventory_map = _active_inventory_rows_map(inventory_rows)
+        request_id = _next_id(request_rows)
         for item_id in selected_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            _set_inventory_status(row, "3")
-
-        request_id = _next_id(request_rows)
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="3",
+                action="create",
+                entity="donation_request",
+                entity_id=request_id,
+            )
         request_rows.append(
             {
                 "id": request_id,
@@ -1298,6 +1728,7 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
         _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return request_id
 
@@ -1353,9 +1784,11 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
         request_ws = wb["donation_requests"]
         item_ws = wb["donation_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
 
         request_row = None
         for row in request_rows:
@@ -1372,13 +1805,37 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
         inventory_map = _active_inventory_rows_map(inventory_rows)
         for item_id in new_item_ids - old_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            _set_inventory_status(row, "3")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="3",
+                action="update",
+                entity="donation_request",
+                entity_id=request_id,
+            )
         for item_id in new_item_ids & old_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0", "3"})
-            _set_inventory_status(row, "3")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="3",
+                action="update",
+                entity="donation_request",
+                entity_id=request_id,
+            )
         for item_id in old_item_ids - new_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"3"})
-            _set_inventory_status(row, "0")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="0",
+                action="update",
+                entity="donation_request",
+                entity_id=request_id,
+            )
 
         request_row.update(
             {
@@ -1407,6 +1864,7 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
         _write_rows(request_ws, SHEETS["donation_requests"], request_rows)
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return True
 
@@ -1416,9 +1874,11 @@ def delete_donation_request(request_id: int) -> bool:
         request_ws = wb["donation_requests"]
         item_ws = wb["donation_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
 
         remaining_requests = [row for row in request_rows if _to_int(row.get("id")) != request_id]
         deleted = len(remaining_requests) != len(request_rows)
@@ -1431,11 +1891,20 @@ def delete_donation_request(request_id: int) -> bool:
         for removed_item in removed_items:
             item_id = _to_int(removed_item.get("item_id"))
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"3"})
-            _set_inventory_status(row, "0")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="0",
+                action="delete",
+                entity="donation_request",
+                entity_id=request_id,
+            )
 
         _write_rows(request_ws, SHEETS["donation_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["donation_items"], remaining_items)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return True
 
@@ -1518,16 +1987,26 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
         request_ws = wb["borrow_requests"]
         item_ws = wb["borrow_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
         selected_item_ids = _normalize_request_item_ids(items)
         inventory_map = _active_inventory_rows_map(inventory_rows)
+        request_id = _next_id(request_rows)
         for item_id in selected_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
             if _borrow_status_uses_inventory(next_status):
-                _set_inventory_status(row, "2")
-        request_id = _next_id(request_rows)
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=row,
+                    item_id=item_id,
+                    status="2",
+                    action="create",
+                    entity="borrow_request",
+                    entity_id=request_id,
+                )
         request_rows.append(
             {
                 "id": request_id,
@@ -1556,6 +2035,7 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
         _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
         _write_rows(item_ws, SHEETS["borrow_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return request_id
 
@@ -1635,9 +2115,11 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
         request_ws = wb["borrow_requests"]
         item_ws = wb["borrow_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
         updated = False
         previous_status = ""
         for row in request_rows:
@@ -1673,18 +2155,50 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
         for item_id in new_item_ids - old_item_ids:
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
             if item_id in new_active_ids:
-                _set_inventory_status(row, "2")
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=row,
+                    item_id=item_id,
+                    status="2",
+                    action="update",
+                    entity="borrow_request",
+                    entity_id=request_id,
+                )
         for item_id in new_item_ids & old_item_ids:
             allowed_statuses = {"0", "2"} if item_id in old_active_ids else {"0"}
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses=allowed_statuses)
             if item_id in new_active_ids:
-                _set_inventory_status(row, "2")
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=row,
+                    item_id=item_id,
+                    status="2",
+                    action="update",
+                    entity="borrow_request",
+                    entity_id=request_id,
+                )
             else:
-                _set_inventory_status(row, "0")
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=row,
+                    item_id=item_id,
+                    status="0",
+                    action="update",
+                    entity="borrow_request",
+                    entity_id=request_id,
+                )
         for item_id in old_item_ids - new_item_ids:
             allowed_statuses = {"0", "2"} if item_id in old_active_ids else {"0"}
             row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses=allowed_statuses)
-            _set_inventory_status(row, "0")
+            _set_inventory_status_with_movement(
+                movement_rows=movement_rows,
+                row=row,
+                item_id=item_id,
+                status="0",
+                action="update",
+                entity="borrow_request",
+                entity_id=request_id,
+            )
 
         item_rows = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         next_item_id = _next_id(item_rows)
@@ -1701,6 +2215,7 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], items: 
         _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
         _write_rows(item_ws, SHEETS["borrow_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return True
 
@@ -1710,9 +2225,11 @@ def delete_borrow_request(request_id: int) -> bool:
         request_ws = wb["borrow_requests"]
         item_ws = wb["borrow_items"]
         inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
         inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
         remaining_requests = [row for row in request_rows if _to_int(row.get("id")) != request_id]
         deleted = len(remaining_requests) != len(request_rows)
         if not deleted:
@@ -1730,11 +2247,20 @@ def delete_borrow_request(request_id: int) -> bool:
             for old_item in old_items:
                 item_id = _to_int(old_item.get("item_id"))
                 row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"2"})
-                _set_inventory_status(row, "0")
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=row,
+                    item_id=item_id,
+                    status="0",
+                    action="delete",
+                    entity="borrow_request",
+                    entity_id=request_id,
+                )
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
         _write_rows(request_ws, SHEETS["borrow_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["borrow_items"], remaining_items)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return True
 

@@ -11,14 +11,17 @@ class TransactionConsistencyTests(unittest.TestCase):
         self._tmpdir = tempfile.TemporaryDirectory()
         self._original_db_path = db.DB_PATH
         self._original_lock_path = db.LOCK_PATH
+        self._original_log_archive_dir = db.LOG_ARCHIVE_DIR
 
         db.DB_PATH = Path(self._tmpdir.name) / "inventory.xlsx"
         db.LOCK_PATH = Path(self._tmpdir.name) / "inventory.xlsx.lock"
+        db.LOG_ARCHIVE_DIR = Path(self._tmpdir.name) / "log_archive"
         db.init_db()
 
     def tearDown(self) -> None:
         db.DB_PATH = self._original_db_path
         db.LOCK_PATH = self._original_lock_path
+        db.LOG_ARCHIVE_DIR = self._original_log_archive_dir
         self._tmpdir.cleanup()
 
     def _create_item(self, *, asset_status: str = "0", count: int = 1) -> int:
@@ -42,13 +45,14 @@ class TransactionConsistencyTests(unittest.TestCase):
         }
 
     def _borrow_payload(self, *, status: str) -> dict:
+        return_date = "2026-04-12" if status == "returned" else ""
         return {
             "borrower": "tester",
             "department": "qa",
             "purpose": "test",
             "borrow_date": "2026-04-10",
             "due_date": "2026-04-20",
-            "return_date": "",
+            "return_date": return_date,
             "status": status,
             "memo": "",
         }
