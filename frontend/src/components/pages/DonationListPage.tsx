@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { apiUrl } from '../../api'
@@ -57,6 +57,7 @@ export function DonationListPage() {
   const [pageSize, setPageSize] = useState(initialState.pageSize)
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
+  const listRequestSeqRef = useRef(0)
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -81,6 +82,9 @@ export function DonationListPage() {
   }, [keyword, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
+    const requestSeq = ++listRequestSeqRef.current
+    const controller = new AbortController()
+
     const loadRequests = async () => {
       setLoading(true)
       setLoadError('')
@@ -95,22 +99,35 @@ export function DonationListPage() {
           params.set('keyword', keyword.trim())
         }
 
-        const response = await fetch(apiUrl(`/api/donations?${params.toString()}`))
+        const response = await fetch(apiUrl(`/api/donations?${params.toString()}`), {
+          signal: controller.signal,
+        })
         if (!response.ok) {
           throw new Error('無法載入捐贈清單')
         }
         const payload = (await response.json()) as PaginatedResponse<DonationRequest>
+        if (listRequestSeqRef.current !== requestSeq) {
+          return
+        }
         setRequests(payload.items)
         setTotal(payload.total)
         setTotalPages(payload.total_pages)
       } catch {
+        if (controller.signal.aborted || listRequestSeqRef.current !== requestSeq) {
+          return
+        }
         setLoadError('目前無法讀取捐贈清單，請稍後重試。')
       } finally {
-        setLoading(false)
+        if (listRequestSeqRef.current === requestSeq) {
+          setLoading(false)
+        }
       }
     }
 
     void loadRequests()
+    return () => {
+      controller.abort()
+    }
   }, [keyword, sortBy, sortDir, page, pageSize])
 
   const sortableHeaders: Array<{ key: DonationSortKey; label: string }> = [

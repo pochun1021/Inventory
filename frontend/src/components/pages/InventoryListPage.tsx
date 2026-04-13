@@ -110,6 +110,7 @@ export function InventoryListPage() {
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
   const [confirmDeleteItem, setConfirmDeleteItem] = useState<InventoryItem | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const listRequestSeqRef = useRef(0)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const scanBufferRef = useRef<ScanBuffer>({ value: '', lastTs: 0 })
   const lastInputSourceRef = useRef<'manual' | 'scan'>('manual')
@@ -147,6 +148,9 @@ export function InventoryListPage() {
   }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
+    const requestSeq = ++listRequestSeqRef.current
+    const controller = new AbortController()
+
     const loadItems = async () => {
       setLoading(true)
       setLoadError('')
@@ -165,22 +169,35 @@ export function InventoryListPage() {
         if (selectedAssetType !== 'all') {
           params.set('asset_type', selectedAssetType)
         }
-        const response = await fetch(apiUrl(`/api/items?${params.toString()}`))
+        const response = await fetch(apiUrl(`/api/items?${params.toString()}`), {
+          signal: controller.signal,
+        })
         if (!response.ok) {
           throw new Error('無法載入財產清單')
         }
         const payload = (await response.json()) as PaginatedResponse<InventoryItem>
+        if (listRequestSeqRef.current !== requestSeq) {
+          return
+        }
         setItems(payload.items)
         setTotal(payload.total)
         setTotalPages(payload.total_pages)
       } catch {
+        if (controller.signal.aborted || listRequestSeqRef.current !== requestSeq) {
+          return
+        }
         setLoadError('目前無法讀取財產清單，請稍後重試。')
       } finally {
-        setLoading(false)
+        if (listRequestSeqRef.current === requestSeq) {
+          setLoading(false)
+        }
       }
     }
 
     void loadItems()
+    return () => {
+      controller.abort()
+    }
   }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize, reloadKey])
 
   useEffect(() => {
