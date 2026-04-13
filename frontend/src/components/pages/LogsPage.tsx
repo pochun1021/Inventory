@@ -288,6 +288,7 @@ export function LogsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</span>
           <DropdownMenu>
             <DropdownMenuTrigger>欄位顯示</DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -312,7 +313,7 @@ export function LogsPage() {
         </div>
       </div>
 
-      <div className="mb-4 grid gap-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] p-3 md:grid-cols-2 xl:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
+      <div className="mb-4 grid gap-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] p-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="grid gap-1.5">
           <Label htmlFor="logs-start-at">開始日期</Label>
           <Input
@@ -421,7 +422,6 @@ export function LogsPage() {
           </div>
         </div>
 
-        <div className="flex items-end text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</div>
       </div>
 
       {loading ? <p className="m-0 rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">資料載入中...</p> : null}
