@@ -1,7 +1,8 @@
+import json
 from datetime import date, datetime
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -409,6 +410,58 @@ def _normalize_log_scope(scope: str) -> str:
     return normalized
 
 
+def _normalize_sort_direction(sort_dir: str) -> str:
+    normalized = sort_dir.strip().lower()
+    if not normalized:
+        return "desc"
+    if normalized not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="sort_dir must be one of: asc, desc")
+    return normalized
+
+
+def _sort_records[T](
+    rows: list[T],
+    *,
+    sort_by: str,
+    sort_dir: str,
+    default_sort_by: str,
+    sort_key_map: dict[str, Callable[[T], Any]],
+) -> list[T]:
+    resolved_sort_by = sort_by.strip() or default_sort_by
+    if resolved_sort_by not in sort_key_map:
+        raise HTTPException(status_code=400, detail=f"invalid sort_by: {resolved_sort_by}")
+    return sorted(rows, key=sort_key_map[resolved_sort_by], reverse=sort_dir == "desc")
+
+
+def _serial_sort_key(item: InventoryItem) -> str:
+    return (item.n_property_sn or item.property_sn or item.n_item_sn or item.item_sn or "").strip().lower()
+
+
+def _request_items_sort_key(items: list[Any]) -> tuple[str, int, int]:
+    if not items:
+        return ("", 0, 0)
+    first_item = items[0]
+    first_item_name = _coerce_str(getattr(first_item, "item_name", "")).strip()
+    first_item_id = int(getattr(first_item, "item_id", 0) or 0)
+    first_item_label = first_item_name or (f"#{first_item_id}" if first_item_id else "")
+    item_count = len(items)
+    total_quantity = 0
+    for item in items:
+        quantity = getattr(item, "quantity", 0)
+        try:
+            total_quantity += int(quantity or 0)
+        except (TypeError, ValueError):
+            continue
+    return (first_item_label.lower(), item_count, total_quantity)
+
+
+def _operation_detail_sort_key(detail: dict[str, Any]) -> str:
+    try:
+        return json.dumps(detail, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return "{}"
+
+
 def _paginate_rows[T](rows: list[T], page: int, page_size: int) -> tuple[list[T], int, int]:
     total = len(rows)
     total_pages = max(1, math.ceil(total / page_size)) if total > 0 else 1
@@ -697,10 +750,13 @@ def get_inventory_items(
     keyword: str = "",
     asset_type: str = "all",
     correction_status: str = "all",
+    sort_by: str = "",
+    sort_dir: str = "desc",
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
+    normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = [row_to_item(row) for row in list_items(include_donated=include_donated)]
 
     normalized_keyword = keyword.strip().lower()
@@ -732,7 +788,24 @@ def get_inventory_items(
 
         filtered_rows.append(row)
 
-    paged_items, total, total_pages = _paginate_rows(filtered_rows, page, page_size)
+    sorted_rows = _sort_records(
+        filtered_rows,
+        sort_by=sort_by,
+        sort_dir=normalized_sort_dir,
+        default_sort_by="id",
+        sort_key_map={
+            "id": lambda row: row.id,
+            "asset_type": lambda row: (_coerce_str(row.asset_type).lower(), row.id),
+            "serial": lambda row: (_serial_sort_key(row), row.id),
+            "name": lambda row: (_coerce_str(row.name).lower(), _coerce_str(row.model).lower(), row.id),
+            "specification": lambda row: (_coerce_str(row.specification).lower(), row.id),
+            "location": lambda row: (_coerce_str(row.location).lower(), row.id),
+            "keeper": lambda row: (_coerce_str(row.keeper).lower(), row.id),
+            "asset_status": lambda row: (_coerce_str(row.asset_status).lower(), row.id),
+        },
+    )
+
+    paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
     log_inventory_action(
         action="read",
         entity="inventory_item",
@@ -825,10 +898,13 @@ def delete_inventory_item_api(item_id: int):
 @app.get("/api/issues", response_model=IssueRequestListResponse, response_model_by_alias=False)
 def list_issue_requests_api(
     keyword: str = "",
+    sort_by: str = "",
+    sort_dir: str = "desc",
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
+    normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = list_issue_requests()
     normalized_keyword = keyword.strip().lower()
     results: list[IssueRequest] = []
@@ -848,7 +924,22 @@ def list_issue_requests_api(
                 continue
         results.append(model)
 
-    paged_items, total, total_pages = _paginate_rows(results, page, page_size)
+    sorted_rows = _sort_records(
+        results,
+        sort_by=sort_by,
+        sort_dir=normalized_sort_dir,
+        default_sort_by="id",
+        sort_key_map={
+            "id": lambda row: row.id,
+            "request_date": lambda row: (_coerce_str(row.request_date), row.id),
+            "requester": lambda row: (_coerce_str(row.requester).lower(), _coerce_str(row.department).lower(), row.id),
+            "purpose": lambda row: (_coerce_str(row.purpose).lower(), row.id),
+            "items": lambda row: (_request_items_sort_key(row.items), row.id),
+            "memo": lambda row: (_coerce_str(row.memo).lower(), row.id),
+        },
+    )
+
+    paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
     log_inventory_action(
         action="read",
         entity="issue_request",
@@ -957,10 +1048,13 @@ def delete_issue_request_api(request_id: int, background_tasks: BackgroundTasks)
 def list_borrow_requests_api(
     keyword: str = "",
     status: str = "all",
+    sort_by: str = "",
+    sort_dir: str = "desc",
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
+    normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = list_borrow_requests()
     normalized_keyword = keyword.strip().lower()
     results: list[BorrowRequest] = []
@@ -982,7 +1076,29 @@ def list_borrow_requests_api(
                 continue
         results.append(model)
 
-    paged_items, total, total_pages = _paginate_rows(results, page, page_size)
+    sorted_rows = _sort_records(
+        results,
+        sort_by=sort_by,
+        sort_dir=normalized_sort_dir,
+        default_sort_by="id",
+        sort_key_map={
+            "id": lambda row: row.id,
+            "borrow_date": lambda row: (_coerce_str(row.borrow_date), row.id),
+            "borrower": lambda row: (_coerce_str(row.borrower).lower(), _coerce_str(row.department).lower(), row.id),
+            "purpose": lambda row: (_coerce_str(row.purpose).lower(), row.id),
+            "return_info": lambda row: (
+                _coerce_str(row.due_date),
+                _coerce_str(row.return_date),
+                _coerce_str(row.status).lower(),
+                int(bool(row.is_due_soon)),
+                row.id,
+            ),
+            "items": lambda row: (_request_items_sort_key(row.items), row.id),
+            "memo": lambda row: (_coerce_str(row.memo).lower(), row.id),
+        },
+    )
+
+    paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
     log_inventory_action(
         action="read",
         entity="borrow_request",
@@ -1090,10 +1206,13 @@ def delete_borrow_request_api(request_id: int, background_tasks: BackgroundTasks
 @app.get("/api/donations", response_model=DonationRequestListResponse, response_model_by_alias=False)
 def list_donation_requests_api(
     keyword: str = "",
+    sort_by: str = "",
+    sort_dir: str = "desc",
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
+    normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = list_donation_requests()
     normalized_keyword = keyword.strip().lower()
     results: list[DonationRequest] = []
@@ -1114,7 +1233,23 @@ def list_donation_requests_api(
                 continue
         results.append(model)
 
-    paged_items, total, total_pages = _paginate_rows(results, page, page_size)
+    sorted_rows = _sort_records(
+        results,
+        sort_by=sort_by,
+        sort_dir=normalized_sort_dir,
+        default_sort_by="id",
+        sort_key_map={
+            "id": lambda row: row.id,
+            "donation_date": lambda row: (_coerce_str(row.donation_date), row.id),
+            "donor": lambda row: (_coerce_str(row.donor).lower(), _coerce_str(row.department).lower(), row.id),
+            "recipient": lambda row: (_coerce_str(row.recipient).lower(), row.id),
+            "purpose": lambda row: (_coerce_str(row.purpose).lower(), row.id),
+            "items": lambda row: (_request_items_sort_key(row.items), row.id),
+            "memo": lambda row: (_coerce_str(row.memo).lower(), row.id),
+        },
+    )
+
+    paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
     log_inventory_action(
         action="read",
         entity="donation_request",
@@ -1235,11 +1370,14 @@ def list_movement_ledger_api(
     scope: str = "hot",
     item_id: int | None = None,
     entity_id: int | None = None,
+    sort_by: str = "",
+    sort_dir: str = "desc",
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
     normalized_scope = _normalize_log_scope(scope)
+    normalized_sort_dir = _normalize_sort_direction(sort_dir)
     archive_old_logs()
     start_time, end_time = _parse_datetime_range_filters(start_at, end_at)
     rows = list_movement_ledger(
@@ -1251,7 +1389,32 @@ def list_movement_ledger_api(
         entity_id=entity_id,
         scope=normalized_scope,
     )
-    paged_items, total, total_pages = _paginate_rows(rows, page, page_size)
+    sorted_rows = _sort_records(
+        rows,
+        sort_by=sort_by,
+        sort_dir=normalized_sort_dir,
+        default_sort_by="id",
+        sort_key_map={
+            "id": lambda row: int(row.get("id") or 0),
+            "created_at": lambda row: (_coerce_str(row.get("created_at")), int(row.get("id") or 0)),
+            "item": lambda row: (
+                _coerce_str(row.get("item_name")).lower(),
+                _coerce_str(row.get("item_model")).lower(),
+                int(row.get("item_id") or 0),
+            ),
+            "status_change": lambda row: (
+                _coerce_str(row.get("from_status")).lower(),
+                _coerce_str(row.get("to_status")).lower(),
+                int(row.get("id") or 0),
+            ),
+            "action": lambda row: (_coerce_str(row.get("action")).lower(), int(row.get("id") or 0)),
+            "entity": lambda row: (_coerce_str(row.get("entity")).lower(), int(row.get("id") or 0)),
+            "entity_id": lambda row: (int(row.get("entity_id") or 0), int(row.get("id") or 0)),
+            "operator": lambda row: (_coerce_str(row.get("operator")).lower(), int(row.get("id") or 0)),
+        },
+    )
+
+    paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
     models = [MovementLedgerEntry(**row) for row in paged_items]
     return MovementLedgerListResponse(items=models, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
@@ -1265,11 +1428,14 @@ def list_operation_logs_api(
     scope: str = "hot",
     item_id: int | None = None,
     entity_id: int | None = None,
+    sort_by: str = "",
+    sort_dir: str = "desc",
     page: int = Query(default=1),
     page_size: int = Query(default=10),
 ):
     page, page_size = _normalize_pagination(page, page_size)
     normalized_scope = _normalize_log_scope(scope)
+    normalized_sort_dir = _normalize_sort_direction(sort_dir)
     archive_old_logs()
     start_time, end_time = _parse_datetime_range_filters(start_at, end_at)
     rows = list_operation_logs(
@@ -1281,7 +1447,23 @@ def list_operation_logs_api(
         entity_id=entity_id,
         scope=normalized_scope,
     )
-    paged_items, total, total_pages = _paginate_rows(rows, page, page_size)
+    sorted_rows = _sort_records(
+        rows,
+        sort_by=sort_by,
+        sort_dir=normalized_sort_dir,
+        default_sort_by="id",
+        sort_key_map={
+            "id": lambda row: int(row.get("id") or 0),
+            "created_at": lambda row: (_coerce_str(row.get("created_at")), int(row.get("id") or 0)),
+            "action": lambda row: (_coerce_str(row.get("action")).lower(), int(row.get("id") or 0)),
+            "entity": lambda row: (_coerce_str(row.get("entity")).lower(), int(row.get("id") or 0)),
+            "entity_id": lambda row: (int(row.get("entity_id") or 0), int(row.get("id") or 0)),
+            "status": lambda row: (_coerce_str(row.get("status")).lower(), int(row.get("id") or 0)),
+            "detail": lambda row: (_operation_detail_sort_key(row.get("detail") or {}), int(row.get("id") or 0)),
+        },
+    )
+
+    paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
     models = [OperationLogEntry(**row) for row in paged_items]
     return OperationLogListResponse(items=models, page=page, page_size=page_size, total=total, total_pages=total_pages)
 

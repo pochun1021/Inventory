@@ -11,6 +11,7 @@ import type { MovementLedgerEntry, OperationLogEntry, PaginatedResponse } from '
 
 type LogTab = 'movements' | 'operations'
 type LogScope = 'hot' | 'all'
+type SortDirection = 'asc' | 'desc'
 
 type MovementColumnKey = 'id' | 'created_at' | 'item' | 'status_change' | 'action' | 'entity' | 'entity_id' | 'operator'
 type OperationColumnKey = 'id' | 'created_at' | 'action' | 'entity' | 'entity_id' | 'status' | 'detail'
@@ -27,6 +28,30 @@ type OperationColumnDef = {
   label: string
   render: (row: OperationLogEntry) => React.ReactNode
   cellClassName?: string
+}
+
+function parseSortDirection(value: string | null, fallback: SortDirection): SortDirection {
+  return value === 'asc' || value === 'desc' ? value : fallback
+}
+
+function parseMovementSortKey(value: string | null): MovementColumnKey | null {
+  const allowed: MovementColumnKey[] = ['id', 'created_at', 'item', 'status_change', 'action', 'entity', 'entity_id', 'operator']
+  return value && allowed.includes(value as MovementColumnKey) ? (value as MovementColumnKey) : null
+}
+
+function parseOperationSortKey(value: string | null): OperationColumnKey | null {
+  const allowed: OperationColumnKey[] = ['id', 'created_at', 'action', 'entity', 'entity_id', 'status', 'detail']
+  return value && allowed.includes(value as OperationColumnKey) ? (value as OperationColumnKey) : null
+}
+
+function readInitialSortState() {
+  const params = new URLSearchParams(window.location.search)
+  const sortBy = params.get('sort_by')
+  return {
+    movementSortBy: parseMovementSortKey(sortBy) ?? 'id',
+    operationSortBy: parseOperationSortKey(sortBy) ?? 'id',
+    sortDir: parseSortDirection(params.get('sort_dir'), 'desc'),
+  }
 }
 
 const movementColumns: MovementColumnDef[] = [
@@ -125,6 +150,7 @@ function safeJsonPreview(value: unknown): string {
 }
 
 export function LogsPage() {
+  const initialSort = readInitialSortState()
   const [tab, setTab] = useState<LogTab>('movements')
   const [scope, setScope] = useState<LogScope>('hot')
   const [startAt, setStartAt] = useState('')
@@ -141,6 +167,9 @@ export function LogsPage() {
   const [loadError, setLoadError] = useState('')
   const [movementRows, setMovementRows] = useState<MovementLedgerEntry[]>([])
   const [operationRows, setOperationRows] = useState<OperationLogEntry[]>([])
+  const [movementSortBy, setMovementSortBy] = useState<MovementColumnKey>(initialSort.movementSortBy)
+  const [operationSortBy, setOperationSortBy] = useState<OperationColumnKey>(initialSort.operationSortBy)
+  const [sortDir, setSortDir] = useState<SortDirection>(initialSort.sortDir)
   const [movementColumnVisibility, setMovementColumnVisibility] = useState<Record<MovementColumnKey, boolean>>({
     id: true,
     created_at: true,
@@ -173,6 +202,26 @@ export function LogsPage() {
     () => operationColumns.filter((column) => operationColumnVisibility[column.key]),
     [operationColumnVisibility],
   )
+
+  const activeSortBy = tab === 'movements' ? movementSortBy : operationSortBy
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const currentSortBy = tab === 'movements' ? movementSortBy : operationSortBy
+    if (currentSortBy !== 'id') {
+      params.set('sort_by', currentSortBy)
+    } else {
+      params.delete('sort_by')
+    }
+    if (sortDir !== 'desc') {
+      params.set('sort_dir', sortDir)
+    } else {
+      params.delete('sort_dir')
+    }
+    const queryString = params.toString()
+    const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
+    window.history.replaceState(null, '', url)
+  }, [tab, movementSortBy, operationSortBy, sortDir])
 
   function resetFilters() {
     setScope('hot')
@@ -214,6 +263,8 @@ export function LogsPage() {
           page: String(page),
           page_size: String(pageSize),
           scope,
+          sort_by: tab === 'movements' ? movementSortBy : operationSortBy,
+          sort_dir: sortDir,
         })
         if (startAt) {
           params.set('start_at', startAt)
@@ -259,7 +310,18 @@ export function LogsPage() {
     }
 
     void loadRows()
-  }, [endpoint, tab, scope, startAt, endAt, action, entity, itemId, entityId, page, pageSize])
+  }, [endpoint, tab, scope, startAt, endAt, action, entity, itemId, entityId, movementSortBy, operationSortBy, sortDir, page, pageSize])
+
+  function handleSortChange(nextSortBy: MovementColumnKey | OperationColumnKey) {
+    const isSameColumn = nextSortBy === activeSortBy
+    if (tab === 'movements') {
+      setMovementSortBy(nextSortBy as MovementColumnKey)
+    } else {
+      setOperationSortBy(nextSortBy as OperationColumnKey)
+    }
+    setSortDir((current) => (isSameColumn ? (current === 'asc' ? 'desc' : 'asc') : 'asc'))
+    setPage(1)
+  }
 
   return (
     <SectionCard>
@@ -434,7 +496,16 @@ export function LogsPage() {
               <TableHeader>
                 <TableRow>
                   {(tab === 'movements' ? visibleMovementColumns : visibleOperationColumns).map((column) => (
-                    <TableHead key={column.key}>{column.label}</TableHead>
+                    <TableHead key={column.key}>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 bg-transparent p-0 text-left font-semibold text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                        onClick={() => handleSortChange(column.key)}
+                      >
+                        {column.label}
+                        <span className="text-xs">{activeSortBy === column.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                      </button>
+                    </TableHead>
                   ))}
                 </TableRow>
               </TableHeader>

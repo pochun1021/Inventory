@@ -39,6 +39,9 @@ type ScanBuffer = {
   lastTs: number
 }
 
+type InventorySortKey = 'id' | 'asset_type' | 'serial' | 'name' | 'specification' | 'location' | 'keeper' | 'asset_status'
+type SortDirection = 'asc' | 'desc'
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
     return fallback
@@ -60,6 +63,15 @@ function parseBoolean(value: string | null, fallback: boolean): boolean {
   return fallback
 }
 
+function parseSortDirection(value: string | null, fallback: SortDirection): SortDirection {
+  return value === 'asc' || value === 'desc' ? value : fallback
+}
+
+function parseInventorySortKey(value: string | null, fallback: InventorySortKey): InventorySortKey {
+  const allowed: InventorySortKey[] = ['id', 'asset_type', 'serial', 'name', 'specification', 'location', 'keeper', 'asset_status']
+  return value && allowed.includes(value as InventorySortKey) ? (value as InventorySortKey) : fallback
+}
+
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   const correctionParam = params.get('correction_status')
@@ -70,6 +82,8 @@ function readInitialState() {
     selectedAssetType: params.get('asset_type') ?? 'all',
     selectedCorrectionStatus: correctionStatus as 'all' | 'needs_fix',
     showDonated: parseBoolean(params.get('include_donated'), false),
+    sortBy: parseInventorySortKey(params.get('sort_by'), 'id'),
+    sortDir: parseSortDirection(params.get('sort_dir'), 'desc'),
     page: parsePositiveInt(params.get('page'), 1),
     pageSize: parsePositiveInt(params.get('page_size'), 10),
   }
@@ -87,6 +101,8 @@ export function InventoryListPage() {
   const [selectedAssetType, setSelectedAssetType] = useState(initialState.selectedAssetType)
   const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>(initialState.selectedCorrectionStatus)
   const [showDonated, setShowDonated] = useState(initialState.showDonated)
+  const [sortBy, setSortBy] = useState<InventorySortKey>(initialState.sortBy)
+  const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
   const [pageSize, setPageSize] = useState(initialState.pageSize)
   const [total, setTotal] = useState(0)
@@ -113,6 +129,12 @@ export function InventoryListPage() {
     if (showDonated) {
       params.set('include_donated', 'true')
     }
+    if (sortBy !== 'id') {
+      params.set('sort_by', sortBy)
+    }
+    if (sortDir !== 'desc') {
+      params.set('sort_dir', sortDir)
+    }
     if (page !== 1) {
       params.set('page', String(page))
     }
@@ -122,7 +144,7 @@ export function InventoryListPage() {
     const queryString = params.toString()
     const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
     window.history.replaceState(null, '', url)
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, page, pageSize])
+  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
     const loadItems = async () => {
@@ -134,6 +156,8 @@ export function InventoryListPage() {
           page_size: String(pageSize),
           include_donated: String(showDonated),
           correction_status: selectedCorrectionStatus,
+          sort_by: sortBy,
+          sort_dir: sortDir,
         })
         if (keyword.trim()) {
           params.set('keyword', keyword.trim())
@@ -157,7 +181,7 @@ export function InventoryListPage() {
     }
 
     void loadItems()
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, page, pageSize, reloadKey])
+  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize, reloadKey])
 
   useEffect(() => {
     const loadAssetTypes = async () => {
@@ -231,6 +255,27 @@ export function InventoryListPage() {
 
   const getPrimarySerial = (item: InventoryItem) => {
     return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || ''
+  }
+
+  const sortableHeaders: Array<{ key: InventorySortKey; label: string }> = [
+    { key: 'id', label: '#' },
+    { key: 'asset_type', label: '資產類型' },
+    { key: 'serial', label: '財產序號' },
+    { key: 'name', label: '品名' },
+    { key: 'specification', label: '型號' },
+    { key: 'location', label: '放置地點' },
+    { key: 'keeper', label: '保管人' },
+    { key: 'asset_status', label: '資產狀態' },
+  ]
+
+  const handleSortChange = (nextSortBy: InventorySortKey) => {
+    if (sortBy === nextSortBy) {
+      setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(nextSortBy)
+      setSortDir('asc')
+    }
+    setPage(1)
   }
 
   const confirmDeleteLabel =
@@ -395,9 +440,19 @@ export function InventoryListPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {['#', '資產類型', '財產序號', '品名', '型號', '放置地點', '保管人', '資產狀態', '操作'].map((header) => (
-                      <TableHead key={header}>{header}</TableHead>
+                    {sortableHeaders.map((header) => (
+                      <TableHead key={header.key}>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 bg-transparent p-0 text-left font-semibold text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                          onClick={() => handleSortChange(header.key)}
+                        >
+                          {header.label}
+                          <span className="text-xs">{sortBy === header.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                        </button>
+                      </TableHead>
                     ))}
+                    <TableHead>操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

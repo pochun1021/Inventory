@@ -13,6 +13,9 @@ import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import type { BorrowRequest, PaginatedResponse } from './types'
 
+type BorrowSortKey = 'id' | 'borrow_date' | 'borrower' | 'purpose' | 'return_info' | 'items' | 'memo'
+type SortDirection = 'asc' | 'desc'
+
 const statusLabelMap: Record<string, string> = {
   borrowed: '借出中',
   returned: '已歸還',
@@ -40,6 +43,15 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return parsed
 }
 
+function parseSortDirection(value: string | null, fallback: SortDirection): SortDirection {
+  return value === 'asc' || value === 'desc' ? value : fallback
+}
+
+function parseBorrowSortKey(value: string | null, fallback: BorrowSortKey): BorrowSortKey {
+  const allowed: BorrowSortKey[] = ['id', 'borrow_date', 'borrower', 'purpose', 'return_info', 'items', 'memo']
+  return value && allowed.includes(value as BorrowSortKey) ? (value as BorrowSortKey) : fallback
+}
+
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   const statusParam = params.get('status')
@@ -49,6 +61,8 @@ function readInitialState() {
   return {
     keyword: params.get('keyword') ?? '',
     status,
+    sortBy: parseBorrowSortKey(params.get('sort_by'), 'id'),
+    sortDir: parseSortDirection(params.get('sort_dir'), 'desc'),
     page: parsePositiveInt(params.get('page'), 1),
     pageSize: parsePositiveInt(params.get('page_size'), 10),
   }
@@ -61,6 +75,8 @@ export function BorrowListPage() {
   const [loadError, setLoadError] = useState('')
   const [keyword, setKeyword] = useState(initialState.keyword)
   const [statusFilter, setStatusFilter] = useState<'all' | 'borrowed' | 'returned' | 'overdue'>(initialState.status)
+  const [sortBy, setSortBy] = useState<BorrowSortKey>(initialState.sortBy)
+  const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
   const [pageSize, setPageSize] = useState(initialState.pageSize)
   const [total, setTotal] = useState(0)
@@ -74,6 +90,12 @@ export function BorrowListPage() {
     if (statusFilter !== 'all') {
       params.set('status', statusFilter)
     }
+    if (sortBy !== 'id') {
+      params.set('sort_by', sortBy)
+    }
+    if (sortDir !== 'desc') {
+      params.set('sort_dir', sortDir)
+    }
     if (page !== 1) {
       params.set('page', String(page))
     }
@@ -83,7 +105,7 @@ export function BorrowListPage() {
     const queryString = params.toString()
     const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
     window.history.replaceState(null, '', url)
-  }, [keyword, statusFilter, page, pageSize])
+  }, [keyword, statusFilter, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -93,6 +115,8 @@ export function BorrowListPage() {
         const params = new URLSearchParams({
           page: String(page),
           page_size: String(pageSize),
+          sort_by: sortBy,
+          sort_dir: sortDir,
         })
         if (keyword.trim()) {
           params.set('keyword', keyword.trim())
@@ -117,7 +141,27 @@ export function BorrowListPage() {
     }
 
     void loadRequests()
-  }, [keyword, statusFilter, page, pageSize])
+  }, [keyword, statusFilter, sortBy, sortDir, page, pageSize])
+
+  const sortableHeaders: Array<{ key: BorrowSortKey; label: string }> = [
+    { key: 'id', label: '#' },
+    { key: 'borrow_date', label: '借用日期' },
+    { key: 'borrower', label: '借用人/單位' },
+    { key: 'purpose', label: '用途' },
+    { key: 'return_info', label: '歸還資訊' },
+    { key: 'items', label: '品項' },
+    { key: 'memo', label: '備註' },
+  ]
+
+  const handleSortChange = (nextSortBy: BorrowSortKey) => {
+    if (sortBy === nextSortBy) {
+      setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(nextSortBy)
+      setSortDir('asc')
+    }
+    setPage(1)
+  }
 
   return (
     <>
@@ -173,8 +217,17 @@ export function BorrowListPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {['#', '借用日期', '借用人/單位', '用途', '歸還資訊', '品項', '備註'].map((header) => (
-                      <TableHead key={header}>{header}</TableHead>
+                    {sortableHeaders.map((header) => (
+                      <TableHead key={header.key}>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 bg-transparent p-0 text-left font-semibold text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                          onClick={() => handleSortChange(header.key)}
+                        >
+                          {header.label}
+                          <span className="text-xs">{sortBy === header.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                        </button>
+                      </TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>

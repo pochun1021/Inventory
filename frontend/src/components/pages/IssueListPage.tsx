@@ -11,6 +11,9 @@ import { SectionCard } from '../ui/section-card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import type { IssueRequest, PaginatedResponse } from './types'
 
+type IssueSortKey = 'id' | 'request_date' | 'requester' | 'purpose' | 'items' | 'memo'
+type SortDirection = 'asc' | 'desc'
+
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
     return fallback
@@ -22,10 +25,21 @@ function parsePositiveInt(value: string | null, fallback: number): number {
   return parsed
 }
 
+function parseSortDirection(value: string | null, fallback: SortDirection): SortDirection {
+  return value === 'asc' || value === 'desc' ? value : fallback
+}
+
+function parseIssueSortKey(value: string | null, fallback: IssueSortKey): IssueSortKey {
+  const allowed: IssueSortKey[] = ['id', 'request_date', 'requester', 'purpose', 'items', 'memo']
+  return value && allowed.includes(value as IssueSortKey) ? (value as IssueSortKey) : fallback
+}
+
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   return {
     keyword: params.get('keyword') ?? '',
+    sortBy: parseIssueSortKey(params.get('sort_by'), 'id'),
+    sortDir: parseSortDirection(params.get('sort_dir'), 'desc'),
     page: parsePositiveInt(params.get('page'), 1),
     pageSize: parsePositiveInt(params.get('page_size'), 10),
   }
@@ -37,6 +51,8 @@ export function IssueListPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [keyword, setKeyword] = useState(initialState.keyword)
+  const [sortBy, setSortBy] = useState<IssueSortKey>(initialState.sortBy)
+  const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
   const [pageSize, setPageSize] = useState(initialState.pageSize)
   const [total, setTotal] = useState(0)
@@ -47,6 +63,12 @@ export function IssueListPage() {
     if (keyword.trim()) {
       params.set('keyword', keyword.trim())
     }
+    if (sortBy !== 'id') {
+      params.set('sort_by', sortBy)
+    }
+    if (sortDir !== 'desc') {
+      params.set('sort_dir', sortDir)
+    }
     if (page !== 1) {
       params.set('page', String(page))
     }
@@ -56,7 +78,7 @@ export function IssueListPage() {
     const queryString = params.toString()
     const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
     window.history.replaceState(null, '', url)
-  }, [keyword, page, pageSize])
+  }, [keyword, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
     const loadRequests = async () => {
@@ -66,6 +88,8 @@ export function IssueListPage() {
         const params = new URLSearchParams({
           page: String(page),
           page_size: String(pageSize),
+          sort_by: sortBy,
+          sort_dir: sortDir,
         })
         if (keyword.trim()) {
           params.set('keyword', keyword.trim())
@@ -87,7 +111,26 @@ export function IssueListPage() {
     }
 
     void loadRequests()
-  }, [keyword, page, pageSize])
+  }, [keyword, sortBy, sortDir, page, pageSize])
+
+  const sortableHeaders: Array<{ key: IssueSortKey; label: string }> = [
+    { key: 'id', label: '#' },
+    { key: 'request_date', label: '領用日期' },
+    { key: 'requester', label: '領用人/單位' },
+    { key: 'purpose', label: '用途' },
+    { key: 'items', label: '品項' },
+    { key: 'memo', label: '備註' },
+  ]
+
+  const handleSortChange = (nextSortBy: IssueSortKey) => {
+    if (sortBy === nextSortBy) {
+      setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortBy(nextSortBy)
+      setSortDir('asc')
+    }
+    setPage(1)
+  }
 
   return (
     <>
@@ -127,8 +170,17 @@ export function IssueListPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {['#', '領用日期', '領用人/單位', '用途', '品項', '備註'].map((header) => (
-                      <TableHead key={header}>{header}</TableHead>
+                    {sortableHeaders.map((header) => (
+                      <TableHead key={header.key}>
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 bg-transparent p-0 text-left font-semibold text-[hsl(var(--muted-foreground))] hover:text-[hsl(var(--foreground))]"
+                          onClick={() => handleSortChange(header.key)}
+                        >
+                          {header.label}
+                          <span className="text-xs">{sortBy === header.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                        </button>
+                      </TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
