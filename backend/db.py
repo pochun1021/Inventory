@@ -773,6 +773,134 @@ def get_pending_fix_count() -> int:
     )
 
 
+def _parse_request_date_value(value: Any) -> int:
+    raw = _to_str(value).strip()
+    if not raw:
+        return 0
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return int(datetime.strptime(raw, fmt).timestamp())
+        except ValueError:
+            continue
+    return 0
+
+
+def get_dashboard_snapshot() -> dict[str, Any]:
+    with _locked_workbook() as wb:
+        inventory_rows = _read_rows(wb["inventory_items"])
+        issue_request_rows = _read_rows(wb["issue_requests"])
+        issue_item_rows = _read_rows(wb["issue_items"])
+        borrow_request_rows = _read_rows(wb["borrow_requests"])
+        borrow_item_rows = _read_rows(wb["borrow_items"])
+        donation_request_rows = _read_rows(wb["donation_requests"])
+        donation_item_rows = _read_rows(wb["donation_items"])
+
+    active_inventory_rows = [row for row in inventory_rows if _is_blank(row.get("deleted_at"))]
+    donation_map = _donation_map(donation_item_rows, donation_request_rows)
+
+    pending_fix_count = 0
+    donated_count = 0
+    category_counts: dict[str, int] = {}
+    for row in active_inventory_rows:
+        serial = _inventory_property_number(row)
+        if _is_blank(serial) or _has_cjk(serial):
+            pending_fix_count += 1
+        donation_info = donation_map.get(_to_int(row.get("id")))
+        if _is_item_donated(row, donation_info=donation_info):
+            donated_count += 1
+            continue
+        if _to_str(row.get("asset_status")).strip() == "0":
+            item_name = _to_str(row.get("name")).strip() or "未命名品項"
+            category_counts[item_name] = category_counts.get(item_name, 0) + 1
+
+    issue_item_count_map: dict[int, int] = {}
+    for row in issue_item_rows:
+        request_id = _to_int(row.get("request_id"))
+        issue_item_count_map[request_id] = issue_item_count_map.get(request_id, 0) + 1
+
+    borrow_item_count_map: dict[int, int] = {}
+    for row in borrow_item_rows:
+        request_id = _to_int(row.get("request_id"))
+        borrow_item_count_map[request_id] = borrow_item_count_map.get(request_id, 0) + 1
+
+    donation_item_count_map: dict[int, int] = {}
+    for row in donation_item_rows:
+        request_id = _to_int(row.get("request_id"))
+        donation_item_count_map[request_id] = donation_item_count_map.get(request_id, 0) + 1
+
+    activities: list[dict[str, Any]] = []
+    for row in issue_request_rows:
+        request_id = _to_int(row.get("id"))
+        item_count = issue_item_count_map.get(request_id, 0)
+        activities.append(
+            {
+                "key": f"issue-{request_id}",
+                "type": "領用",
+                "dateLabel": _to_str(row.get("request_date")).strip() or "--",
+                "dateValue": _parse_request_date_value(row.get("request_date")),
+                "actor": _to_str(row.get("requester")).strip() or "未填寫",
+                "summary": f"{item_count} 項品類" if item_count > 0 else "無品項資料",
+                "requestId": str(request_id),
+            }
+        )
+
+    overdue_borrow_count = 0
+    due_soon_borrow_count = 0
+    for row in borrow_request_rows:
+        _normalize_borrow_status_in_place(row)
+        status = _to_str(row.get("status")).strip()
+        request_id = _to_int(row.get("id"))
+        item_count = borrow_item_count_map.get(request_id, 0)
+        if status == "overdue":
+            overdue_borrow_count += 1
+        if _is_due_soon(
+            due_date_value=row.get("due_date"),
+            return_date_value=row.get("return_date"),
+        ):
+            due_soon_borrow_count += 1
+        activities.append(
+            {
+                "key": f"borrow-{request_id}",
+                "type": "借用",
+                "dateLabel": _to_str(row.get("borrow_date")).strip() or "--",
+                "dateValue": _parse_request_date_value(row.get("borrow_date")),
+                "actor": _to_str(row.get("borrower")).strip() or "未填寫",
+                "summary": f"{item_count} 項品類 · {status or '--'}" if item_count > 0 else f"無品項資料 · {status or '--'}",
+                "requestId": str(request_id),
+            }
+        )
+
+    for row in donation_request_rows:
+        request_id = _to_int(row.get("id"))
+        item_count = donation_item_count_map.get(request_id, 0)
+        activities.append(
+            {
+                "key": f"donation-{request_id}",
+                "type": "捐贈",
+                "dateLabel": _to_str(row.get("donation_date")).strip() or "--",
+                "dateValue": _parse_request_date_value(row.get("donation_date")),
+                "actor": _to_str(row.get("donor")).strip() or "未填寫",
+                "summary": f"{item_count} 項品類" if item_count > 0 else "無品項資料",
+                "requestId": str(request_id),
+            }
+        )
+
+    activities.sort(key=lambda row: (int(row.get("dateValue") or 0), _to_str(row.get("key"))), reverse=True)
+    top_categories = sorted(category_counts.items(), key=lambda item: (-item[1], item[0]))
+    return {
+        "status": "success",
+        "data": "這是管理系統的後端數據",
+        "items": len(active_inventory_rows),
+        "pendingFix": pending_fix_count,
+        "totalRecords": len(issue_request_rows) + len(borrow_request_rows) + len(donation_request_rows),
+        "overdueBorrowCount": overdue_borrow_count,
+        "dueSoonBorrowCount": due_soon_borrow_count,
+        "donatedItemsCount": donated_count,
+        "itemCategoryDistribution": [{"name": name, "count": count} for name, count in top_categories],
+        "recentActivities": activities[:8],
+    }
+
+
 def list_items(*, include_donated: bool = False) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         rows = _read_rows(wb["inventory_items"])
@@ -1521,11 +1649,8 @@ def get_issue_request(request_id: int) -> dict[str, Any] | None:
     return None
 
 
-def list_issue_items(request_id: int) -> list[dict[str, Any]]:
-    with _locked_workbook() as wb:
-        item_rows = _read_rows(wb["issue_items"])
-        inventory_rows = _read_rows(wb["inventory_items"])
-    inventory_map = {
+def _active_inventory_detail_map(inventory_rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {
         _to_int(row.get("id")): {
             "item_name": row.get("name", ""),
             "item_model": row.get("model", ""),
@@ -1533,12 +1658,23 @@ def list_issue_items(request_id: int) -> list[dict[str, Any]]:
         for row in inventory_rows
         if _is_blank(row.get("deleted_at"))
     }
-    results = []
+
+
+def list_issue_items_map(request_ids: set[int] | None = None) -> dict[int, list[dict[str, Any]]]:
+    with _locked_workbook() as wb:
+        item_rows = _read_rows(wb["issue_items"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+
+    inventory_map = _active_inventory_detail_map(inventory_rows)
+    selected_ids = request_ids or set()
+    results: dict[int, list[dict[str, Any]]] = {}
     for row in item_rows:
-        if _to_int(row.get("request_id")) != request_id:
+        request_id = _to_int(row.get("request_id"))
+        if selected_ids and request_id not in selected_ids:
             continue
-        details = inventory_map.get(_to_int(row.get("item_id")), {"item_name": None, "item_model": None})
-        results.append(
+        item_id = _to_int(row.get("item_id"))
+        details = inventory_map.get(item_id, {"item_name": None, "item_model": None})
+        results.setdefault(request_id, []).append(
             {
                 "id": row.get("id"),
                 "request_id": row.get("request_id"),
@@ -1549,7 +1685,14 @@ def list_issue_items(request_id: int) -> list[dict[str, Any]]:
                 "item_model": details.get("item_model"),
             }
         )
-    return sorted(results, key=lambda row: _to_int(row.get("id")))
+
+    for grouped_rows in results.values():
+        grouped_rows.sort(key=lambda row: _to_int(row.get("id")))
+    return results
+
+
+def list_issue_items(request_id: int) -> list[dict[str, Any]]:
+    return list_issue_items_map({request_id}).get(request_id, [])
 
 
 def update_issue_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
@@ -1748,24 +1891,21 @@ def get_donation_request(request_id: int) -> dict[str, Any] | None:
     return None
 
 
-def list_donation_items(request_id: int) -> list[dict[str, Any]]:
+def list_donation_items_map(request_ids: set[int] | None = None) -> dict[int, list[dict[str, Any]]]:
     with _locked_workbook() as wb:
         item_rows = _read_rows(wb["donation_items"])
         inventory_rows = _read_rows(wb["inventory_items"])
-    inventory_map = {
-        _to_int(row.get("id")): {
-            "item_name": row.get("name", ""),
-            "item_model": row.get("model", ""),
-        }
-        for row in inventory_rows
-        if _is_blank(row.get("deleted_at"))
-    }
-    results = []
+
+    inventory_map = _active_inventory_detail_map(inventory_rows)
+    selected_ids = request_ids or set()
+    results: dict[int, list[dict[str, Any]]] = {}
     for row in item_rows:
-        if _to_int(row.get("request_id")) != request_id:
+        request_id = _to_int(row.get("request_id"))
+        if selected_ids and request_id not in selected_ids:
             continue
-        details = inventory_map.get(_to_int(row.get("item_id")), {"item_name": None, "item_model": None})
-        results.append(
+        item_id = _to_int(row.get("item_id"))
+        details = inventory_map.get(item_id, {"item_name": None, "item_model": None})
+        results.setdefault(request_id, []).append(
             {
                 "id": row.get("id"),
                 "request_id": row.get("request_id"),
@@ -1776,7 +1916,14 @@ def list_donation_items(request_id: int) -> list[dict[str, Any]]:
                 "item_model": details.get("item_model"),
             }
         )
-    return sorted(results, key=lambda row: _to_int(row.get("id")))
+
+    for grouped_rows in results.values():
+        grouped_rows.sort(key=lambda row: _to_int(row.get("id")))
+    return results
+
+
+def list_donation_items(request_id: int) -> list[dict[str, Any]]:
+    return list_donation_items_map({request_id}).get(request_id, [])
 
 
 def update_donation_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
@@ -2075,24 +2222,21 @@ def get_borrow_request(request_id: int) -> dict[str, Any] | None:
     return _to_borrow_api_row(target_row)
 
 
-def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
+def list_borrow_items_map(request_ids: set[int] | None = None) -> dict[int, list[dict[str, Any]]]:
     with _locked_workbook() as wb:
         item_rows = _read_rows(wb["borrow_items"])
         inventory_rows = _read_rows(wb["inventory_items"])
-    inventory_map = {
-        _to_int(row.get("id")): {
-            "item_name": row.get("name", ""),
-            "item_model": row.get("model", ""),
-        }
-        for row in inventory_rows
-        if _is_blank(row.get("deleted_at"))
-    }
-    results = []
+
+    inventory_map = _active_inventory_detail_map(inventory_rows)
+    selected_ids = request_ids or set()
+    results: dict[int, list[dict[str, Any]]] = {}
     for row in item_rows:
-        if _to_int(row.get("request_id")) != request_id:
+        request_id = _to_int(row.get("request_id"))
+        if selected_ids and request_id not in selected_ids:
             continue
-        details = inventory_map.get(_to_int(row.get("item_id")), {"item_name": None, "item_model": None})
-        results.append(
+        item_id = _to_int(row.get("item_id"))
+        details = inventory_map.get(item_id, {"item_name": None, "item_model": None})
+        results.setdefault(request_id, []).append(
             {
                 "id": row.get("id"),
                 "request_id": row.get("request_id"),
@@ -2103,7 +2247,14 @@ def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
                 "item_model": details.get("item_model"),
             }
         )
-    return sorted(results, key=lambda row: _to_int(row.get("id")))
+
+    for grouped_rows in results.values():
+        grouped_rows.sort(key=lambda row: _to_int(row.get("id")))
+    return results
+
+
+def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
+    return list_borrow_items_map({request_id}).get(request_id, [])
 
 
 def update_borrow_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:

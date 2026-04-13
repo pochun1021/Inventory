@@ -129,6 +129,27 @@ class ListSortingApiTests(unittest.TestCase):
             app_main.get_inventory_items(sort_by="not_a_field", sort_dir="asc", page=1, page_size=10)
         self.assertEqual(exc.exception.status_code, 400)
 
+    def test_dashboard_data_includes_aggregated_fields(self) -> None:
+        item_id = self._create_item(name="Lens")
+        app_main.create_issue_request_api(
+            app_main.IssueRequestCreate(
+                requester="tester",
+                department="qa",
+                purpose="dash",
+                request_date="2026-04-10",
+                memo="",
+                items=[{"item_id": item_id, "quantity": 1, "note": ""}],
+            ),
+            app_main.BackgroundTasks(),
+        )
+
+        payload = app_main.get_dashboard_data()
+        self.assertEqual(payload["status"], "success")
+        self.assertIn("totalRecords", payload)
+        self.assertIn("itemCategoryDistribution", payload)
+        self.assertIn("recentActivities", payload)
+        self.assertGreaterEqual(payload["totalRecords"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

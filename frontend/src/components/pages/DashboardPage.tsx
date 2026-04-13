@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   ArrowRight,
@@ -11,7 +11,7 @@ import {
   Server,
 } from 'lucide-react'
 import { apiUrl } from '../../api'
-import type { BorrowRequest, DashboardPayload, DonationRequest, InventoryItem, IssueRequest, PaginatedResponse } from './types'
+import type { DashboardPayload } from './types'
 import { Badge } from '../ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card'
 
@@ -25,11 +25,6 @@ type RecentActivity = {
   requestId: string
 }
 
-type ItemCategoryDistribution = {
-  name: string
-  count: number
-}
-
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(apiUrl(path))
   if (!response.ok) {
@@ -38,28 +33,8 @@ async function fetchJson<T>(path: string): Promise<T> {
   return (await response.json()) as T
 }
 
-function parseDateValue(dateString: string | null | undefined): number {
-  if (!dateString) {
-    return 0
-  }
-  const parsedDate = Date.parse(dateString)
-  return Number.isNaN(parsedDate) ? 0 : parsedDate
-}
-
-function summarizeItems(itemCount: number): string {
-  return itemCount > 0 ? `${itemCount} 項品類` : '無品項資料'
-}
-
-function toDisplayDate(dateString: string | null | undefined): string {
-  return dateString?.trim() ? dateString : '--'
-}
-
 export function DashboardPage() {
   const [dashboardData, setDashboardData] = useState<DashboardPayload | null>(null)
-  const [items, setItems] = useState<InventoryItem[]>([])
-  const [issues, setIssues] = useState<IssueRequest[]>([])
-  const [borrows, setBorrows] = useState<BorrowRequest[]>([])
-  const [donations, setDonations] = useState<DonationRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
@@ -68,19 +43,8 @@ export function DashboardPage() {
       setLoading(true)
       setLoadError('')
       try {
-        const [dashboardPayload, inventoryPayload, issuePayload, borrowPayload, donationPayload] = await Promise.all([
-          fetchJson<DashboardPayload>('/api/data'),
-          fetchJson<PaginatedResponse<InventoryItem>>('/api/items?include_donated=true&page=1&page_size=100000'),
-          fetchJson<PaginatedResponse<IssueRequest>>('/api/issues?page=1&page_size=100000'),
-          fetchJson<PaginatedResponse<BorrowRequest>>('/api/borrows?page=1&page_size=100000'),
-          fetchJson<PaginatedResponse<DonationRequest>>('/api/donations?page=1&page_size=100000'),
-        ])
-
+        const dashboardPayload = await fetchJson<DashboardPayload>('/api/data')
         setDashboardData(dashboardPayload)
-        setItems(inventoryPayload.items)
-        setIssues(issuePayload.items)
-        setBorrows(borrowPayload.items)
-        setDonations(donationPayload.items)
       } catch {
         setLoadError('目前無法完整讀取 Dashboard，請稍後再試。')
       } finally {
@@ -91,70 +55,14 @@ export function DashboardPage() {
     void loadDashboard()
   }, [])
 
-  const itemCategoryDistribution = useMemo<ItemCategoryDistribution[]>(() => {
-    const groupedCounts = new Map<string, number>()
-    for (const item of items) {
-      if (item.asset_status?.trim() !== '0') {
-        continue
-      }
-      const itemName = item.name?.trim() || '未命名品項'
-      groupedCounts.set(itemName, (groupedCounts.get(itemName) ?? 0) + 1)
-    }
-
-    return Array.from(groupedCounts.entries())
-      .map(([name, count]) => ({
-        name,
-        count,
-      }))
-      .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
-  }, [items])
-
-  const recentActivities = useMemo<RecentActivity[]>(() => {
-    const issueActivities = issues.map<RecentActivity>((request) => ({
-      key: `issue-${request.id}`,
-      type: '領用',
-      dateLabel: toDisplayDate(request.request_date),
-      dateValue: parseDateValue(request.request_date),
-      actor: request.requester?.trim() || '未填寫',
-      summary: summarizeItems(request.items.length),
-      requestId: String(request.id),
-    }))
-
-    const borrowActivities = borrows.map<RecentActivity>((request) => ({
-      key: `borrow-${request.id}`,
-      type: '借用',
-      dateLabel: toDisplayDate(request.borrow_date),
-      dateValue: parseDateValue(request.borrow_date),
-      actor: request.borrower?.trim() || '未填寫',
-      summary: `${summarizeItems(request.items.length)} · ${request.status || '--'}`,
-      requestId: String(request.id),
-    }))
-
-    const donationActivities = donations.map<RecentActivity>((request) => ({
-      key: `donation-${request.id}`,
-      type: '捐贈',
-      dateLabel: toDisplayDate(request.donation_date),
-      dateValue: parseDateValue(request.donation_date),
-      actor: request.donor?.trim() || '未填寫',
-      summary: summarizeItems(request.items.length),
-      requestId: String(request.id),
-    }))
-
-    return [...issueActivities, ...borrowActivities, ...donationActivities]
-      .sort((left, right) => {
-        if (left.dateValue === right.dateValue) {
-          return right.key.localeCompare(left.key)
-        }
-        return right.dateValue - left.dateValue
-      })
-      .slice(0, 8)
-  }, [borrows, donations, issues])
+  const itemCategoryDistribution = dashboardData?.itemCategoryDistribution ?? []
+  const recentActivities: RecentActivity[] = dashboardData?.recentActivities ?? []
 
   const pendingFixCount = dashboardData?.pendingFix ?? 0
-  const totalRecords = issues.length + borrows.length + donations.length
-  const overdueBorrowCount = borrows.filter((request) => request.status === 'overdue').length
-  const dueSoonBorrowCount = borrows.filter((request) => request.is_due_soon).length
-  const donatedItemsCount = items.filter((item) => item.asset_status?.trim() === '3').length
+  const totalRecords = dashboardData?.totalRecords ?? 0
+  const overdueBorrowCount = dashboardData?.overdueBorrowCount ?? 0
+  const dueSoonBorrowCount = dashboardData?.dueSoonBorrowCount ?? 0
+  const donatedItemsCount = dashboardData?.donatedItemsCount ?? 0
   const maxCategoryCount = itemCategoryDistribution[0]?.count ?? 1
 
   const kpiCards = [
@@ -166,7 +74,7 @@ export function DashboardPage() {
     },
     {
       label: '資產總數',
-      value: String(dashboardData?.items ?? items.length),
+      value: String(dashboardData?.items ?? 0),
       hint: '含現有與已捐贈資產',
       icon: <Boxes className="size-4 text-[hsl(var(--muted-foreground))]" />,
     },

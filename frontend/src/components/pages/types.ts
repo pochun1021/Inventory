@@ -3,6 +3,20 @@ export type DashboardPayload = {
   data: string
   items: number
   pendingFix: number
+  totalRecords?: number
+  overdueBorrowCount?: number
+  dueSoonBorrowCount?: number
+  donatedItemsCount?: number
+  itemCategoryDistribution?: Array<{ name: string; count: number }>
+  recentActivities?: Array<{
+    key: string
+    type: '領用' | '借用' | '捐贈'
+    dateLabel: string
+    dateValue: number
+    actor: string
+    summary: string
+    requestId: string
+  }>
 }
 
 export type PaginatedResponse<T> = {

@@ -23,18 +23,20 @@ from db import (
     delete_borrow_request,
     delete_donation_request,
     get_item_by_id,
-    get_items_count,
     get_issue_request,
     get_borrow_request,
     get_donation_request,
-    get_pending_fix_count,
+    get_dashboard_snapshot,
     init_db,
     list_asset_status_codes,
     list_issue_items,
+    list_issue_items_map,
     list_issue_requests,
     list_borrow_items,
+    list_borrow_items_map,
     list_borrow_requests,
     list_donation_items,
+    list_donation_items_map,
     list_donation_requests,
     list_items,
     list_movement_ledger,
@@ -690,7 +692,7 @@ def on_startup() -> None:
 
 @app.get("/api/data")
 def get_dashboard_data():
-    return {"status": "success", "data": "這是管理系統的後端數據", "items": get_items_count(), "pendingFix": get_pending_fix_count()}
+    return get_dashboard_snapshot()
 
 
 @app.get("/api/lookups/asset-status", response_model=list[AssetStatusCode], response_model_by_alias=False)
@@ -806,11 +808,6 @@ def get_inventory_items(
     )
 
     paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
-    log_inventory_action(
-        action="read",
-        entity="inventory_item",
-        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
-    )
     return InventoryItemListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
@@ -906,10 +903,12 @@ def list_issue_requests_api(
     page, page_size = _normalize_pagination(page, page_size)
     normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = list_issue_requests()
+    request_ids = {int(row.get("id") or 0) for row in rows}
+    request_item_map = list_issue_items_map(request_ids)
     normalized_keyword = keyword.strip().lower()
     results: list[IssueRequest] = []
     for row in rows:
-        items = [row_to_issue_item(item) for item in list_issue_items(row["id"])]
+        items = [row_to_issue_item(item) for item in request_item_map.get(int(row.get("id") or 0), [])]
         model = issue_request_row_to_model(row, items)
         if normalized_keyword:
             item_matches = any((item.item_name or "").lower().find(normalized_keyword) >= 0 for item in model.items)
@@ -940,11 +939,6 @@ def list_issue_requests_api(
     )
 
     paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
-    log_inventory_action(
-        action="read",
-        entity="issue_request",
-        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
-    )
     return IssueRequestListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
@@ -1056,10 +1050,12 @@ def list_borrow_requests_api(
     page, page_size = _normalize_pagination(page, page_size)
     normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = list_borrow_requests()
+    request_ids = {int(row.get("id") or 0) for row in rows}
+    request_item_map = list_borrow_items_map(request_ids)
     normalized_keyword = keyword.strip().lower()
     results: list[BorrowRequest] = []
     for row in rows:
-        items = [row_to_borrow_item(item) for item in list_borrow_items(row["id"])]
+        items = [row_to_borrow_item(item) for item in request_item_map.get(int(row.get("id") or 0), [])]
         model = borrow_request_row_to_model(row, items)
         if status != "all" and model.status != status:
             continue
@@ -1099,11 +1095,6 @@ def list_borrow_requests_api(
     )
 
     paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
-    log_inventory_action(
-        action="read",
-        entity="borrow_request",
-        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
-    )
     return BorrowRequestListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
@@ -1214,10 +1205,12 @@ def list_donation_requests_api(
     page, page_size = _normalize_pagination(page, page_size)
     normalized_sort_dir = _normalize_sort_direction(sort_dir)
     rows = list_donation_requests()
+    request_ids = {int(row.get("id") or 0) for row in rows}
+    request_item_map = list_donation_items_map(request_ids)
     normalized_keyword = keyword.strip().lower()
     results: list[DonationRequest] = []
     for row in rows:
-        items = [row_to_donation_item(item) for item in list_donation_items(row["id"])]
+        items = [row_to_donation_item(item) for item in request_item_map.get(int(row.get("id") or 0), [])]
         model = donation_request_row_to_model(row, items)
         if normalized_keyword:
             item_matches = any((item.item_name or "").lower().find(normalized_keyword) >= 0 for item in model.items)
@@ -1250,11 +1243,6 @@ def list_donation_requests_api(
     )
 
     paged_items, total, total_pages = _paginate_rows(sorted_rows, page, page_size)
-    log_inventory_action(
-        action="read",
-        entity="donation_request",
-        detail={"count": len(paged_items), "total": total, "page": page, "page_size": page_size, "mode": "list"},
-    )
     return DonationRequestListResponse(items=paged_items, page=page, page_size=page_size, total=total, total_pages=total_pages)
 
 
