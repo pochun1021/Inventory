@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
 import { DataPagination } from '../ui/data-pagination'
 import { Button } from '../ui/button'
-import { FilterBar } from '../ui/filter-bar'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
@@ -12,40 +12,109 @@ import type { MovementLedgerEntry, OperationLogEntry, PaginatedResponse } from '
 type LogTab = 'movements' | 'operations'
 type LogScope = 'hot' | 'all'
 
-function parsePositiveInt(value: string | null, fallback: number): number {
-  if (!value) {
-    return fallback
-  }
-  const parsed = Number(value)
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    return fallback
-  }
-  return parsed
+type MovementColumnKey = 'id' | 'created_at' | 'item' | 'status_change' | 'action' | 'entity' | 'entity_id' | 'operator'
+type OperationColumnKey = 'id' | 'created_at' | 'action' | 'entity' | 'entity_id' | 'status' | 'detail'
+
+type MovementColumnDef = {
+  key: MovementColumnKey
+  label: string
+  render: (row: MovementLedgerEntry) => React.ReactNode
+  cellClassName?: string
 }
 
-function parseInitialTab(value: string | null): LogTab {
-  return value === 'operations' ? 'operations' : 'movements'
+type OperationColumnDef = {
+  key: OperationColumnKey
+  label: string
+  render: (row: OperationLogEntry) => React.ReactNode
+  cellClassName?: string
 }
 
-function parseInitialScope(value: string | null): LogScope {
-  return value === 'all' ? 'all' : 'hot'
-}
+const movementColumns: MovementColumnDef[] = [
+  {
+    key: 'id',
+    label: '#',
+    render: (row) => row.id,
+  },
+  {
+    key: 'created_at',
+    label: '時間',
+    render: (row) => row.created_at || '--',
+  },
+  {
+    key: 'item',
+    label: '品項',
+    render: (row) => (
+      <>
+        <div className="font-semibold">{row.item_name || `#${row.item_id}`}</div>
+        <div className="text-xs text-[hsl(var(--muted-foreground))]">{row.item_model || ''}</div>
+      </>
+    ),
+  },
+  {
+    key: 'status_change',
+    label: '狀態變更',
+    render: (row) => `${row.from_status || '--'} -> ${row.to_status || '--'}`,
+  },
+  {
+    key: 'action',
+    label: '動作',
+    render: (row) => row.action || '--',
+  },
+  {
+    key: 'entity',
+    label: '實體',
+    render: (row) => row.entity || '--',
+  },
+  {
+    key: 'entity_id',
+    label: '單據',
+    render: (row) => row.entity_id ?? '--',
+  },
+  {
+    key: 'operator',
+    label: '操作者',
+    render: (row) => row.operator || '--',
+  },
+]
 
-function readInitialState() {
-  const params = new URLSearchParams(window.location.search)
-  return {
-    tab: parseInitialTab(params.get('tab')),
-    scope: parseInitialScope(params.get('scope')),
-    startAt: params.get('start_at') ?? '',
-    endAt: params.get('end_at') ?? '',
-    action: params.get('action') ?? '',
-    entity: params.get('entity') ?? '',
-    itemId: params.get('item_id') ?? '',
-    entityId: params.get('entity_id') ?? '',
-    page: parsePositiveInt(params.get('page'), 1),
-    pageSize: parsePositiveInt(params.get('page_size'), 10),
-  }
-}
+const operationColumns: OperationColumnDef[] = [
+  {
+    key: 'id',
+    label: '#',
+    render: (row) => row.id,
+  },
+  {
+    key: 'created_at',
+    label: '時間',
+    render: (row) => row.created_at || '--',
+  },
+  {
+    key: 'action',
+    label: '動作',
+    render: (row) => row.action || '--',
+  },
+  {
+    key: 'entity',
+    label: '實體',
+    render: (row) => row.entity || '--',
+  },
+  {
+    key: 'entity_id',
+    label: '單據',
+    render: (row) => row.entity_id ?? '--',
+  },
+  {
+    key: 'status',
+    label: '狀態',
+    render: (row) => row.status || '--',
+  },
+  {
+    key: 'detail',
+    label: '細節',
+    cellClassName: 'max-w-[360px] truncate text-xs text-[hsl(var(--muted-foreground))]',
+    render: (row) => safeJsonPreview(row.detail),
+  },
+]
 
 function safeJsonPreview(value: unknown): string {
   try {
@@ -56,58 +125,85 @@ function safeJsonPreview(value: unknown): string {
 }
 
 export function LogsPage() {
-  const initialState = readInitialState()
-  const [tab, setTab] = useState<LogTab>(initialState.tab)
-  const [scope, setScope] = useState<LogScope>(initialState.scope)
-  const [startAt, setStartAt] = useState(initialState.startAt)
-  const [endAt, setEndAt] = useState(initialState.endAt)
-  const [action, setAction] = useState(initialState.action)
-  const [entity, setEntity] = useState(initialState.entity)
-  const [itemId, setItemId] = useState(initialState.itemId)
-  const [entityId, setEntityId] = useState(initialState.entityId)
-  const [page, setPage] = useState(initialState.page)
-  const [pageSize, setPageSize] = useState(initialState.pageSize)
+  const [tab, setTab] = useState<LogTab>('movements')
+  const [scope, setScope] = useState<LogScope>('hot')
+  const [startAt, setStartAt] = useState('')
+  const [endAt, setEndAt] = useState('')
+  const [action, setAction] = useState('')
+  const [entity, setEntity] = useState('')
+  const [itemId, setItemId] = useState('')
+  const [entityId, setEntityId] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [movementRows, setMovementRows] = useState<MovementLedgerEntry[]>([])
   const [operationRows, setOperationRows] = useState<OperationLogEntry[]>([])
+  const [movementColumnVisibility, setMovementColumnVisibility] = useState<Record<MovementColumnKey, boolean>>({
+    id: true,
+    created_at: true,
+    item: true,
+    status_change: true,
+    action: true,
+    entity: true,
+    entity_id: true,
+    operator: true,
+  })
+  const [operationColumnVisibility, setOperationColumnVisibility] = useState<Record<OperationColumnKey, boolean>>({
+    id: true,
+    created_at: true,
+    action: true,
+    entity: true,
+    entity_id: true,
+    status: true,
+    detail: true,
+  })
 
   const endpoint = useMemo(() => (tab === 'movements' ? '/api/logs/movements' : '/api/logs/operations'), [tab])
 
-  useEffect(() => {
-    const params = new URLSearchParams()
-    params.set('tab', tab)
-    if (scope !== 'hot') {
-      params.set('scope', scope)
-    }
-    if (startAt) {
-      params.set('start_at', startAt)
-    }
-    if (endAt) {
-      params.set('end_at', endAt)
-    }
-    if (action.trim()) {
-      params.set('action', action.trim())
-    }
-    if (entity.trim()) {
-      params.set('entity', entity.trim())
-    }
-    if (itemId.trim()) {
-      params.set('item_id', itemId.trim())
-    }
-    if (entityId.trim()) {
-      params.set('entity_id', entityId.trim())
-    }
-    if (page !== 1) {
-      params.set('page', String(page))
-    }
-    if (pageSize !== 10) {
-      params.set('page_size', String(pageSize))
-    }
-    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`)
-  }, [tab, scope, startAt, endAt, action, entity, itemId, entityId, page, pageSize])
+  const hasActiveFilters = scope === 'all' || Boolean(startAt || endAt || action.trim() || entity.trim() || itemId.trim() || entityId.trim())
+
+  const visibleMovementColumns = useMemo(
+    () => movementColumns.filter((column) => movementColumnVisibility[column.key]),
+    [movementColumnVisibility],
+  )
+  const visibleOperationColumns = useMemo(
+    () => operationColumns.filter((column) => operationColumnVisibility[column.key]),
+    [operationColumnVisibility],
+  )
+
+  function resetFilters() {
+    setScope('hot')
+    setStartAt('')
+    setEndAt('')
+    setAction('')
+    setEntity('')
+    setItemId('')
+    setEntityId('')
+    setPage(1)
+  }
+
+  function toggleMovementColumn(key: MovementColumnKey) {
+    setMovementColumnVisibility((current) => {
+      const visibleCount = Object.values(current).filter(Boolean).length
+      if (current[key] && visibleCount === 1) {
+        return current
+      }
+      return { ...current, [key]: !current[key] }
+    })
+  }
+
+  function toggleOperationColumn(key: OperationColumnKey) {
+    setOperationColumnVisibility((current) => {
+      const visibleCount = Object.values(current).filter(Boolean).length
+      if (current[key] && visibleCount === 1) {
+        return current
+      }
+      return { ...current, [key]: !current[key] }
+    })
+  }
 
   useEffect(() => {
     const loadRows = async () => {
@@ -137,21 +233,24 @@ export function LogsPage() {
         if (entityId.trim()) {
           params.set('entity_id', entityId.trim())
         }
+
         const response = await fetch(apiUrl(`${endpoint}?${params.toString()}`))
         if (!response.ok) {
           throw new Error('無法載入日誌資料')
         }
+
         if (tab === 'movements') {
           const payload = (await response.json()) as PaginatedResponse<MovementLedgerEntry>
           setMovementRows(payload.items)
           setTotal(payload.total)
           setTotalPages(payload.total_pages)
-        } else {
-          const payload = (await response.json()) as PaginatedResponse<OperationLogEntry>
-          setOperationRows(payload.items)
-          setTotal(payload.total)
-          setTotalPages(payload.total_pages)
+          return
         }
+
+        const payload = (await response.json()) as PaginatedResponse<OperationLogEntry>
+        setOperationRows(payload.items)
+        setTotal(payload.total)
+        setTotalPages(payload.total_pages)
       } catch {
         setLoadError('目前無法讀取日誌資料，請稍後重試。')
       } finally {
@@ -164,40 +263,56 @@ export function LogsPage() {
 
   return (
     <SectionCard>
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Button
-          type="button"
-          variant={tab === 'movements' ? 'default' : 'secondary'}
-          onClick={() => {
-            setTab('movements')
-            setPage(1)
-          }}
-        >
-          異動流水帳
-        </Button>
-        <Button
-          type="button"
-          variant={scope === 'all' ? 'default' : 'secondary'}
-          onClick={() => {
-            setScope((current) => (current === 'hot' ? 'all' : 'hot'))
-            setPage(1)
-          }}
-        >
-          包含歷史資料
-        </Button>
-        <Button
-          type="button"
-          variant={tab === 'operations' ? 'default' : 'secondary'}
-          onClick={() => {
-            setTab('operations')
-            setPage(1)
-          }}
-        >
-          操作日誌
-        </Button>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={tab === 'movements' ? 'default' : 'secondary'}
+            onClick={() => {
+              setTab('movements')
+              setPage(1)
+            }}
+          >
+            異動流水帳
+          </Button>
+          <Button
+            type="button"
+            variant={tab === 'operations' ? 'default' : 'secondary'}
+            onClick={() => {
+              setTab('operations')
+              setPage(1)
+            }}
+          >
+            操作日誌
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger>欄位顯示</DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {tab === 'movements'
+                ? movementColumns.map((column) => (
+                    <DropdownMenuItem key={column.key} onClick={() => toggleMovementColumn(column.key)}>
+                      <span className="mr-2 inline-flex w-4 justify-center">{movementColumnVisibility[column.key] ? '✓' : ''}</span>
+                      {column.label}
+                    </DropdownMenuItem>
+                  ))
+                : operationColumns.map((column) => (
+                    <DropdownMenuItem key={column.key} onClick={() => toggleOperationColumn(column.key)}>
+                      <span className="mr-2 inline-flex w-4 justify-center">{operationColumnVisibility[column.key] ? '✓' : ''}</span>
+                      {column.label}
+                    </DropdownMenuItem>
+                  ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button type="button" variant="ghost" onClick={resetFilters} disabled={!hasActiveFilters}>
+            重設篩選
+          </Button>
+        </div>
       </div>
 
-      <FilterBar className="xl:grid-cols-[repeat(6,minmax(0,1fr))_auto]">
+      <div className="mb-4 grid gap-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] p-3 md:grid-cols-2 xl:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
         <div className="grid gap-1.5">
           <Label htmlFor="logs-start-at">開始日期</Label>
           <Input
@@ -210,6 +325,7 @@ export function LogsPage() {
             }}
           />
         </div>
+
         <div className="grid gap-1.5">
           <Label htmlFor="logs-end-at">結束日期</Label>
           <Input
@@ -222,6 +338,7 @@ export function LogsPage() {
             }}
           />
         </div>
+
         <div className="grid gap-1.5">
           <Label htmlFor="logs-action">動作</Label>
           <Input
@@ -234,6 +351,7 @@ export function LogsPage() {
             }}
           />
         </div>
+
         <div className="grid gap-1.5">
           <Label htmlFor="logs-entity">實體</Label>
           <Input
@@ -246,6 +364,7 @@ export function LogsPage() {
             }}
           />
         </div>
+
         <div className="grid gap-1.5">
           <Label htmlFor="logs-item-id">品項 ID</Label>
           <Input
@@ -259,6 +378,7 @@ export function LogsPage() {
             }}
           />
         </div>
+
         <div className="grid gap-1.5">
           <Label htmlFor="logs-entity-id">單據 ID</Label>
           <Input
@@ -272,105 +392,81 @@ export function LogsPage() {
             }}
           />
         </div>
+
+        <div className="grid gap-1.5">
+          <Label>資料範圍</Label>
+          <div className="inline-flex w-fit items-center rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-1">
+            <Button
+              type="button"
+              size="sm"
+              variant={scope === 'hot' ? 'default' : 'ghost'}
+              onClick={() => {
+                setScope('hot')
+                setPage(1)
+              }}
+            >
+              近期資料
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={scope === 'all' ? 'default' : 'ghost'}
+              onClick={() => {
+                setScope('all')
+                setPage(1)
+              }}
+            >
+              含歷史資料
+            </Button>
+          </div>
+        </div>
+
         <div className="flex items-end text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</div>
-      </FilterBar>
+      </div>
 
       {loading ? <p className="m-0 rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">資料載入中...</p> : null}
       {loadError ? <p className="m-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p> : null}
 
-      {!loading && !loadError && tab === 'movements' ? (
+      {!loading && !loadError ? (
         <>
-          <div className="hidden overflow-x-auto md:block">
-            <Table>
+          <div className="overflow-x-auto rounded-md border border-[hsl(var(--border))]">
+            <Table className="min-w-[980px]">
               <TableHeader>
                 <TableRow>
-                  {['#', '時間', '品項', '狀態變更', '動作', '實體', '單據', '操作者'].map((header) => (
-                    <TableHead key={header}>{header}</TableHead>
+                  {(tab === 'movements' ? visibleMovementColumns : visibleOperationColumns).map((column) => (
+                    <TableHead key={column.key}>{column.label}</TableHead>
                   ))}
                 </TableRow>
               </TableHeader>
+
               <TableBody>
-                {movementRows.length === 0 ? (
+                {(tab === 'movements' ? movementRows : operationRows).length === 0 ? (
                   <TableRow>
-                    <TableCell className="text-center text-[hsl(var(--muted-foreground))]" colSpan={8}>
-                      目前沒有符合條件的異動流水帳。
+                    <TableCell
+                      className="h-24 text-center text-[hsl(var(--muted-foreground))]"
+                      colSpan={tab === 'movements' ? visibleMovementColumns.length : visibleOperationColumns.length}
+                    >
+                      {tab === 'movements' ? '目前沒有符合條件的異動流水帳。' : '目前沒有符合條件的操作日誌。'}
                     </TableCell>
                   </TableRow>
-                ) : (
+                ) : tab === 'movements' ? (
                   movementRows.map((row) => (
                     <TableRow key={row.id}>
-                      <TableCell>{row.id}</TableCell>
-                      <TableCell>{row.created_at || '--'}</TableCell>
-                      <TableCell>
-                        <div className="font-semibold">{row.item_name || `#${row.item_id}`}</div>
-                        <div className="text-xs text-[hsl(var(--muted-foreground))]">{row.item_model || ''}</div>
-                      </TableCell>
-                      <TableCell>{`${row.from_status || '--'} -> ${row.to_status || '--'}`}</TableCell>
-                      <TableCell>{row.action || '--'}</TableCell>
-                      <TableCell>{row.entity || '--'}</TableCell>
-                      <TableCell>{row.entity_id ?? '--'}</TableCell>
-                      <TableCell>{row.operator || '--'}</TableCell>
+                      {visibleMovementColumns.map((column) => (
+                        <TableCell key={`${row.id}-${column.key}`} className={column.cellClassName}>
+                          {column.render(row)}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="grid gap-3 md:hidden">
-            {movementRows.length === 0 ? (
-              <p className="m-0 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] px-3 py-2 text-sm text-[hsl(var(--muted-foreground))]">
-                目前沒有符合條件的異動流水帳。
-              </p>
-            ) : (
-              movementRows.map((row) => (
-                <article key={row.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <p className="m-0 text-sm font-semibold">#{row.id}</p>
-                  <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{row.created_at || '--'}</p>
-                  <p className="mt-2 mb-0 text-sm">
-                    品項：{row.item_name || `#${row.item_id}`} {row.item_model ? `(${row.item_model})` : ''}
-                  </p>
-                  <p className="mt-1 mb-0 text-sm">狀態：{`${row.from_status || '--'} -> ${row.to_status || '--'}`}</p>
-                  <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">
-                    {row.action || '--'} / {row.entity || '--'} / #{row.entity_id ?? '--'} / {row.operator || '--'}
-                  </p>
-                </article>
-              ))
-            )}
-          </div>
-        </>
-      ) : null}
-
-      {!loading && !loadError && tab === 'operations' ? (
-        <>
-          <div className="hidden overflow-x-auto md:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {['#', '時間', '動作', '實體', '單據', '狀態', '細節'].map((header) => (
-                    <TableHead key={header}>{header}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {operationRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell className="text-center text-[hsl(var(--muted-foreground))]" colSpan={7}>
-                      目前沒有符合條件的操作日誌。
-                    </TableCell>
-                  </TableRow>
                 ) : (
                   operationRows.map((row) => (
                     <TableRow key={row.id}>
-                      <TableCell>{row.id}</TableCell>
-                      <TableCell>{row.created_at || '--'}</TableCell>
-                      <TableCell>{row.action || '--'}</TableCell>
-                      <TableCell>{row.entity || '--'}</TableCell>
-                      <TableCell>{row.entity_id ?? '--'}</TableCell>
-                      <TableCell>{row.status || '--'}</TableCell>
-                      <TableCell className="max-w-[360px] truncate text-xs text-[hsl(var(--muted-foreground))]">
-                        {safeJsonPreview(row.detail)}
-                      </TableCell>
+                      {visibleOperationColumns.map((column) => (
+                        <TableCell key={`${row.id}-${column.key}`} className={column.cellClassName}>
+                          {column.render(row)}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   ))
                 )}
@@ -378,40 +474,18 @@ export function LogsPage() {
             </Table>
           </div>
 
-          <div className="grid gap-3 md:hidden">
-            {operationRows.length === 0 ? (
-              <p className="m-0 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] px-3 py-2 text-sm text-[hsl(var(--muted-foreground))]">
-                目前沒有符合條件的操作日誌。
-              </p>
-            ) : (
-              operationRows.map((row) => (
-                <article key={row.id} className="rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-3">
-                  <p className="m-0 text-sm font-semibold">#{row.id}</p>
-                  <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{row.created_at || '--'}</p>
-                  <p className="mt-2 mb-0 text-sm">
-                    {row.action || '--'} / {row.entity || '--'} / #{row.entity_id ?? '--'}
-                  </p>
-                  <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">狀態：{row.status || '--'}</p>
-                  <p className="mt-1 mb-0 break-all text-xs text-[hsl(var(--muted-foreground))]">{safeJsonPreview(row.detail)}</p>
-                </article>
-              ))
-            )}
-          </div>
+          <DataPagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={(nextPageSize) => {
+              setPageSize(nextPageSize)
+              setPage(1)
+            }}
+          />
         </>
-      ) : null}
-
-      {!loading && !loadError ? (
-        <DataPagination
-          page={page}
-          pageSize={pageSize}
-          total={total}
-          totalPages={totalPages}
-          onPageChange={setPage}
-          onPageSizeChange={(nextPageSize) => {
-            setPageSize(nextPageSize)
-            setPage(1)
-          }}
-        />
       ) : null}
     </SectionCard>
   )
