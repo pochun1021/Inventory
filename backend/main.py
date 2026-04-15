@@ -34,6 +34,7 @@ from db import (
     list_issue_requests,
     list_borrow_items,
     list_borrow_items_map,
+    list_borrow_pickup_candidates,
     list_borrow_reservation_options,
     list_borrow_requests,
     list_donation_items,
@@ -163,6 +164,31 @@ class BorrowRequestLine(BorrowRequestLineCreate):
     quantity: int = 0
     allocated_qty: int = 0
     allocated_item_ids: list[int] = Field(default_factory=list)
+
+
+class BorrowPickupSelection(BaseModel):
+    line_id: int
+    item_ids: list[int] = Field(default_factory=list)
+
+
+class BorrowPickupRequest(BaseModel):
+    selections: list[BorrowPickupSelection] = Field(default_factory=list)
+
+
+class BorrowPickupCandidateItem(BaseModel):
+    id: int
+    n_property_sn: str = ""
+    property_sn: str = ""
+    n_item_sn: str = ""
+    item_sn: str = ""
+
+
+class BorrowPickupCandidateLine(BaseModel):
+    line_id: int
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 0
+    candidates: list[BorrowPickupCandidateItem] = Field(default_factory=list)
 
 
 class BorrowRequestCreate(BaseModel):
@@ -1151,6 +1177,17 @@ def get_borrow_request_api(request_id: int):
     return borrow_request_row_to_model(row, request_lines)
 
 
+@app.get("/api/borrows/{request_id}/pickup-candidates", response_model=list[BorrowPickupCandidateLine], response_model_by_alias=False)
+def list_borrow_pickup_candidates_api(request_id: int):
+    try:
+        rows = list_borrow_pickup_candidates(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rows is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return [BorrowPickupCandidateLine(**row) for row in rows]
+
+
 @app.post("/api/borrows", response_model=BorrowRequest, response_model_by_alias=False)
 def create_borrow_request_api(request: BorrowRequestCreate, background_tasks: BackgroundTasks):
     if not request.request_lines:
@@ -1218,9 +1255,9 @@ def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, bac
 
 
 @app.post("/api/borrows/{request_id}/pickup", response_model=BorrowRequest, response_model_by_alias=False)
-def pickup_borrow_request_api(request_id: int, background_tasks: BackgroundTasks):
+def pickup_borrow_request_api(request_id: int, payload: BorrowPickupRequest, background_tasks: BackgroundTasks):
     try:
-        picked = pickup_borrow_request(request_id)
+        picked = pickup_borrow_request(request_id, [selection.model_dump() for selection in payload.selections])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_to_http_error_detail(exc)) from exc
     if not picked:

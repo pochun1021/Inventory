@@ -126,7 +126,11 @@ class TransactionConsistencyTests(unittest.TestCase):
         self.assertEqual(item_after_reservation_1['asset_status'], '0')
         self.assertEqual(item_after_reservation_2['asset_status'], '0')
 
-        db.pickup_borrow_request(request_id)
+        line_id = db.list_borrow_items(request_id)[0]['id']
+        db.pickup_borrow_request(
+            request_id,
+            [{'line_id': line_id, 'item_ids': [first_id, second_id]}],
+        )
         item_after_pickup_1 = db.get_item_by_id(first_id)
         item_after_pickup_2 = db.get_item_by_id(second_id)
         self.assertEqual(item_after_pickup_1['asset_status'], '2')
@@ -274,7 +278,11 @@ class TransactionConsistencyTests(unittest.TestCase):
             self._borrow_payload(),
             [{'item_name': '測試品項', 'item_model': 'M1', 'requested_qty': 1, 'note': ''}],
         )
-        db.pickup_borrow_request(borrow_request_id)
+        borrow_line_id = db.list_borrow_items(borrow_request_id)[0]['id']
+        db.pickup_borrow_request(
+            borrow_request_id,
+            [{'line_id': borrow_line_id, 'item_ids': [occupied_item_id]}],
+        )
 
         with self.assertRaisesRegex(ValueError, f'item_id {occupied_item_id} is unavailable'):
             db.update_issue_request(

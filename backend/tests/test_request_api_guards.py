@@ -98,8 +98,8 @@ class RequestApiGuardTests(unittest.TestCase):
         self.assertEqual(detail.get('shortages')[0]['shortage_qty'], 1)
 
     def test_borrow_api_creates_reserved_and_pickup_then_return(self) -> None:
-        self._create_item(name='筆電', model='A1')
-        self._create_item(name='筆電', model='A1')
+        first_item_id = self._create_item(name='筆電', model='A1')
+        second_item_id = self._create_item(name='筆電', model='A1')
 
         request = self._borrow_request(
             [
@@ -111,12 +111,52 @@ class RequestApiGuardTests(unittest.TestCase):
         self.assertFalse(created.is_due_soon)
         self.assertEqual(created.request_lines[0].allocated_qty, 0)
 
-        picked = app_main.pickup_borrow_request_api(created.id, BackgroundTasks())
+        pickup_payload = app_main.BorrowPickupRequest(
+            selections=[
+                app_main.BorrowPickupSelection(
+                    line_id=created.request_lines[0].id,
+                    item_ids=[first_item_id, second_item_id],
+                )
+            ]
+        )
+        picked = app_main.pickup_borrow_request_api(created.id, pickup_payload, BackgroundTasks())
         self.assertIn(picked.status, {'borrowed', 'overdue'})
         self.assertEqual(picked.request_lines[0].allocated_qty, 2)
 
         returned = app_main.return_borrow_request_api(created.id, BackgroundTasks())
         self.assertEqual(returned.status, 'returned')
+
+    def test_borrow_pickup_requires_explicit_selections(self) -> None:
+        self._create_item(name='平板', model='P1')
+        created = app_main.create_borrow_request_api(
+            self._borrow_request([{'item_name': '平板', 'item_model': 'P1', 'requested_qty': 1, 'note': ''}]),
+            BackgroundTasks(),
+        )
+        with self.assertRaises(HTTPException) as exc:
+            app_main.pickup_borrow_request_api(created.id, app_main.BorrowPickupRequest(selections=[]), BackgroundTasks())
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, 'pickup selections are required')
+
+    def test_borrow_pickup_rejects_item_not_matching_line(self) -> None:
+        requested_item_id = self._create_item(name='投影機', model='X1')
+        wrong_item_id = self._create_item(name='相機', model='C1')
+        created = app_main.create_borrow_request_api(
+            self._borrow_request([{'item_name': '投影機', 'item_model': 'X1', 'requested_qty': 1, 'note': ''}]),
+            BackgroundTasks(),
+        )
+        self.assertGreater(requested_item_id, 0)
+        payload = app_main.BorrowPickupRequest(
+            selections=[
+                app_main.BorrowPickupSelection(
+                    line_id=created.request_lines[0].id,
+                    item_ids=[wrong_item_id],
+                )
+            ]
+        )
+        with self.assertRaises(HTTPException) as exc:
+            app_main.pickup_borrow_request_api(created.id, payload, BackgroundTasks())
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, f'item_id {wrong_item_id} does not match line_id {created.request_lines[0].id}')
 
     def test_borrow_expired_reservation_auto_release(self) -> None:
         self._create_item(name='相機', model='M2')

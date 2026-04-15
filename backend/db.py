@@ -2534,6 +2534,65 @@ def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
     return list_borrow_items_map({request_id}).get(request_id, [])
 
 
+def list_borrow_pickup_candidates(request_id: int) -> list[dict[str, Any]] | None:
+    with _locked_workbook() as wb:
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_rows = _read_rows(wb["borrow_request_lines"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+        request_rows = _read_rows(request_ws)
+
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
+        if request_row is None:
+            return None
+        status = _to_str(request_row.get("status")).strip().lower()
+        if status not in {"reserved", "expired"}:
+            raise ValueError("only reserved request can be picked up")
+        if any(_to_int(row.get("request_id")) == request_id for row in allocation_rows):
+            raise ValueError("borrow request already allocated")
+
+    candidates_by_key = _build_inventory_candidates_by_key(inventory_rows)
+    request_lines = sorted(
+        (row for row in line_rows if _to_int(row.get("request_id")) == request_id),
+        key=lambda row: _to_int(row.get("id")),
+    )
+    if not request_lines:
+        raise ValueError("request_lines is required")
+
+    results: list[dict[str, Any]] = []
+    for line in request_lines:
+        line_id = _to_int(line.get("id"))
+        item_name = _to_str(line.get("item_name"))
+        item_model = _to_str(line.get("item_model"))
+        key = _borrow_key(item_name, item_model)
+        candidates = candidates_by_key.get(key, [])
+        results.append(
+            {
+                "line_id": line_id,
+                "item_name": item_name,
+                "item_model": item_model,
+                "requested_qty": _to_int(line.get("requested_qty")),
+                "candidates": [
+                    {
+                        "id": _to_int(item.get("id")),
+                        "n_property_sn": _to_str(item.get("n_property_sn")),
+                        "property_sn": _to_str(item.get("property_sn")),
+                        "n_item_sn": _to_str(item.get("n_item_sn")),
+                        "item_sn": _to_str(item.get("item_sn")),
+                    }
+                    for item in candidates
+                ],
+            }
+        )
+    return results
+
+
 def list_borrow_reservation_options(*, exclude_request_id: int | None = None) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         request_rows = _read_rows(wb["borrow_requests"])
@@ -2661,7 +2720,7 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], request
         return True
 
 
-def pickup_borrow_request(request_id: int) -> bool:
+def pickup_borrow_request(request_id: int, selections_data: list[dict[str, Any]]) -> bool:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
@@ -2693,16 +2752,44 @@ def pickup_borrow_request(request_id: int) -> bool:
         if not target_lines:
             raise ValueError("request_lines is required")
 
-        required_totals: dict[tuple[str, str], int] = {}
-        for row in target_lines:
-            key = _borrow_key(row.get("item_name"), row.get("item_model"))
-            required_totals[key] = required_totals.get(key, 0) + _to_int(row.get("requested_qty"))
+        line_map = {_to_int(row.get("id")): row for row in target_lines}
+        target_line_ids = set(line_map.keys())
+        if not selections_data:
+            raise ValueError("pickup selections are required")
 
-        candidates_by_key = _build_inventory_candidates_by_key(inventory_rows)
-        available_totals = {key: len(rows) for key, rows in candidates_by_key.items()}
-        shortages = _collect_shortages(required_totals, available_totals)
-        if shortages:
-            raise ValueError(json.dumps({"message": "insufficient_pickup_quantity", "shortages": shortages}, ensure_ascii=False))
+        selections_by_line: dict[int, list[int]] = {}
+        selected_item_ids: set[int] = set()
+        for row in selections_data:
+            line_id = _to_int(row.get("line_id"))
+            if line_id not in target_line_ids:
+                raise ValueError(f"line_id {line_id} does not belong to request")
+            if line_id in selections_by_line:
+                raise ValueError(f"line_id {line_id} duplicated in pickup selections")
+            raw_item_ids = row.get("item_ids")
+            if not isinstance(raw_item_ids, list):
+                raise ValueError(f"item_ids for line_id {line_id} must be a list")
+            line_item_ids: list[int] = []
+            line_seen: set[int] = set()
+            for raw_item_id in raw_item_ids:
+                item_id = _to_int(raw_item_id)
+                if item_id <= 0:
+                    raise ValueError(f"invalid item_id in line_id {line_id}")
+                if item_id in line_seen:
+                    raise ValueError(f"item_id {item_id} duplicated in line_id {line_id}")
+                if item_id in selected_item_ids:
+                    raise ValueError(f"item_id {item_id} duplicated across lines")
+                line_seen.add(item_id)
+                selected_item_ids.add(item_id)
+                line_item_ids.append(item_id)
+            selections_by_line[line_id] = line_item_ids
+
+        if set(selections_by_line.keys()) != target_line_ids:
+            missing = sorted(target_line_ids - set(selections_by_line.keys()))
+            extra = sorted(set(selections_by_line.keys()) - target_line_ids)
+            if missing:
+                raise ValueError(f"missing pickup selections for line_ids: {','.join(str(value) for value in missing)}")
+            if extra:
+                raise ValueError(f"unexpected line_ids in pickup selections: {','.join(str(value) for value in extra)}")
 
         inventory_map = _active_inventory_rows_map(inventory_rows)
         next_allocation_id = _next_id(allocation_rows)
@@ -2711,13 +2798,14 @@ def pickup_borrow_request(request_id: int) -> bool:
             line_id = _to_int(line.get("id"))
             key = _borrow_key(line.get("item_name"), line.get("item_model"))
             requested_qty = _to_int(line.get("requested_qty"))
-            candidates = candidates_by_key.get(key, [])
-            for _ in range(requested_qty):
-                if not candidates:
-                    raise ValueError("insufficient pickup candidates")
-                picked = candidates.pop(0)
-                item_id = _to_int(picked.get("id"))
+            selected_ids = selections_by_line.get(line_id, [])
+            if len(selected_ids) != requested_qty:
+                raise ValueError(f"line_id {line_id} requires {requested_qty} items")
+            for item_id in selected_ids:
                 inventory_row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+                item_key = _borrow_key(inventory_row.get("name"), inventory_row.get("model"))
+                if item_key != key:
+                    raise ValueError(f"item_id {item_id} does not match line_id {line_id}")
                 _set_inventory_status_with_movement(
                     movement_rows=movement_rows,
                     row=inventory_row,

@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
+import { Dialog } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
-import type { BorrowRequest, BorrowReservationOption } from './types'
+import type { BorrowPickupCandidateItem, BorrowPickupCandidateLine, BorrowRequest, BorrowReservationOption } from './types'
 
 type BorrowLine = {
   item_name: string
@@ -79,6 +80,10 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const [loadError, setLoadError] = useState('')
   const [formError, setFormError] = useState('')
   const [shortages, setShortages] = useState<ShortageRow[]>([])
+  const [pickupDialogOpen, setPickupDialogOpen] = useState(false)
+  const [pickupLoading, setPickupLoading] = useState(false)
+  const [pickupCandidates, setPickupCandidates] = useState<BorrowPickupCandidateLine[]>([])
+  const [pickupSelections, setPickupSelections] = useState<Record<number, number[]>>({})
 
   const [borrower, setBorrower] = useState('')
   const [department, setDepartment] = useState('')
@@ -189,6 +194,10 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     () => lines.reduce((sum, line) => sum + Math.max(0, Number(line.allocated_qty) || 0), 0),
     [lines],
   )
+  const pickupSelectionComplete = useMemo(
+    () => pickupCandidates.every((line) => (pickupSelections[line.line_id] ?? []).length === line.requested_qty),
+    [pickupCandidates, pickupSelections],
+  )
 
   const getModelOptionsByName = (itemName: string, searchKeyword: string) => {
     const keyword = searchKeyword.trim().toLowerCase()
@@ -276,6 +285,67 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     )
   }
 
+  const getPickupItemSerialLabel = (candidate: BorrowPickupCandidateItem) => {
+    return candidate.n_property_sn || candidate.property_sn || candidate.n_item_sn || candidate.item_sn || `ID ${candidate.id}`
+  }
+
+  const getSelectedItemIdsExceptLine = (lineId: number) => {
+    const selectedIds = new Set<number>()
+    Object.entries(pickupSelections).forEach(([rawLineId, itemIds]) => {
+      if (Number(rawLineId) === lineId) {
+        return
+      }
+      itemIds.forEach((itemId) => selectedIds.add(itemId))
+    })
+    return selectedIds
+  }
+
+  const togglePickupSelection = (lineId: number, itemId: number) => {
+    const line = pickupCandidates.find((candidateLine) => candidateLine.line_id === lineId)
+    if (!line) {
+      return
+    }
+    setPickupSelections((prev) => {
+      const current = prev[lineId] ?? []
+      if (current.includes(itemId)) {
+        return { ...prev, [lineId]: current.filter((id) => id !== itemId) }
+      }
+      if (current.length >= line.requested_qty) {
+        return prev
+      }
+      return { ...prev, [lineId]: [...current, itemId] }
+    })
+  }
+
+  const openPickupDialog = async () => {
+    if (!requestId) {
+      return
+    }
+    setFormError('')
+    setShortages([])
+    setPickupLoading(true)
+    try {
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup-candidates`))
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const detail = typeof payload?.detail === 'string' ? payload.detail : null
+        throw new Error(detail ?? '無法載入可領取編號')
+      }
+      const payload = (await response.json()) as BorrowPickupCandidateLine[]
+      if (payload.length === 0) {
+        throw new Error('目前沒有可領取的預約品項')
+      }
+      setPickupCandidates(payload)
+      setPickupSelections(Object.fromEntries(payload.map((line) => [line.line_id, []])))
+      setPickupDialogOpen(true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      void toast.fire({ icon: 'error', title: message || '無法載入可領取編號' })
+    } finally {
+      setPickupLoading(false)
+    }
+  }
+
   const handleSubmit = async () => {
     setFormError('')
     setShortages([])
@@ -359,11 +429,24 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     if (!requestId) {
       return
     }
+    if (!pickupSelectionComplete) {
+      void toast.fire({ icon: 'error', title: '請先完成每個品項的借出編號選擇。' })
+      return
+    }
     setFormError('')
     setShortages([])
     setSubmitting(true)
     try {
-      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup`), { method: 'POST' })
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selections: pickupCandidates.map((line) => ({
+            line_id: line.line_id,
+            item_ids: pickupSelections[line.line_id] ?? [],
+          })),
+        }),
+      })
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         const shortageRows = parseShortages(payload?.detail)
@@ -377,6 +460,9 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       }
       await refreshReservationOptions()
       await refreshCurrentRequest()
+      setPickupDialogOpen(false)
+      setPickupCandidates([])
+      setPickupSelections({})
       void toast.fire({ icon: 'success', title: '已完成領取並分配資產。' })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
@@ -568,8 +654,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           {submitting ? '儲存中...' : isEditing ? '更新預約' : '建立預約'}
         </Button>
         {canPickup ? (
-          <Button type="button" variant="secondary" onClick={() => void handlePickup()} disabled={submitting}>
-            {submitting ? '處理中...' : '執行領取'}
+          <Button type="button" variant="secondary" onClick={() => void openPickupDialog()} disabled={submitting || pickupLoading}>
+            {pickupLoading ? '載入中...' : '執行領取'}
           </Button>
         ) : null}
         {canReturn ? (
@@ -578,6 +664,65 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </Button>
         ) : null}
       </div>
+      <Dialog
+        open={pickupDialogOpen}
+        onClose={() => {
+          if (!submitting) {
+            setPickupDialogOpen(false)
+          }
+        }}
+        title="確認借出編號"
+        description="請為每個預約品項指定實際借出的資產編號。每個編號只能使用一次。"
+        actions={
+          <>
+            <Button type="button" variant="secondary" onClick={() => setPickupDialogOpen(false)} disabled={submitting}>
+              取消
+            </Button>
+            <Button type="button" onClick={() => void handlePickup()} disabled={submitting || !pickupSelectionComplete}>
+              {submitting ? '處理中...' : '確認領取'}
+            </Button>
+          </>
+        }
+      >
+        <div className="grid max-h-[60vh] gap-3 overflow-y-auto pr-1">
+          {pickupCandidates.map((line) => {
+            const selected = pickupSelections[line.line_id] ?? []
+            const selectedByOtherLines = getSelectedItemIdsExceptLine(line.line_id)
+            return (
+              <div key={line.line_id} className="rounded-md border border-[hsl(var(--border))] p-3">
+                <p className="m-0 text-sm font-semibold">
+                  {line.item_name} / {line.item_model}
+                </p>
+                <p className="mt-1 mb-2 text-xs text-[hsl(var(--muted-foreground))]">
+                  需選擇 {line.requested_qty} 個，目前已選 {selected.length} 個
+                </p>
+                <div className="grid gap-1">
+                  {line.candidates.length === 0 ? (
+                    <p className="m-0 text-xs text-red-700">目前無可領取資產。</p>
+                  ) : (
+                    line.candidates.map((candidate) => {
+                      const checked = selected.includes(candidate.id)
+                      const disabled = !checked && selectedByOtherLines.has(candidate.id)
+                      return (
+                        <label key={candidate.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={disabled || submitting}
+                            onChange={() => togglePickupSelection(line.line_id, candidate.id)}
+                          />
+                          <span>{getPickupItemSerialLabel(candidate)}</span>
+                          <span className="text-xs text-[hsl(var(--muted-foreground))]">（ID: {candidate.id}）</span>
+                        </label>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </Dialog>
     </div>
   )
 }

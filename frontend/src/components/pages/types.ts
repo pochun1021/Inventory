@@ -119,6 +119,22 @@ export type BorrowReservationOption = {
   selectable: boolean
 }
 
+export type BorrowPickupCandidateItem = {
+  id: number
+  n_property_sn: string
+  property_sn: string
+  n_item_sn: string
+  item_sn: string
+}
+
+export type BorrowPickupCandidateLine = {
+  line_id: number
+  item_name: string
+  item_model: string
+  requested_qty: number
+  candidates: BorrowPickupCandidateItem[]
+}
+
 export type DonationItem = {
   id: number
   item_id: number
