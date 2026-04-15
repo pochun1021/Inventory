@@ -127,12 +127,40 @@ export type BorrowPickupCandidateItem = {
   item_sn: string
 }
 
+export type BorrowPickupLineSummary = {
+  line_id: number
+  item_name: string
+  item_model: string
+  requested_qty: number
+  candidate_count: number
+}
+
 export type BorrowPickupCandidateLine = {
   line_id: number
   item_name: string
   item_model: string
   requested_qty: number
   candidates: BorrowPickupCandidateItem[]
+}
+
+export type BorrowPickupLineCandidatePage = {
+  line_id: number
+  item_name: string
+  item_model: string
+  requested_qty: number
+  items: BorrowPickupCandidateItem[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
+export type BorrowPickupScanResolveResponse = {
+  item: BorrowPickupCandidateItem & {
+    item_name: string
+    item_model: string
+  }
+  eligible_line_ids: number[]
 }
 
 export type DonationItem = {

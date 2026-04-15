@@ -144,6 +144,8 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 ## 交易規則（重要）
 
 - 領用/借用/捐贈目前為單件模式：每個 item 的 `quantity` 必須是 `1`
+- 借用預約 `borrow_date`、`due_date` 必填，且 `due_date` 不可早於 `borrow_date`
+- 借用預約天數上限為 30 天（`due_date - borrow_date <= 30`）
 - 建立或更新捐贈單時 `recipient` 必填
 - 交易會檢查品項可用性，不可重複占用或占用不可用資產
 

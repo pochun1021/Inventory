@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
@@ -8,7 +8,14 @@ import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
-import type { BorrowPickupCandidateItem, BorrowPickupCandidateLine, BorrowRequest, BorrowReservationOption } from './types'
+import type {
+  BorrowPickupCandidateItem,
+  BorrowPickupLineCandidatePage,
+  BorrowPickupLineSummary,
+  BorrowPickupScanResolveResponse,
+  BorrowRequest,
+  BorrowReservationOption,
+} from './types'
 
 type BorrowLine = {
   item_name: string
@@ -50,6 +57,22 @@ type BorrowPageProps = {
   requestId?: number
 }
 
+type ScanBuffer = {
+  value: string
+  lastTs: number
+}
+
+const SCAN_MAX_KEY_INTERVAL_MS = 45
+const SCAN_MIN_LENGTH = 4
+const MAX_BORROW_RESERVATION_DAYS = 30
+const BORROW_STATUS_LABEL_MAP: Record<string, string> = {
+  reserved: '已預約',
+  borrowed: '借出中',
+  returned: '已歸還',
+  overdue: '逾期',
+  expired: '預約失效',
+}
+
 function parseShortages(detail: unknown): ShortageRow[] {
   if (!detail || typeof detail !== 'object') {
     return []
@@ -75,6 +98,24 @@ function parseShortages(detail: unknown): ShortageRow[] {
     .filter((row): row is ShortageRow => row !== null)
 }
 
+function parseDateInput(value: string): Date | null {
+  if (!value) {
+    return null
+  }
+  const [year, month, day] = value.split('-').map((part) => Number(part))
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null
+  }
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+function formatDateInput(date: Date): string {
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function BorrowPage({ requestId }: BorrowPageProps) {
   const [reservationOptions, setReservationOptions] = useState<BorrowReservationOption[]>([])
   const [loadError, setLoadError] = useState('')
@@ -82,8 +123,14 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const [shortages, setShortages] = useState<ShortageRow[]>([])
   const [pickupDialogOpen, setPickupDialogOpen] = useState(false)
   const [pickupLoading, setPickupLoading] = useState(false)
-  const [pickupCandidates, setPickupCandidates] = useState<BorrowPickupCandidateLine[]>([])
+  const [pickupLines, setPickupLines] = useState<BorrowPickupLineSummary[]>([])
+  const [pickupExpandedLineId, setPickupExpandedLineId] = useState<number | null>(null)
+  const [pickupLineCandidates, setPickupLineCandidates] = useState<Record<number, BorrowPickupLineCandidatePage>>({})
+  const [pickupLineCandidatesLoading, setPickupLineCandidatesLoading] = useState<Record<number, boolean>>({})
+  const [pickupCandidateKeyword, setPickupCandidateKeyword] = useState('')
   const [pickupSelections, setPickupSelections] = useState<Record<number, number[]>>({})
+  const [scanInputValue, setScanInputValue] = useState('')
+  const [scanFeedback, setScanFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
 
   const [borrower, setBorrower] = useState('')
   const [department, setDepartment] = useState('')
@@ -95,7 +142,10 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const [memo, setMemo] = useState('')
   const [lines, setLines] = useState<BorrowLine[]>([emptyLine()])
   const [submitting, setSubmitting] = useState(false)
+  const scanInputRef = useRef<HTMLInputElement | null>(null)
+  const scanBufferRef = useRef<ScanBuffer>({ value: '', lastTs: 0 })
   const isEditing = Number.isInteger(requestId)
+  const statusLabel = BORROW_STATUS_LABEL_MAP[status] || status || '--'
 
   const comboKeySet = useMemo(() => {
     const keys = new Set<string>()
@@ -195,9 +245,19 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     [lines],
   )
   const pickupSelectionComplete = useMemo(
-    () => pickupCandidates.every((line) => (pickupSelections[line.line_id] ?? []).length === line.requested_qty),
-    [pickupCandidates, pickupSelections],
+    () => pickupLines.length > 0 && pickupLines.every((line) => (pickupSelections[line.line_id] ?? []).length === line.requested_qty),
+    [pickupLines, pickupSelections],
   )
+
+  useEffect(() => {
+    if (!pickupDialogOpen) {
+      return
+    }
+    const timerId = window.setTimeout(() => {
+      scanInputRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timerId)
+  }, [pickupDialogOpen, pickupExpandedLineId])
 
   const getModelOptionsByName = (itemName: string, searchKeyword: string) => {
     const keyword = searchKeyword.trim().toLowerCase()
@@ -252,11 +312,36 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const normalizeDate = (value: string) => (value ? value : null)
 
   const getDateValidationError = () => {
+    if (!borrowDate) {
+      return '請填寫領用日。'
+    }
+    if (!dueDate) {
+      return '請填寫預計歸還日期。'
+    }
     if (borrowDate && dueDate && borrowDate > dueDate) {
       return '預計歸還日期不可早於領用日期。'
     }
+    const borrowDateValue = parseDateInput(borrowDate)
+    const dueDateValue = parseDateInput(dueDate)
+    if (!borrowDateValue || !dueDateValue) {
+      return '日期格式錯誤，請重新選擇。'
+    }
+    const days = Math.floor((dueDateValue.getTime() - borrowDateValue.getTime()) / (1000 * 60 * 60 * 24))
+    if (days > MAX_BORROW_RESERVATION_DAYS) {
+      return `借用預約不可超過 ${MAX_BORROW_RESERVATION_DAYS} 天。`
+    }
     return null
   }
+
+  const dueDateMax = useMemo(() => {
+    const borrowDateValue = parseDateInput(borrowDate)
+    if (!borrowDateValue) {
+      return undefined
+    }
+    const maxDueDate = new Date(borrowDateValue)
+    maxDueDate.setUTCDate(maxDueDate.getUTCDate() + MAX_BORROW_RESERVATION_DAYS)
+    return formatDateInput(maxDueDate)
+  }, [borrowDate])
 
   const refreshCurrentRequest = async () => {
     if (!requestId) {
@@ -289,6 +374,10 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     return candidate.n_property_sn || candidate.property_sn || candidate.n_item_sn || candidate.item_sn || `ID ${candidate.id}`
   }
 
+  const getPickupLineById = (lineId: number) => pickupLines.find((line) => line.line_id === lineId)
+
+  const getPickupSelectedQty = (lineId: number) => (pickupSelections[lineId] ?? []).length
+
   const getSelectedItemIdsExceptLine = (lineId: number) => {
     const selectedIds = new Set<number>()
     Object.entries(pickupSelections).forEach(([rawLineId, itemIds]) => {
@@ -300,8 +389,31 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     return selectedIds
   }
 
+  const isAnyLineSelectingItem = (itemId: number) => {
+    return Object.values(pickupSelections).some((ids) => ids.includes(itemId))
+  }
+
+  const mergeLineCandidateItem = (lineId: number, item: BorrowPickupCandidateItem) => {
+    setPickupLineCandidates((prev) => {
+      const current = prev[lineId]
+      if (!current) {
+        return prev
+      }
+      if (current.items.some((candidate) => candidate.id === item.id)) {
+        return prev
+      }
+      return {
+        ...prev,
+        [lineId]: {
+          ...current,
+          items: [item, ...current.items],
+        },
+      }
+    })
+  }
+
   const togglePickupSelection = (lineId: number, itemId: number) => {
-    const line = pickupCandidates.find((candidateLine) => candidateLine.line_id === lineId)
+    const line = getPickupLineById(lineId)
     if (!line) {
       return
     }
@@ -313,8 +425,46 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       if (current.length >= line.requested_qty) {
         return prev
       }
+      if (Object.entries(prev).some(([rawLineId, ids]) => Number(rawLineId) !== lineId && ids.includes(itemId))) {
+        return prev
+      }
       return { ...prev, [lineId]: [...current, itemId] }
     })
+  }
+
+  const loadPickupLineCandidates = async (lineId: number, nextKeyword: string, nextPage: number) => {
+    if (!requestId) {
+      return
+    }
+    const params = new URLSearchParams({
+      page: String(nextPage),
+      page_size: '50',
+    })
+    if (nextKeyword.trim()) {
+      params.set('keyword', nextKeyword.trim())
+    }
+    setPickupLineCandidatesLoading((prev) => ({ ...prev, [lineId]: true }))
+    try {
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup-lines/${lineId}/candidates?${params.toString()}`))
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const detail = typeof payload?.detail === 'string' ? payload.detail : null
+        throw new Error(detail ?? '無法載入可領取候選清單')
+      }
+      const payload = (await response.json()) as BorrowPickupLineCandidatePage
+      setPickupLineCandidates((prev) => ({ ...prev, [lineId]: payload }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      setScanFeedback({ type: 'error', message: message || '無法載入候選清單' })
+    } finally {
+      setPickupLineCandidatesLoading((prev) => ({ ...prev, [lineId]: false }))
+    }
+  }
+
+  const handleExpandPickupLine = async (lineId: number) => {
+    setPickupExpandedLineId(lineId)
+    setPickupCandidateKeyword('')
+    await loadPickupLineCandidates(lineId, '', 1)
   }
 
   const openPickupDialog = async () => {
@@ -325,25 +475,121 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     setShortages([])
     setPickupLoading(true)
     try {
-      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup-candidates`))
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup-lines`))
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
         const detail = typeof payload?.detail === 'string' ? payload.detail : null
         throw new Error(detail ?? '無法載入可領取編號')
       }
-      const payload = (await response.json()) as BorrowPickupCandidateLine[]
+      const payload = (await response.json()) as BorrowPickupLineSummary[]
       if (payload.length === 0) {
         throw new Error('目前沒有可領取的預約品項')
       }
-      setPickupCandidates(payload)
+      setPickupLines(payload)
+      setPickupExpandedLineId(payload[0].line_id)
+      setPickupLineCandidates({})
+      setPickupLineCandidatesLoading({})
+      setPickupCandidateKeyword('')
       setPickupSelections(Object.fromEntries(payload.map((line) => [line.line_id, []])))
+      setScanInputValue('')
+      setScanFeedback(null)
+      scanBufferRef.current = { value: '', lastTs: 0 }
       setPickupDialogOpen(true)
+      await loadPickupLineCandidates(payload[0].line_id, '', 1)
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       void toast.fire({ icon: 'error', title: message || '無法載入可領取編號' })
     } finally {
       setPickupLoading(false)
     }
+  }
+
+  const applyScanCode = async (rawCode: string) => {
+    const normalizedCode = rawCode.trim()
+    if (!normalizedCode || !requestId) {
+      return
+    }
+    setScanInputValue('')
+    try {
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup-resolve-scan`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: normalizedCode }),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const detail = typeof payload?.detail === 'string' ? payload.detail : null
+        throw new Error(detail ?? `查無條碼：${rawCode}`)
+      }
+      const payload = (await response.json()) as BorrowPickupScanResolveResponse
+      if (isAnyLineSelectingItem(payload.item.id)) {
+        setScanFeedback({ type: 'info', message: `條碼 ${rawCode} 已在領取清單中。` })
+        return
+      }
+
+      const eligibleLineIdSet = new Set(payload.eligible_line_ids)
+      const targetLine = pickupLines.find((line) => eligibleLineIdSet.has(line.line_id) && getPickupSelectedQty(line.line_id) < line.requested_qty)
+      if (!targetLine) {
+        setScanFeedback({ type: 'error', message: `條碼 ${rawCode} 對應的預約列已選滿。` })
+        return
+      }
+
+      setPickupSelections((prev) => ({
+        ...prev,
+        [targetLine.line_id]: [...(prev[targetLine.line_id] ?? []), payload.item.id],
+      }))
+      setPickupExpandedLineId(targetLine.line_id)
+      mergeLineCandidateItem(targetLine.line_id, payload.item)
+      setScanFeedback({
+        type: 'success',
+        message: `已加入 ${targetLine.item_name} / ${targetLine.item_model}（${getPickupItemSerialLabel(payload.item)}）`,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      setScanFeedback({ type: 'error', message: message || `查無條碼：${rawCode}` })
+    } finally {
+      setScanInputValue('')
+    }
+  }
+
+  const handleScanInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    const now = Date.now()
+    const buffer = scanBufferRef.current
+    const key = event.key
+
+    if (key === 'Enter') {
+      event.preventDefault()
+      const scanValue = buffer.value.length >= SCAN_MIN_LENGTH ? buffer.value : scanInputValue
+      buffer.value = ''
+      buffer.lastTs = 0
+      void applyScanCode(scanValue)
+      return
+    }
+    if (key.length !== 1) {
+      return
+    }
+    if (buffer.lastTs > 0 && now - buffer.lastTs > SCAN_MAX_KEY_INTERVAL_MS) {
+      buffer.value = key
+    } else {
+      buffer.value += key
+    }
+    buffer.lastTs = now
+  }
+
+  const closePickupDialog = () => {
+    if (submitting) {
+      return
+    }
+    setPickupDialogOpen(false)
+    setPickupLines([])
+    setPickupExpandedLineId(null)
+    setPickupLineCandidates({})
+    setPickupLineCandidatesLoading({})
+    setPickupCandidateKeyword('')
+    setPickupSelections({})
+    setScanInputValue('')
+    setScanFeedback(null)
+    scanBufferRef.current = { value: '', lastTs: 0 }
   }
 
   const handleSubmit = async () => {
@@ -441,7 +687,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          selections: pickupCandidates.map((line) => ({
+          selections: pickupLines.map((line) => ({
             line_id: line.line_id,
             item_ids: pickupSelections[line.line_id] ?? [],
           })),
@@ -460,9 +706,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       }
       await refreshReservationOptions()
       await refreshCurrentRequest()
-      setPickupDialogOpen(false)
-      setPickupCandidates([])
-      setPickupSelections({})
+      closePickupDialog()
       void toast.fire({ icon: 'success', title: '已完成領取並分配資產。' })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
@@ -515,15 +759,23 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </div>
           <div className="grid gap-1.5">
             <Label>領用日</Label>
-            <Input type="date" value={borrowDate} onChange={(event) => setBorrowDate(event.target.value)} disabled={!canEditReservation || submitting} />
+            <Input type="date" value={borrowDate} required onChange={(event) => setBorrowDate(event.target.value)} disabled={!canEditReservation || submitting} />
           </div>
           <div className="grid gap-1.5">
             <Label>預計歸還</Label>
-            <Input type="date" value={dueDate} min={borrowDate || undefined} onChange={(event) => setDueDate(event.target.value)} disabled={!canEditReservation || submitting} />
+            <Input
+              type="date"
+              value={dueDate}
+              required
+              min={borrowDate || undefined}
+              max={dueDateMax}
+              onChange={(event) => setDueDate(event.target.value)}
+              disabled={!canEditReservation || submitting}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label>狀態</Label>
-            <Input value={status || '--'} disabled />
+            <Input value={statusLabel} disabled />
           </div>
           <div className="grid gap-1.5">
             <Label>實際歸還</Label>
@@ -666,16 +918,14 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       </div>
       <Dialog
         open={pickupDialogOpen}
-        onClose={() => {
-          if (!submitting) {
-            setPickupDialogOpen(false)
-          }
-        }}
+        onClose={closePickupDialog}
         title="確認借出編號"
-        description="請為每個預約品項指定實際借出的資產編號。每個編號只能使用一次。"
+        description="大量清單可先掃碼，再按列檢查。每個編號只能使用一次。"
+        panelClassName="max-w-6xl h-[85vh] flex flex-col"
+        bodyClassName="min-h-0 flex-1 overflow-hidden"
         actions={
           <>
-            <Button type="button" variant="secondary" onClick={() => setPickupDialogOpen(false)} disabled={submitting}>
+            <Button type="button" variant="secondary" onClick={closePickupDialog} disabled={submitting}>
               取消
             </Button>
             <Button type="button" onClick={() => void handlePickup()} disabled={submitting || !pickupSelectionComplete}>
@@ -684,43 +934,159 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </>
         }
       >
-        <div className="grid max-h-[60vh] gap-3 overflow-y-auto pr-1">
-          {pickupCandidates.map((line) => {
-            const selected = pickupSelections[line.line_id] ?? []
-            const selectedByOtherLines = getSelectedItemIdsExceptLine(line.line_id)
-            return (
-              <div key={line.line_id} className="rounded-md border border-[hsl(var(--border))] p-3">
-                <p className="m-0 text-sm font-semibold">
-                  {line.item_name} / {line.item_model}
-                </p>
-                <p className="mt-1 mb-2 text-xs text-[hsl(var(--muted-foreground))]">
-                  需選擇 {line.requested_qty} 個，目前已選 {selected.length} 個
-                </p>
-                <div className="grid gap-1">
-                  {line.candidates.length === 0 ? (
-                    <p className="m-0 text-xs text-red-700">目前無可領取資產。</p>
-                  ) : (
-                    line.candidates.map((candidate) => {
-                      const checked = selected.includes(candidate.id)
-                      const disabled = !checked && selectedByOtherLines.has(candidate.id)
-                      return (
-                        <label key={candidate.id} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={disabled || submitting}
-                            onChange={() => togglePickupSelection(line.line_id, candidate.id)}
-                          />
-                          <span>{getPickupItemSerialLabel(candidate)}</span>
-                          <span className="text-xs text-[hsl(var(--muted-foreground))]">（ID: {candidate.id}）</span>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
+        <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[320px,1fr]">
+          <div className="min-h-0 rounded-md border border-[hsl(var(--border))] p-3">
+            <p className="mt-0 mb-2 text-sm font-semibold">待領取品項</p>
+            <div className="grid max-h-full gap-2 overflow-y-auto">
+              {pickupLines.map((line) => {
+                const selectedQty = getPickupSelectedQty(line.line_id)
+                const isExpanded = pickupExpandedLineId === line.line_id
+                return (
+                  <button
+                    key={line.line_id}
+                    type="button"
+                    className={`grid gap-1 rounded-md border p-2 text-left ${
+                      isExpanded ? 'border-[hsl(var(--primary))] bg-[hsl(var(--card-soft))]' : 'border-[hsl(var(--border))]'
+                    }`}
+                    onClick={() => void handleExpandPickupLine(line.line_id)}
+                  >
+                    <span className="text-sm font-semibold">{line.item_name} / {line.item_model}</span>
+                    <span className="text-xs text-[hsl(var(--muted-foreground))]">
+                      已選 {selectedQty} / {line.requested_qty}，候選約 {line.candidate_count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="grid min-h-0 gap-3">
+            <div className="rounded-md border border-[hsl(var(--border))] p-3">
+              <Label htmlFor="borrow-pickup-scan">掃碼輸入</Label>
+              <div className="mt-1 flex gap-2">
+                <Input
+                  id="borrow-pickup-scan"
+                  ref={scanInputRef}
+                  value={scanInputValue}
+                  onChange={(event) => setScanInputValue(event.target.value)}
+                  onKeyDown={handleScanInputKeyDown}
+                  placeholder="掃描條碼後按 Enter"
+                  disabled={submitting}
+                />
+                <Button type="button" variant="secondary" onClick={() => void applyScanCode(scanInputValue)} disabled={submitting || !scanInputValue.trim()}>
+                  加入
+                </Button>
               </div>
-            )
-          })}
+              {scanFeedback ? (
+                <p className={`mt-2 mb-0 text-xs ${scanFeedback.type === 'success' ? 'text-green-700' : scanFeedback.type === 'error' ? 'text-red-700' : 'text-[hsl(var(--muted-foreground))]'}`}>
+                  {scanFeedback.message}
+                </p>
+              ) : (
+                <p className="mt-2 mb-0 text-xs text-[hsl(var(--muted-foreground))]">掃碼後會自動補到第一個尚未選滿的相符預約列。</p>
+              )}
+            </div>
+
+            <div className="grid min-h-0 rounded-md border border-[hsl(var(--border))] p-3">
+              {pickupExpandedLineId ? (
+                <>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-[220px] flex-1">
+                      <Label>候選搜尋</Label>
+                      <Input
+                        value={pickupCandidateKeyword}
+                        onChange={(event) => setPickupCandidateKeyword(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void loadPickupLineCandidates(pickupExpandedLineId, pickupCandidateKeyword, 1)
+                          }
+                        }}
+                        placeholder="輸入編號關鍵字後 Enter"
+                        disabled={submitting}
+                      />
+                    </div>
+                    <Button type="button" variant="secondary" onClick={() => void loadPickupLineCandidates(pickupExpandedLineId, pickupCandidateKeyword, 1)} disabled={submitting}>
+                      查詢
+                    </Button>
+                  </div>
+
+                  <div className="mt-3 min-h-0 overflow-y-auto">
+                    {pickupLineCandidatesLoading[pickupExpandedLineId] ? (
+                      <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">候選載入中...</p>
+                    ) : (
+                      <>
+                        {(pickupLineCandidates[pickupExpandedLineId]?.items ?? []).length === 0 ? (
+                          <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">目前沒有候選資料。</p>
+                        ) : (
+                          (pickupLineCandidates[pickupExpandedLineId]?.items ?? []).map((candidate) => {
+                            const checked = (pickupSelections[pickupExpandedLineId] ?? []).includes(candidate.id)
+                            const disabled = !checked && getSelectedItemIdsExceptLine(pickupExpandedLineId).has(candidate.id)
+                            return (
+                              <label key={candidate.id} className="mb-1 flex items-center gap-2 rounded-sm text-sm">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={disabled || submitting}
+                                  onChange={() => togglePickupSelection(pickupExpandedLineId, candidate.id)}
+                                />
+                                <span>{getPickupItemSerialLabel(candidate)}</span>
+                                <span className="text-xs text-[hsl(var(--muted-foreground))]">（ID: {candidate.id}）</span>
+                              </label>
+                            )
+                          })
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between text-xs text-[hsl(var(--muted-foreground))]">
+                    <span>
+                      第 {pickupLineCandidates[pickupExpandedLineId]?.page ?? 1} / {pickupLineCandidates[pickupExpandedLineId]?.total_pages ?? 1} 頁，
+                      共 {pickupLineCandidates[pickupExpandedLineId]?.total ?? 0} 筆
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() =>
+                          void loadPickupLineCandidates(
+                            pickupExpandedLineId,
+                            pickupCandidateKeyword,
+                            Math.max((pickupLineCandidates[pickupExpandedLineId]?.page ?? 1) - 1, 1),
+                          )
+                        }
+                        disabled={submitting || (pickupLineCandidates[pickupExpandedLineId]?.page ?? 1) <= 1}
+                      >
+                        上一頁
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() =>
+                          void loadPickupLineCandidates(
+                            pickupExpandedLineId,
+                            pickupCandidateKeyword,
+                            Math.min(
+                              (pickupLineCandidates[pickupExpandedLineId]?.page ?? 1) + 1,
+                              pickupLineCandidates[pickupExpandedLineId]?.total_pages ?? 1,
+                            ),
+                          )
+                        }
+                        disabled={
+                          submitting
+                          || (pickupLineCandidates[pickupExpandedLineId]?.page ?? 1) >= (pickupLineCandidates[pickupExpandedLineId]?.total_pages ?? 1)
+                        }
+                      >
+                        下一頁
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">請先選擇左側預約列。</p>
+              )}
+            </div>
+          </div>
         </div>
       </Dialog>
     </div>

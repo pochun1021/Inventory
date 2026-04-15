@@ -34,6 +34,8 @@ from db import (
     list_issue_requests,
     list_borrow_items,
     list_borrow_items_map,
+    list_borrow_pickup_line_candidates,
+    list_borrow_pickup_lines,
     list_borrow_pickup_candidates,
     list_borrow_reservation_options,
     list_borrow_requests,
@@ -46,6 +48,7 @@ from db import (
     log_inventory_action,
     pickup_borrow_request,
     purge_soft_deleted_items,
+    resolve_borrow_pickup_scan,
     return_borrow_request,
     update_asset_status_code,
     update_item,
@@ -189,6 +192,40 @@ class BorrowPickupCandidateLine(BaseModel):
     item_model: str = ""
     requested_qty: int = 0
     candidates: list[BorrowPickupCandidateItem] = Field(default_factory=list)
+
+
+class BorrowPickupLineSummary(BaseModel):
+    line_id: int
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 0
+    candidate_count: int = 0
+
+
+class BorrowPickupLineCandidatePage(BaseModel):
+    line_id: int
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 0
+    items: list[BorrowPickupCandidateItem] = Field(default_factory=list)
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class BorrowPickupScanResolveRequest(BaseModel):
+    code: str = ""
+
+
+class BorrowPickupScanResolveItem(BorrowPickupCandidateItem):
+    item_name: str = ""
+    item_model: str = ""
+
+
+class BorrowPickupScanResolveResponse(BaseModel):
+    item: BorrowPickupScanResolveItem
+    eligible_line_ids: list[int] = Field(default_factory=list)
 
 
 class BorrowRequestCreate(BaseModel):
@@ -1186,6 +1223,54 @@ def list_borrow_pickup_candidates_api(request_id: int):
     if rows is None:
         raise HTTPException(status_code=404, detail="Borrow request not found")
     return [BorrowPickupCandidateLine(**row) for row in rows]
+
+
+@app.get("/api/borrows/{request_id}/pickup-lines", response_model=list[BorrowPickupLineSummary], response_model_by_alias=False)
+def list_borrow_pickup_lines_api(request_id: int):
+    try:
+        rows = list_borrow_pickup_lines(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rows is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return [BorrowPickupLineSummary(**row) for row in rows]
+
+
+@app.get("/api/borrows/{request_id}/pickup-lines/{line_id}/candidates", response_model=BorrowPickupLineCandidatePage, response_model_by_alias=False)
+def list_borrow_pickup_line_candidates_api(
+    request_id: int,
+    line_id: int,
+    keyword: str = "",
+    page: int = Query(default=1),
+    page_size: int = Query(default=50),
+):
+    page, page_size = _normalize_pagination(page, page_size)
+    if page_size > 200:
+        raise HTTPException(status_code=400, detail="page_size must be less than or equal to 200")
+    try:
+        payload = list_borrow_pickup_line_candidates(
+            request_id,
+            line_id,
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return BorrowPickupLineCandidatePage(**payload)
+
+
+@app.post("/api/borrows/{request_id}/pickup-resolve-scan", response_model=BorrowPickupScanResolveResponse, response_model_by_alias=False)
+def resolve_borrow_pickup_scan_api(request_id: int, payload: BorrowPickupScanResolveRequest):
+    try:
+        result = resolve_borrow_pickup_scan(request_id, payload.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return BorrowPickupScanResolveResponse(**result)
 
 
 @app.post("/api/borrows", response_model=BorrowRequest, response_model_by_alias=False)

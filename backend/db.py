@@ -16,6 +16,7 @@ LOCK_PATH = BASE_DIR / "inventory.xlsx.lock"
 ASSET_CATEGORY_NAME_PATH = BASE_DIR.parent / "asset_category_name.xlsx"
 LOG_ARCHIVE_DIR = BASE_DIR / "log_archive"
 HOT_LOG_RETENTION_DAYS = 90
+MAX_BORROW_RESERVATION_DAYS = 30
 ARCHIVE_FILE_PATTERN = re.compile(r"^logs_(\d{6})\.xlsx$")
 
 SHEETS: dict[str, list[str]] = {
@@ -2174,6 +2175,27 @@ def _normalize_borrow_request_lines(lines: list[dict[str, Any]]) -> list[dict[st
     return normalized
 
 
+def _validate_borrow_request_dates(*, borrow_date_value: Any, due_date_value: Any) -> None:
+    borrow_date_raw = _to_str(borrow_date_value).strip()
+    due_date_raw = _to_str(due_date_value).strip()
+    if not borrow_date_raw:
+        raise ValueError("borrow_date is required")
+    if not due_date_raw:
+        raise ValueError("due_date is required")
+
+    borrow_date = _parse_request_date(borrow_date_raw)
+    if borrow_date is None:
+        raise ValueError("invalid borrow_date format")
+    due_date = _parse_request_date(due_date_raw)
+    if due_date is None:
+        raise ValueError("invalid due_date format")
+
+    if due_date < borrow_date:
+        raise ValueError("due_date cannot be earlier than borrow_date")
+    if (due_date - borrow_date).days > MAX_BORROW_RESERVATION_DAYS:
+        raise ValueError(f"borrow reservation cannot exceed {MAX_BORROW_RESERVATION_DAYS} days")
+
+
 def _build_borrow_reservation_usage(
     *,
     request_rows: list[dict[str, Any]],
@@ -2324,6 +2346,10 @@ def _sync_borrow_statuses_in_place(
 
 
 def create_borrow_request(request_data: dict[str, Any], request_lines: list[dict[str, Any]]) -> int:
+    _validate_borrow_request_dates(
+        borrow_date_value=request_data.get("borrow_date"),
+        due_date_value=request_data.get("due_date"),
+    )
     normalized_lines = _normalize_borrow_request_lines(request_lines)
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
@@ -2534,6 +2560,219 @@ def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
     return list_borrow_items_map({request_id}).get(request_id, [])
 
 
+def _validate_pickup_request_context(
+    *,
+    request_id: int,
+    request_rows: list[dict[str, Any]],
+    line_rows: list[dict[str, Any]],
+    allocation_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
+    if request_row is None:
+        return None, []
+    status = _to_str(request_row.get("status")).strip().lower()
+    if status not in {"reserved", "expired"}:
+        raise ValueError("only reserved request can be picked up")
+    if any(_to_int(row.get("request_id")) == request_id for row in allocation_rows):
+        raise ValueError("borrow request already allocated")
+    request_lines = sorted(
+        (row for row in line_rows if _to_int(row.get("request_id")) == request_id),
+        key=lambda row: _to_int(row.get("id")),
+    )
+    if not request_lines:
+        raise ValueError("request_lines is required")
+    return request_row, request_lines
+
+
+def _normalize_scan_code(value: Any) -> str:
+    return _to_str(value).strip().lower()
+
+
+def _inventory_serial_values(row: dict[str, Any]) -> list[str]:
+    return [
+        _normalize_scan_code(row.get("n_property_sn")),
+        _normalize_scan_code(row.get("property_sn")),
+        _normalize_scan_code(row.get("n_item_sn")),
+        _normalize_scan_code(row.get("item_sn")),
+    ]
+
+
+def list_borrow_pickup_lines(request_id: int) -> list[dict[str, Any]] | None:
+    with _locked_workbook() as wb:
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_rows = _read_rows(wb["borrow_request_lines"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+        request_rows = _read_rows(request_ws)
+
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        request_row, request_lines = _validate_pickup_request_context(
+            request_id=request_id,
+            request_rows=request_rows,
+            line_rows=line_rows,
+            allocation_rows=allocation_rows,
+        )
+        if request_row is None:
+            return None
+
+    candidates_by_key = _build_inventory_candidates_by_key(inventory_rows)
+    summaries: list[dict[str, Any]] = []
+    for line in request_lines:
+        key = _borrow_key(line.get("item_name"), line.get("item_model"))
+        summaries.append(
+            {
+                "line_id": _to_int(line.get("id")),
+                "item_name": _to_str(line.get("item_name")),
+                "item_model": _to_str(line.get("item_model")),
+                "requested_qty": _to_int(line.get("requested_qty")),
+                "candidate_count": len(candidates_by_key.get(key, [])),
+            }
+        )
+    return summaries
+
+
+def list_borrow_pickup_line_candidates(
+    request_id: int,
+    line_id: int,
+    *,
+    keyword: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any] | None:
+    with _locked_workbook() as wb:
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_rows = _read_rows(wb["borrow_request_lines"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+        request_rows = _read_rows(request_ws)
+
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        request_row, request_lines = _validate_pickup_request_context(
+            request_id=request_id,
+            request_rows=request_rows,
+            line_rows=line_rows,
+            allocation_rows=allocation_rows,
+        )
+        if request_row is None:
+            return None
+
+    target_line = next((row for row in request_lines if _to_int(row.get("id")) == line_id), None)
+    if target_line is None:
+        raise ValueError("line_id does not belong to request")
+
+    key = _borrow_key(target_line.get("item_name"), target_line.get("item_model"))
+    candidates = _build_inventory_candidates_by_key(inventory_rows).get(key, [])
+    normalized_keyword = _normalize_scan_code(keyword)
+    if normalized_keyword:
+        filtered_candidates: list[dict[str, Any]] = []
+        for item in candidates:
+            serial_values = _inventory_serial_values(item)
+            if any(normalized_keyword in serial_value for serial_value in serial_values if serial_value):
+                filtered_candidates.append(item)
+        candidates = filtered_candidates
+
+    total = len(candidates)
+    total_pages = max((total + page_size - 1) // page_size, 1)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paged_candidates = candidates[start:end]
+    return {
+        "line_id": _to_int(target_line.get("id")),
+        "item_name": _to_str(target_line.get("item_name")),
+        "item_model": _to_str(target_line.get("item_model")),
+        "requested_qty": _to_int(target_line.get("requested_qty")),
+        "items": [
+            {
+                "id": _to_int(item.get("id")),
+                "n_property_sn": _to_str(item.get("n_property_sn")),
+                "property_sn": _to_str(item.get("property_sn")),
+                "n_item_sn": _to_str(item.get("n_item_sn")),
+                "item_sn": _to_str(item.get("item_sn")),
+            }
+            for item in paged_candidates
+        ],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
+def resolve_borrow_pickup_scan(request_id: int, code: str) -> dict[str, Any] | None:
+    normalized_code = _normalize_scan_code(code)
+    if not normalized_code:
+        raise ValueError("scan code is required")
+
+    with _locked_workbook() as wb:
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_rows = _read_rows(wb["borrow_request_lines"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+        request_rows = _read_rows(request_ws)
+
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        request_row, request_lines = _validate_pickup_request_context(
+            request_id=request_id,
+            request_rows=request_rows,
+            line_rows=line_rows,
+            allocation_rows=allocation_rows,
+        )
+        if request_row is None:
+            return None
+
+    candidates_by_key = _build_inventory_candidates_by_key(inventory_rows)
+    eligible_line_ids_by_key: dict[tuple[str, str], list[int]] = {}
+    for line in request_lines:
+        key = _borrow_key(line.get("item_name"), line.get("item_model"))
+        eligible_line_ids_by_key.setdefault(key, []).append(_to_int(line.get("id")))
+
+    matched_item: dict[str, Any] | None = None
+    matched_key: tuple[str, str] | None = None
+    for key, candidates in candidates_by_key.items():
+        for item in candidates:
+            serial_values = _inventory_serial_values(item)
+            if normalized_code in serial_values:
+                if matched_item is not None:
+                    raise ValueError("scan code matches multiple items")
+                matched_item = item
+                matched_key = key
+
+    if matched_item is None or matched_key is None:
+        raise ValueError("scan code not found")
+
+    eligible_line_ids = eligible_line_ids_by_key.get(matched_key, [])
+    if not eligible_line_ids:
+        raise ValueError("scanned item does not belong to this request")
+
+    return {
+        "item": {
+            "id": _to_int(matched_item.get("id")),
+            "n_property_sn": _to_str(matched_item.get("n_property_sn")),
+            "property_sn": _to_str(matched_item.get("property_sn")),
+            "n_item_sn": _to_str(matched_item.get("n_item_sn")),
+            "item_sn": _to_str(matched_item.get("item_sn")),
+            "item_name": _to_str(matched_item.get("name")),
+            "item_model": _to_str(matched_item.get("model")),
+        },
+        "eligible_line_ids": eligible_line_ids,
+    }
+
+
 def list_borrow_pickup_candidates(request_id: int) -> list[dict[str, Any]] | None:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
@@ -2548,23 +2787,16 @@ def list_borrow_pickup_candidates(request_id: int) -> list[dict[str, Any]] | Non
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
         )
-        request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
+        request_row, request_lines = _validate_pickup_request_context(
+            request_id=request_id,
+            request_rows=request_rows,
+            line_rows=line_rows,
+            allocation_rows=allocation_rows,
+        )
         if request_row is None:
             return None
-        status = _to_str(request_row.get("status")).strip().lower()
-        if status not in {"reserved", "expired"}:
-            raise ValueError("only reserved request can be picked up")
-        if any(_to_int(row.get("request_id")) == request_id for row in allocation_rows):
-            raise ValueError("borrow request already allocated")
 
     candidates_by_key = _build_inventory_candidates_by_key(inventory_rows)
-    request_lines = sorted(
-        (row for row in line_rows if _to_int(row.get("request_id")) == request_id),
-        key=lambda row: _to_int(row.get("id")),
-    )
-    if not request_lines:
-        raise ValueError("request_lines is required")
-
     results: list[dict[str, Any]] = []
     for line in request_lines:
         line_id = _to_int(line.get("id"))
@@ -2641,6 +2873,10 @@ def list_borrow_reservation_options(*, exclude_request_id: int | None = None) ->
 
 
 def update_borrow_request(request_id: int, request_data: dict[str, Any], request_lines: list[dict[str, Any]]) -> bool:
+    _validate_borrow_request_dates(
+        borrow_date_value=request_data.get("borrow_date"),
+        due_date_value=request_data.get("due_date"),
+    )
     normalized_lines = _normalize_borrow_request_lines(request_lines)
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]

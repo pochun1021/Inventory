@@ -126,6 +126,74 @@ class RequestApiGuardTests(unittest.TestCase):
         returned = app_main.return_borrow_request_api(created.id, BackgroundTasks())
         self.assertEqual(returned.status, 'returned')
 
+    def test_borrow_api_rejects_missing_borrow_date(self) -> None:
+        self._create_item(name='筆電', model='A1')
+        request = app_main.BorrowRequestCreate(
+            borrower='tester',
+            department='qa',
+            purpose='test',
+            borrow_date=None,
+            due_date='2026-04-20',
+            memo='',
+            request_lines=[{'item_name': '筆電', 'item_model': 'A1', 'requested_qty': 1, 'note': ''}],
+        )
+        with self.assertRaises(HTTPException) as exc:
+            app_main.create_borrow_request_api(request, BackgroundTasks())
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, 'borrow_date is required')
+
+    def test_borrow_api_rejects_missing_due_date(self) -> None:
+        self._create_item(name='筆電', model='A1')
+        request = app_main.BorrowRequestCreate(
+            borrower='tester',
+            department='qa',
+            purpose='test',
+            borrow_date='2026-04-10',
+            due_date=None,
+            memo='',
+            request_lines=[{'item_name': '筆電', 'item_model': 'A1', 'requested_qty': 1, 'note': ''}],
+        )
+        with self.assertRaises(HTTPException) as exc:
+            app_main.create_borrow_request_api(request, BackgroundTasks())
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, 'due_date is required')
+
+    def test_borrow_api_rejects_date_span_exceeding_30_days(self) -> None:
+        self._create_item(name='筆電', model='A1')
+        request = app_main.BorrowRequestCreate(
+            borrower='tester',
+            department='qa',
+            purpose='test',
+            borrow_date='2026-04-10',
+            due_date='2026-05-11',
+            memo='',
+            request_lines=[{'item_name': '筆電', 'item_model': 'A1', 'requested_qty': 1, 'note': ''}],
+        )
+        with self.assertRaises(HTTPException) as exc:
+            app_main.create_borrow_request_api(request, BackgroundTasks())
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, 'borrow reservation cannot exceed 30 days')
+
+    def test_borrow_update_api_rejects_date_span_exceeding_30_days(self) -> None:
+        self._create_item(name='平板', model='P1')
+        created = app_main.create_borrow_request_api(
+            self._borrow_request([{'item_name': '平板', 'item_model': 'P1', 'requested_qty': 1, 'note': ''}]),
+            BackgroundTasks(),
+        )
+        update_request = app_main.BorrowRequestCreate(
+            borrower='tester',
+            department='qa',
+            purpose='test',
+            borrow_date='2026-04-10',
+            due_date='2026-05-11',
+            memo='',
+            request_lines=[{'item_name': '平板', 'item_model': 'P1', 'requested_qty': 1, 'note': ''}],
+        )
+        with self.assertRaises(HTTPException) as exc:
+            app_main.update_borrow_request_api(created.id, update_request, BackgroundTasks())
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail, 'borrow reservation cannot exceed 30 days')
+
     def test_borrow_pickup_requires_explicit_selections(self) -> None:
         self._create_item(name='平板', model='P1')
         created = app_main.create_borrow_request_api(
@@ -157,6 +225,32 @@ class RequestApiGuardTests(unittest.TestCase):
             app_main.pickup_borrow_request_api(created.id, payload, BackgroundTasks())
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(exc.exception.detail, f'item_id {wrong_item_id} does not match line_id {created.request_lines[0].id}')
+
+    def test_borrow_pickup_lines_candidates_and_scan_resolve(self) -> None:
+        first_id = self._create_item(name='相機', model='R1')
+        second_id = self._create_item(name='相機', model='R1')
+        self.assertGreater(first_id, 0)
+        created = app_main.create_borrow_request_api(
+            self._borrow_request([{'item_name': '相機', 'item_model': 'R1', 'requested_qty': 1, 'note': ''}]),
+            BackgroundTasks(),
+        )
+
+        lines = app_main.list_borrow_pickup_lines_api(created.id)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].line_id, created.request_lines[0].id)
+        self.assertEqual(lines[0].requested_qty, 1)
+        self.assertGreaterEqual(lines[0].candidate_count, 2)
+
+        page = app_main.list_borrow_pickup_line_candidates_api(created.id, created.request_lines[0].id, keyword='', page=1, page_size=1)
+        self.assertEqual(page.page, 1)
+        self.assertEqual(page.page_size, 1)
+        self.assertEqual(page.total, 2)
+        self.assertEqual(len(page.items), 1)
+
+        serial_code = page.items[0].n_property_sn or page.items[0].property_sn or page.items[0].n_item_sn or page.items[0].item_sn
+        resolved = app_main.resolve_borrow_pickup_scan_api(created.id, app_main.BorrowPickupScanResolveRequest(code=serial_code))
+        self.assertEqual(resolved.item.id, page.items[0].id)
+        self.assertIn(created.request_lines[0].id, resolved.eligible_line_ids)
 
     def test_borrow_expired_reservation_auto_release(self) -> None:
         self._create_item(name='相機', model='M2')
