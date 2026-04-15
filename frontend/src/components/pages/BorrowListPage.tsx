@@ -17,15 +17,19 @@ type BorrowSortKey = 'id' | 'borrow_date' | 'borrower' | 'purpose' | 'return_inf
 type SortDirection = 'asc' | 'desc'
 
 const statusLabelMap: Record<string, string> = {
+  reserved: '已預約',
   borrowed: '借出中',
   returned: '已歸還',
   overdue: '逾期',
+  expired: '預約失效',
 }
 
 const statusBadgeClassMap: Record<string, string> = {
+  reserved: 'border-amber-200 bg-amber-100 text-amber-800',
   borrowed: 'border-sky-200 bg-sky-100 text-sky-800',
   returned: 'border-emerald-200 bg-emerald-100 text-emerald-800',
   overdue: 'border-red-200 bg-red-100 text-red-800',
+  expired: 'border-zinc-300 bg-zinc-100 text-zinc-700',
 }
 
 function getStatusBadgeClass(status: string): string {
@@ -55,8 +59,14 @@ function parseBorrowSortKey(value: string | null, fallback: BorrowSortKey): Borr
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   const statusParam = params.get('status')
-  const status: 'all' | 'borrowed' | 'returned' | 'overdue' =
-    statusParam === 'borrowed' || statusParam === 'returned' || statusParam === 'overdue' ? statusParam : 'all'
+  const status: 'all' | 'reserved' | 'borrowed' | 'returned' | 'overdue' | 'expired' =
+    statusParam === 'reserved'
+    || statusParam === 'borrowed'
+    || statusParam === 'returned'
+    || statusParam === 'overdue'
+    || statusParam === 'expired'
+      ? statusParam
+      : 'all'
 
   return {
     keyword: params.get('keyword') ?? '',
@@ -74,7 +84,7 @@ export function BorrowListPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [keyword, setKeyword] = useState(initialState.keyword)
-  const [statusFilter, setStatusFilter] = useState<'all' | 'borrowed' | 'returned' | 'overdue'>(initialState.status)
+  const [statusFilter, setStatusFilter] = useState<'all' | 'reserved' | 'borrowed' | 'returned' | 'overdue' | 'expired'>(initialState.status)
   const [sortBy, setSortBy] = useState<BorrowSortKey>(initialState.sortBy)
   const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
@@ -217,9 +227,11 @@ export function BorrowListPage() {
               }}
             >
               <option value="all">全部狀態</option>
+              <option value="reserved">已預約</option>
               <option value="borrowed">借出中</option>
               <option value="returned">已歸還</option>
               <option value="overdue">逾期</option>
+              <option value="expired">預約失效</option>
             </Select>
           </div>
           <div className="flex items-end text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</div>
@@ -281,9 +293,9 @@ export function BorrowListPage() {
                         </TableCell>
                         <TableCell>
                           <div className="grid gap-1">
-                            {request.items.map((item) => (
+                            {request.request_lines.map((item) => (
                               <div key={item.id} className="text-xs">
-                                {(item.item_name || `#${item.item_id}`)} x {item.quantity}
+                                {(item.item_name || `#${item.item_id || '--'}`)} / {item.item_model || '--'}：預約 {item.requested_qty}、已領取 {item.allocated_qty}
                               </div>
                             ))}
                           </div>
@@ -319,7 +331,7 @@ export function BorrowListPage() {
                     <p className="mt-0.5 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{request.department || '--'}</p>
                     <p className="mt-2 mb-0 text-sm">借用：{request.borrow_date || '--'} / 歸還：{request.return_date || '--'}</p>
                     <p className="mt-2 mb-0 text-xs text-[hsl(var(--muted-foreground))]">
-                      品項：{request.items.map((item) => `${item.item_name || `#${item.item_id}`} x ${item.quantity}`).join('，') || '--'}
+                      品項：{request.request_lines.map((item) => `${item.item_name || `#${item.item_id || '--'}`} / ${item.item_model || '--'}（預約 ${item.requested_qty}、已領取 ${item.allocated_qty}）`).join('，') || '--'}
                     </p>
                   </article>
                 ))

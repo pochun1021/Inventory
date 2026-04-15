@@ -114,6 +114,21 @@ SHEETS: dict[str, list[str]] = {
         "quantity",
         "note",
     ],
+    "borrow_request_lines": [
+        "id",
+        "request_id",
+        "item_name",
+        "item_model",
+        "requested_qty",
+        "note",
+    ],
+    "borrow_allocations": [
+        "id",
+        "request_id",
+        "line_id",
+        "item_id",
+        "note",
+    ],
     "donation_requests": [
         "id",
         "donor",
@@ -177,6 +192,8 @@ STRING_FIELDS: dict[str, list[str]] = {
         "created_at",
     ],
     "borrow_items": ["note"],
+    "borrow_request_lines": ["item_name", "item_model", "note"],
+    "borrow_allocations": ["note"],
     "donation_requests": [
         "donor",
         "department",
@@ -792,6 +809,8 @@ def get_dashboard_snapshot() -> dict[str, Any]:
         issue_item_rows = _read_rows(wb["issue_items"])
         borrow_request_rows = _read_rows(wb["borrow_requests"])
         borrow_item_rows = _read_rows(wb["borrow_items"])
+        borrow_line_rows = _read_rows(wb["borrow_request_lines"])
+        borrow_allocation_rows = _read_rows(wb["borrow_allocations"])
         donation_request_rows = _read_rows(wb["donation_requests"])
         donation_item_rows = _read_rows(wb["donation_items"])
 
@@ -822,6 +841,14 @@ def get_dashboard_snapshot() -> dict[str, Any]:
     for row in borrow_item_rows:
         request_id = _to_int(row.get("request_id"))
         borrow_item_count_map[request_id] = borrow_item_count_map.get(request_id, 0) + 1
+    for row in borrow_line_rows:
+        request_id = _to_int(row.get("request_id"))
+        borrow_item_count_map[request_id] = borrow_item_count_map.get(request_id, 0) + 1
+
+    borrow_allocation_count_map: dict[int, int] = {}
+    for row in borrow_allocation_rows:
+        request_id = _to_int(row.get("request_id"))
+        borrow_allocation_count_map[request_id] = borrow_allocation_count_map.get(request_id, 0) + 1
 
     donation_item_count_map: dict[int, int] = {}
     for row in donation_item_rows:
@@ -847,13 +874,17 @@ def get_dashboard_snapshot() -> dict[str, Any]:
     overdue_borrow_count = 0
     due_soon_borrow_count = 0
     for row in borrow_request_rows:
-        _normalize_borrow_status_in_place(row)
-        status = _to_str(row.get("status")).strip()
         request_id = _to_int(row.get("id"))
+        _normalize_borrow_status_in_place(
+            row,
+            has_allocations=borrow_allocation_count_map.get(request_id, 0) > 0
+            or borrow_item_count_map.get(request_id, 0) > 0,
+        )
+        status = _to_str(row.get("status")).strip()
         item_count = borrow_item_count_map.get(request_id, 0)
         if status == "overdue":
             overdue_borrow_count += 1
-        if _is_due_soon(
+        if status in {"borrowed", "overdue"} and _is_due_soon(
             due_date_value=row.get("due_date"),
             return_date_value=row.get("return_date"),
         ):
@@ -2073,11 +2104,32 @@ def _parse_request_date(value: Any) -> date | None:
     return None
 
 
-def _derive_borrow_status(*, due_date_value: Any, return_date_value: Any, today: date | None = None) -> str:
+def _borrow_key(item_name: Any, item_model: Any) -> tuple[str, str]:
+    return (_to_str(item_name).strip(), _to_str(item_model).strip())
+
+
+def _derive_borrow_status(
+    *,
+    due_date_value: Any,
+    return_date_value: Any,
+    status_value: Any = "",
+    borrow_date_value: Any = "",
+    has_allocations: bool = False,
+    today: date | None = None,
+) -> str:
     now = today or date.today()
     return_date = _parse_request_date(return_date_value)
     if return_date is not None:
         return "returned"
+
+    status = _to_str(status_value).strip().lower()
+    borrow_date = _parse_request_date(borrow_date_value)
+    if not has_allocations:
+        if borrow_date is not None and borrow_date < now:
+            return "expired"
+        if status in {"expired", "cancelled"}:
+            return status
+        return "reserved"
 
     due_date = _parse_request_date(due_date_value)
     if due_date is not None and due_date < now:
@@ -2096,10 +2148,129 @@ def _is_due_soon(*, due_date_value: Any, return_date_value: Any, today: date | N
     return 0 <= delta <= days
 
 
-def _normalize_borrow_status_in_place(row: dict[str, Any], *, today: date | None = None) -> bool:
+def _normalize_borrow_request_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for line in lines:
+        item_name = _to_str(line.get("item_name")).strip()
+        item_model = _to_str(line.get("item_model")).strip()
+        requested_qty = _to_int(line.get("requested_qty"))
+        note = _to_str(line.get("note"))
+        if not item_name:
+            raise ValueError("item_name is required")
+        if not item_model:
+            raise ValueError("item_model is required")
+        if requested_qty <= 0:
+            raise ValueError("requested_qty must be greater than 0")
+        normalized.append(
+            {
+                "item_name": item_name,
+                "item_model": item_model,
+                "requested_qty": requested_qty,
+                "note": note,
+            }
+        )
+    if not normalized:
+        raise ValueError("request_lines is required")
+    return normalized
+
+
+def _build_borrow_reservation_usage(
+    *,
+    request_rows: list[dict[str, Any]],
+    line_rows: list[dict[str, Any]],
+    allocation_rows: list[dict[str, Any]],
+    legacy_item_rows: list[dict[str, Any]] | None = None,
+    exclude_request_id: int | None = None,
+    today: date | None = None,
+) -> dict[tuple[str, str], int]:
+    legacy_rows = legacy_item_rows or []
+    active_request_ids = {
+        _to_int(row.get("id"))
+        for row in request_rows
+        if _derive_borrow_status(
+            due_date_value=row.get("due_date"),
+            return_date_value=row.get("return_date"),
+            status_value=row.get("status"),
+            borrow_date_value=row.get("borrow_date"),
+            has_allocations=any(_to_int(alloc.get("request_id")) == _to_int(row.get("id")) for alloc in allocation_rows)
+            or any(_to_int(item.get("request_id")) == _to_int(row.get("id")) for item in legacy_rows),
+            today=today,
+        )
+        == "reserved"
+    }
+    if exclude_request_id is not None:
+        active_request_ids.discard(exclude_request_id)
+
+    usage: dict[tuple[str, str], int] = {}
+    for line in line_rows:
+        request_id = _to_int(line.get("request_id"))
+        if request_id not in active_request_ids:
+            continue
+        key = _borrow_key(line.get("item_name"), line.get("item_model"))
+        usage[key] = usage.get(key, 0) + _to_int(line.get("requested_qty"))
+    return usage
+
+
+def _build_inventory_available_by_key(inventory_rows: list[dict[str, Any]]) -> dict[tuple[str, str], int]:
+    available: dict[tuple[str, str], int] = {}
+    for row in inventory_rows:
+        if not _is_blank(row.get("deleted_at")):
+            continue
+        if _to_str(row.get("asset_status")).strip() != "0":
+            continue
+        key = _borrow_key(row.get("name"), row.get("model"))
+        available[key] = available.get(key, 0) + 1
+    return available
+
+
+def _build_inventory_candidates_by_key(inventory_rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    candidates: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in inventory_rows:
+        if not _is_blank(row.get("deleted_at")):
+            continue
+        if _to_str(row.get("asset_status")).strip() != "0":
+            continue
+        key = _borrow_key(row.get("name"), row.get("model"))
+        candidates.setdefault(key, []).append(row)
+    for rows in candidates.values():
+        rows.sort(key=lambda item: _to_int(item.get("id")))
+    return candidates
+
+
+def _collect_shortages(
+    requested_totals: dict[tuple[str, str], int],
+    available_totals: dict[tuple[str, str], int],
+) -> list[dict[str, Any]]:
+    shortages: list[dict[str, Any]] = []
+    for key, requested_qty in requested_totals.items():
+        available_qty = available_totals.get(key, 0)
+        if available_qty >= requested_qty:
+            continue
+        shortages.append(
+            {
+                "item_name": key[0],
+                "item_model": key[1],
+                "requested_qty": requested_qty,
+                "available_qty": available_qty,
+                "shortage_qty": requested_qty - available_qty,
+            }
+        )
+    shortages.sort(key=lambda row: (row["item_name"], row["item_model"]))
+    return shortages
+
+
+def _normalize_borrow_status_in_place(
+    row: dict[str, Any],
+    *,
+    has_allocations: bool = False,
+    today: date | None = None,
+) -> bool:
     next_status = _derive_borrow_status(
         due_date_value=row.get("due_date"),
         return_date_value=row.get("return_date"),
+        status_value=row.get("status"),
+        borrow_date_value=row.get("borrow_date"),
+        has_allocations=has_allocations,
         today=today,
     )
     previous_status = _to_str(row.get("status")).strip()
@@ -2109,51 +2280,88 @@ def _normalize_borrow_status_in_place(row: dict[str, Any], *, today: date | None
     return True
 
 
-def _to_borrow_api_row(row: dict[str, Any], *, today: date | None = None) -> dict[str, Any]:
+def _to_borrow_api_row(row: dict[str, Any], *, has_allocations: bool = False, today: date | None = None) -> dict[str, Any]:
     normalized = dict(row)
     normalized["status"] = _derive_borrow_status(
         due_date_value=row.get("due_date"),
         return_date_value=row.get("return_date"),
+        status_value=row.get("status"),
+        borrow_date_value=row.get("borrow_date"),
+        has_allocations=has_allocations,
         today=today,
     )
-    normalized["is_due_soon"] = _is_due_soon(
-        due_date_value=row.get("due_date"),
-        return_date_value=row.get("return_date"),
-        today=today,
-        days=3,
+    normalized["is_due_soon"] = normalized["status"] in {"borrowed", "overdue"} and _is_due_soon(
+        due_date_value=row.get("due_date"), return_date_value=row.get("return_date"), today=today, days=3
     )
     return normalized
 
 
-def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, Any]]) -> int:
-    next_status = _derive_borrow_status(
-        due_date_value=request_data.get("due_date"),
-        return_date_value=request_data.get("return_date"),
-    )
+def _sync_borrow_statuses_in_place(
+    *,
+    request_rows: list[dict[str, Any]],
+    allocation_rows: list[dict[str, Any]],
+    legacy_item_rows: list[dict[str, Any]] | None = None,
+    today: date | None = None,
+) -> bool:
+    legacy_rows = legacy_item_rows or []
+    allocation_count_map: dict[int, int] = {}
+    for row in allocation_rows:
+        request_id = _to_int(row.get("request_id"))
+        allocation_count_map[request_id] = allocation_count_map.get(request_id, 0) + 1
+    for row in legacy_rows:
+        request_id = _to_int(row.get("request_id"))
+        allocation_count_map[request_id] = allocation_count_map.get(request_id, 0) + 1
+    status_changed = False
+    for row in request_rows:
+        request_id = _to_int(row.get("id"))
+        if _normalize_borrow_status_in_place(
+            row,
+            has_allocations=allocation_count_map.get(request_id, 0) > 0,
+            today=today,
+        ):
+            status_changed = True
+    return status_changed
+
+
+def create_borrow_request(request_data: dict[str, Any], request_lines: list[dict[str, Any]]) -> int:
+    normalized_lines = _normalize_borrow_request_lines(request_lines)
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
-        item_ws = wb["borrow_items"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_ws = wb["borrow_request_lines"]
+        allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
-        movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
-        item_rows = _read_rows(item_ws)
+        line_rows = _read_rows(line_ws)
+        allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
-        movement_rows = _read_rows(movement_ws)
-        selected_item_ids = _normalize_request_item_ids(items)
-        inventory_map = _active_inventory_rows_map(inventory_rows)
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+
+        requested_totals: dict[tuple[str, str], int] = {}
+        for line in normalized_lines:
+            key = _borrow_key(line["item_name"], line["item_model"])
+            requested_totals[key] = requested_totals.get(key, 0) + line["requested_qty"]
+
+        available_totals = _build_inventory_available_by_key(inventory_rows)
+        reserved_usage = _build_borrow_reservation_usage(
+            request_rows=request_rows,
+            line_rows=line_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        reservable_totals = {
+            key: max(available_totals.get(key, 0) - reserved_usage.get(key, 0), 0)
+            for key in set(available_totals) | set(reserved_usage) | set(requested_totals)
+        }
+        shortages = _collect_shortages(requested_totals, reservable_totals)
+        if shortages:
+            raise ValueError(json.dumps({"message": "insufficient_reservable_quantity", "shortages": shortages}, ensure_ascii=False))
+
         request_id = _next_id(request_rows)
-        for item_id in selected_item_ids:
-            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            if _borrow_status_uses_inventory(next_status):
-                _set_inventory_status_with_movement(
-                    movement_rows=movement_rows,
-                    row=row,
-                    item_id=item_id,
-                    status="2",
-                    action="create",
-                    entity="borrow_request",
-                    entity_id=request_id,
-                )
         request_rows.append(
             {
                 "id": request_id,
@@ -2162,80 +2370,146 @@ def create_borrow_request(request_data: dict[str, Any], items: list[dict[str, An
                 "purpose": request_data["purpose"],
                 "borrow_date": request_data["borrow_date"],
                 "due_date": request_data["due_date"],
-                "return_date": request_data["return_date"],
-                "status": next_status,
+                "return_date": "",
+                "status": "reserved",
                 "memo": request_data["memo"],
                 "created_at": _now_str(),
             }
         )
-        next_item_id = _next_id(item_rows)
-        for index, item in enumerate(items):
-            item_rows.append(
+        next_line_id = _next_id(line_rows)
+        for index, line in enumerate(normalized_lines):
+            line_rows.append(
                 {
-                    "id": next_item_id + index,
+                    "id": next_line_id + index,
                     "request_id": request_id,
-                    "item_id": item["item_id"],
-                    "quantity": 1,
-                    "note": item.get("note", ""),
+                    "item_name": line["item_name"],
+                    "item_model": line["item_model"],
+                    "requested_qty": line["requested_qty"],
+                    "note": line["note"],
                 }
             )
         _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
-        _write_rows(item_ws, SHEETS["borrow_items"], item_rows)
+        _write_rows(line_ws, SHEETS["borrow_request_lines"], line_rows)
+        _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
-        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
         return request_id
 
 
 def list_borrow_requests() -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
-        ws = wb["borrow_requests"]
-        rows = _read_rows(ws)
-        status_changed = False
-        for row in rows:
-            if _normalize_borrow_status_in_place(row):
-                status_changed = True
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        rows = _read_rows(request_ws)
+        status_changed = _sync_borrow_statuses_in_place(
+            request_rows=rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
         if status_changed:
-            _write_rows(ws, SHEETS["borrow_requests"], rows)
+            _write_rows(request_ws, SHEETS["borrow_requests"], rows)
             wb.save(DB_PATH)
-    return sorted((_to_borrow_api_row(row) for row in rows), key=lambda row: _to_int(row.get("id")), reverse=True)
+    allocation_count_map: dict[int, int] = {}
+    for row in allocation_rows:
+        request_id = _to_int(row.get("request_id"))
+        allocation_count_map[request_id] = allocation_count_map.get(request_id, 0) + 1
+    for row in legacy_item_rows:
+        request_id = _to_int(row.get("request_id"))
+        allocation_count_map[request_id] = allocation_count_map.get(request_id, 0) + 1
+    return sorted(
+        (
+            _to_borrow_api_row(
+                row,
+                has_allocations=allocation_count_map.get(_to_int(row.get("id")), 0) > 0,
+            )
+            for row in rows
+        ),
+        key=lambda row: _to_int(row.get("id")),
+        reverse=True,
+    )
 
 
 def get_borrow_request(request_id: int) -> dict[str, Any] | None:
     with _locked_workbook() as wb:
-        ws = wb["borrow_requests"]
-        rows = _read_rows(ws)
-        status_changed = False
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        rows = _read_rows(request_ws)
+        status_changed = _sync_borrow_statuses_in_place(
+            request_rows=rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
         target_row: dict[str, Any] | None = None
         for row in rows:
             if _to_int(row.get("id")) != request_id:
                 continue
-            if _normalize_borrow_status_in_place(row):
-                status_changed = True
             target_row = row
             break
         if status_changed:
-            _write_rows(ws, SHEETS["borrow_requests"], rows)
+            _write_rows(request_ws, SHEETS["borrow_requests"], rows)
             wb.save(DB_PATH)
     if target_row is None:
         return None
-    return _to_borrow_api_row(target_row)
+    has_allocations = any(_to_int(row.get("request_id")) == request_id for row in allocation_rows) or any(
+        _to_int(row.get("request_id")) == request_id for row in legacy_item_rows
+    )
+    return _to_borrow_api_row(target_row, has_allocations=has_allocations)
 
 
 def list_borrow_items_map(request_ids: set[int] | None = None) -> dict[int, list[dict[str, Any]]]:
     with _locked_workbook() as wb:
-        item_rows = _read_rows(wb["borrow_items"])
+        line_rows = _read_rows(wb["borrow_request_lines"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        legacy_item_rows = _read_rows(wb["borrow_items"])
         inventory_rows = _read_rows(wb["inventory_items"])
 
     inventory_map = _active_inventory_detail_map(inventory_rows)
+    inventory_rows_map = _active_inventory_rows_map(inventory_rows)
     selected_ids = request_ids or set()
     results: dict[int, list[dict[str, Any]]] = {}
-    for row in item_rows:
+    line_map: dict[int, dict[str, Any]] = {}
+    for row in line_rows:
+        line_id = _to_int(row.get("id"))
+        if line_id > 0:
+            line_map[line_id] = row
+
+    allocation_by_line_id: dict[int, list[dict[str, Any]]] = {}
+    for row in allocation_rows:
+        line_id = _to_int(row.get("line_id"))
+        allocation_by_line_id.setdefault(line_id, []).append(row)
+
+    for row in line_rows:
+        request_id = _to_int(row.get("request_id"))
+        if selected_ids and request_id not in selected_ids:
+            continue
+        line_id = _to_int(row.get("id"))
+        allocated_rows = allocation_by_line_id.get(line_id, [])
+        allocated_item_ids = [_to_int(alloc.get("item_id")) for alloc in allocated_rows if _to_int(alloc.get("item_id")) > 0]
+        results.setdefault(request_id, []).append(
+            {
+                "id": row.get("id"),
+                "request_id": row.get("request_id"),
+                "item_id": "",
+                "quantity": row.get("requested_qty"),
+                "note": row.get("note", ""),
+                "item_name": _to_str(row.get("item_name")),
+                "item_model": _to_str(row.get("item_model")),
+                "requested_qty": _to_int(row.get("requested_qty")),
+                "allocated_qty": len(allocated_rows),
+                "allocated_item_ids": allocated_item_ids,
+            }
+        )
+
+    for row in legacy_item_rows:
         request_id = _to_int(row.get("request_id"))
         if selected_ids and request_id not in selected_ids:
             continue
         item_id = _to_int(row.get("item_id"))
         details = inventory_map.get(item_id, {"item_name": None, "item_model": None})
+        item_name = _to_str(details.get("item_name")) or _to_str(inventory_rows_map.get(item_id, {}).get("name"))
+        item_model = _to_str(details.get("item_model")) or _to_str(inventory_rows_map.get(item_id, {}).get("model"))
         results.setdefault(request_id, []).append(
             {
                 "id": row.get("id"),
@@ -2243,8 +2517,11 @@ def list_borrow_items_map(request_ids: set[int] | None = None) -> dict[int, list
                 "item_id": row.get("item_id"),
                 "quantity": row.get("quantity"),
                 "note": row.get("note", ""),
-                "item_name": details.get("item_name"),
-                "item_model": details.get("item_model"),
+                "item_name": item_name,
+                "item_model": item_model,
+                "requested_qty": _to_int(row.get("quantity"), default=1),
+                "allocated_qty": _to_int(row.get("quantity"), default=1),
+                "allocated_item_ids": [item_id] if item_id > 0 else [],
             }
         )
 
@@ -2257,114 +2534,284 @@ def list_borrow_items(request_id: int) -> list[dict[str, Any]]:
     return list_borrow_items_map({request_id}).get(request_id, [])
 
 
-def update_borrow_request(request_id: int, request_data: dict[str, Any], items: list[dict[str, Any]]) -> bool:
-    next_status = _derive_borrow_status(
-        due_date_value=request_data.get("due_date"),
-        return_date_value=request_data.get("return_date"),
+def list_borrow_reservation_options(*, exclude_request_id: int | None = None) -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        request_rows = _read_rows(wb["borrow_requests"])
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_rows = _read_rows(wb["borrow_request_lines"])
+        allocation_rows = _read_rows(wb["borrow_allocations"])
+        inventory_rows = _read_rows(wb["inventory_items"])
+
+    _sync_borrow_statuses_in_place(
+        request_rows=request_rows,
+        allocation_rows=allocation_rows,
+        legacy_item_rows=legacy_item_rows,
     )
+    reserved_usage = _build_borrow_reservation_usage(
+        request_rows=request_rows,
+        line_rows=line_rows,
+        allocation_rows=allocation_rows,
+        legacy_item_rows=legacy_item_rows,
+        exclude_request_id=exclude_request_id,
+    )
+    available_totals = _build_inventory_available_by_key(inventory_rows)
+
+    combo_keys = {
+        _borrow_key(row.get("name"), row.get("model"))
+        for row in inventory_rows
+        if _is_blank(row.get("deleted_at"))
+    }
+
+    options: list[dict[str, Any]] = []
+    for combo_key in sorted(combo_keys):
+        item_name, item_model = combo_key
+        available_qty = available_totals.get(combo_key, 0)
+        reserved_qty = reserved_usage.get(combo_key, 0)
+        reservable_qty = max(available_qty - reserved_qty, 0)
+        options.append(
+            {
+                "item_name": item_name,
+                "item_model": item_model,
+                "available_qty": available_qty,
+                "reserved_qty": reserved_qty,
+                "reservable_qty": reservable_qty,
+                "selectable": reservable_qty > 0,
+            }
+        )
+    return options
+
+
+def update_borrow_request(request_id: int, request_data: dict[str, Any], request_lines: list[dict[str, Any]]) -> bool:
+    normalized_lines = _normalize_borrow_request_lines(request_lines)
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
-        item_ws = wb["borrow_items"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_ws = wb["borrow_request_lines"]
+        allocation_ws = wb["borrow_allocations"]
+        inventory_ws = wb["inventory_items"]
+        request_rows = _read_rows(request_ws)
+        line_rows = _read_rows(line_ws)
+        allocation_rows = _read_rows(allocation_ws)
+        inventory_rows = _read_rows(inventory_ws)
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+
+        request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
+        if request_row is None:
+            return False
+        if _to_str(request_row.get("status")).strip().lower() not in {"reserved", "expired"}:
+            raise ValueError("only reserved request can be updated")
+        if any(_to_int(row.get("request_id")) == request_id for row in allocation_rows):
+            raise ValueError("allocated borrow request cannot be updated")
+
+        requested_totals: dict[tuple[str, str], int] = {}
+        for line in normalized_lines:
+            key = _borrow_key(line["item_name"], line["item_model"])
+            requested_totals[key] = requested_totals.get(key, 0) + line["requested_qty"]
+
+        available_totals = _build_inventory_available_by_key(inventory_rows)
+        reserved_usage = _build_borrow_reservation_usage(
+            request_rows=request_rows,
+            line_rows=line_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+            exclude_request_id=request_id,
+        )
+        reservable_totals = {
+            key: max(available_totals.get(key, 0) - reserved_usage.get(key, 0), 0)
+            for key in set(available_totals) | set(reserved_usage) | set(requested_totals)
+        }
+        shortages = _collect_shortages(requested_totals, reservable_totals)
+        if shortages:
+            raise ValueError(json.dumps({"message": "insufficient_reservable_quantity", "shortages": shortages}, ensure_ascii=False))
+
+        request_row.update(
+            {
+                "borrower": request_data["borrower"],
+                "department": request_data["department"],
+                "purpose": request_data["purpose"],
+                "borrow_date": request_data["borrow_date"],
+                "due_date": request_data["due_date"],
+                "return_date": "",
+                "status": "reserved",
+                "memo": request_data["memo"],
+            }
+        )
+        line_rows = [row for row in line_rows if _to_int(row.get("request_id")) != request_id]
+        next_line_id = _next_id(line_rows)
+        for index, line in enumerate(normalized_lines):
+            line_rows.append(
+                {
+                    "id": next_line_id + index,
+                    "request_id": request_id,
+                    "item_name": line["item_name"],
+                    "item_model": line["item_model"],
+                    "requested_qty": line["requested_qty"],
+                    "note": line["note"],
+                }
+            )
+        _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+        _write_rows(line_ws, SHEETS["borrow_request_lines"], line_rows)
+        _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        wb.save(DB_PATH)
+        return True
+
+
+def pickup_borrow_request(request_id: int) -> bool:
+    with _locked_workbook() as wb:
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_ws = wb["borrow_request_lines"]
+        allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
         movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
-        item_rows = _read_rows(item_ws)
+        line_rows = _read_rows(line_ws)
+        allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
         movement_rows = _read_rows(movement_ws)
-        updated = False
-        previous_status = ""
-        for row in request_rows:
-            if _to_int(row.get("id")) == request_id:
-                previous_status = _derive_borrow_status(
-                    due_date_value=row.get("due_date"),
-                    return_date_value=row.get("return_date"),
+
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
+        if request_row is None:
+            return False
+        status = _to_str(request_row.get("status")).strip().lower()
+        if status not in {"reserved", "expired"}:
+            raise ValueError("only reserved request can be picked up")
+        if any(_to_int(row.get("request_id")) == request_id for row in allocation_rows):
+            raise ValueError("borrow request already allocated")
+
+        target_lines = [row for row in line_rows if _to_int(row.get("request_id")) == request_id]
+        if not target_lines:
+            raise ValueError("request_lines is required")
+
+        required_totals: dict[tuple[str, str], int] = {}
+        for row in target_lines:
+            key = _borrow_key(row.get("item_name"), row.get("item_model"))
+            required_totals[key] = required_totals.get(key, 0) + _to_int(row.get("requested_qty"))
+
+        candidates_by_key = _build_inventory_candidates_by_key(inventory_rows)
+        available_totals = {key: len(rows) for key, rows in candidates_by_key.items()}
+        shortages = _collect_shortages(required_totals, available_totals)
+        if shortages:
+            raise ValueError(json.dumps({"message": "insufficient_pickup_quantity", "shortages": shortages}, ensure_ascii=False))
+
+        inventory_map = _active_inventory_rows_map(inventory_rows)
+        next_allocation_id = _next_id(allocation_rows)
+        created_allocations: list[dict[str, Any]] = []
+        for line in sorted(target_lines, key=lambda row: _to_int(row.get("id"))):
+            line_id = _to_int(line.get("id"))
+            key = _borrow_key(line.get("item_name"), line.get("item_model"))
+            requested_qty = _to_int(line.get("requested_qty"))
+            candidates = candidates_by_key.get(key, [])
+            for _ in range(requested_qty):
+                if not candidates:
+                    raise ValueError("insufficient pickup candidates")
+                picked = candidates.pop(0)
+                item_id = _to_int(picked.get("id"))
+                inventory_row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=inventory_row,
+                    item_id=item_id,
+                    status="2",
+                    action="pickup",
+                    entity="borrow_request",
+                    entity_id=request_id,
                 )
-                row.update(
+                created_allocations.append(
                     {
-                        "borrower": request_data["borrower"],
-                        "department": request_data["department"],
-                        "purpose": request_data["purpose"],
-                        "borrow_date": request_data["borrow_date"],
-                        "due_date": request_data["due_date"],
-                        "return_date": request_data["return_date"],
-                        "status": next_status,
-                        "memo": request_data["memo"],
+                        "id": next_allocation_id + len(created_allocations),
+                        "request_id": request_id,
+                        "line_id": line_id,
+                        "item_id": item_id,
+                        "note": _to_str(line.get("note")),
                     }
                 )
-                updated = True
-                break
-        if not updated:
+
+        allocation_rows.extend(created_allocations)
+        request_row["status"] = _derive_borrow_status(
+            due_date_value=request_row.get("due_date"),
+            return_date_value="",
+            status_value="borrowed",
+            borrow_date_value=request_row.get("borrow_date"),
+            has_allocations=True,
+        )
+        request_row["return_date"] = ""
+
+        _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+        _write_rows(line_ws, SHEETS["borrow_request_lines"], line_rows)
+        _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
+        wb.save(DB_PATH)
+        return True
+
+
+def return_borrow_request(request_id: int, *, return_date_value: Any = None) -> bool:
+    with _locked_workbook() as wb:
+        request_ws = wb["borrow_requests"]
+        legacy_item_rows = _read_rows(wb["borrow_items"])
+        line_ws = wb["borrow_request_lines"]
+        allocation_ws = wb["borrow_allocations"]
+        inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
+        request_rows = _read_rows(request_ws)
+        line_rows = _read_rows(line_ws)
+        allocation_rows = _read_rows(allocation_ws)
+        inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
+
+        _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+        )
+        request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
+        if request_row is None:
             return False
+        current_status = _to_str(request_row.get("status")).strip().lower()
+        if current_status not in {"borrowed", "overdue"}:
+            raise ValueError("only borrowed request can be returned")
 
-        old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
-        old_item_ids = {_to_int(row.get("item_id")) for row in old_items}
-        new_item_ids = set(_normalize_request_item_ids(items))
-        old_active_ids = old_item_ids if _borrow_status_uses_inventory(previous_status) else set()
-        new_active_ids = new_item_ids if _borrow_status_uses_inventory(next_status) else set()
+        target_allocations = [row for row in allocation_rows if _to_int(row.get("request_id")) == request_id]
+        target_item_ids = [_to_int(row.get("item_id")) for row in target_allocations if _to_int(row.get("item_id")) > 0]
+        if not target_item_ids:
+            legacy_allocations = [
+                row for row in legacy_item_rows if _to_int(row.get("request_id")) == request_id and _to_int(row.get("item_id")) > 0
+            ]
+            target_item_ids = [_to_int(row.get("item_id")) for row in legacy_allocations]
+        if not target_item_ids:
+            raise ValueError("borrow request has no allocated items")
+
         inventory_map = _active_inventory_rows_map(inventory_rows)
-
-        for item_id in new_item_ids - old_item_ids:
-            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"0"})
-            if item_id in new_active_ids:
-                _set_inventory_status_with_movement(
-                    movement_rows=movement_rows,
-                    row=row,
-                    item_id=item_id,
-                    status="2",
-                    action="update",
-                    entity="borrow_request",
-                    entity_id=request_id,
-                )
-        for item_id in new_item_ids & old_item_ids:
-            allowed_statuses = {"0", "2"} if item_id in old_active_ids else {"0"}
-            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses=allowed_statuses)
-            if item_id in new_active_ids:
-                _set_inventory_status_with_movement(
-                    movement_rows=movement_rows,
-                    row=row,
-                    item_id=item_id,
-                    status="2",
-                    action="update",
-                    entity="borrow_request",
-                    entity_id=request_id,
-                )
-            else:
-                _set_inventory_status_with_movement(
-                    movement_rows=movement_rows,
-                    row=row,
-                    item_id=item_id,
-                    status="0",
-                    action="update",
-                    entity="borrow_request",
-                    entity_id=request_id,
-                )
-        for item_id in old_item_ids - new_item_ids:
-            allowed_statuses = {"0", "2"} if item_id in old_active_ids else {"0"}
-            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses=allowed_statuses)
+        for item_id in target_item_ids:
+            row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"2"})
             _set_inventory_status_with_movement(
                 movement_rows=movement_rows,
                 row=row,
                 item_id=item_id,
                 status="0",
-                action="update",
+                action="return",
                 entity="borrow_request",
                 entity_id=request_id,
             )
 
-        item_rows = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
-        next_item_id = _next_id(item_rows)
-        for index, item in enumerate(items):
-            item_rows.append(
-                {
-                    "id": next_item_id + index,
-                    "request_id": request_id,
-                    "item_id": item["item_id"],
-                    "quantity": 1,
-                    "note": item.get("note", ""),
-                }
-            )
+        normalized_return_date = _parse_request_date(return_date_value) or date.today()
+        request_row["return_date"] = normalized_return_date.strftime("%Y/%m/%d")
+        request_row["status"] = "returned"
+
         _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
-        _write_rows(item_ws, SHEETS["borrow_items"], item_rows)
+        _write_rows(line_ws, SHEETS["borrow_request_lines"], line_rows)
+        _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)
@@ -2375,10 +2822,14 @@ def delete_borrow_request(request_id: int) -> bool:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
         item_ws = wb["borrow_items"]
+        line_ws = wb["borrow_request_lines"]
+        allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
         movement_ws = wb["movement_ledger"]
         request_rows = _read_rows(request_ws)
         item_rows = _read_rows(item_ws)
+        line_rows = _read_rows(line_ws)
+        allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
         movement_rows = _read_rows(movement_ws)
         remaining_requests = [row for row in request_rows if _to_int(row.get("id")) != request_id]
@@ -2387,14 +2838,30 @@ def delete_borrow_request(request_id: int) -> bool:
             return False
         request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
         old_items = [row for row in item_rows if _to_int(row.get("request_id")) == request_id]
+        old_allocations = [row for row in allocation_rows if _to_int(row.get("request_id")) == request_id]
         inventory_map = _active_inventory_rows_map(inventory_rows)
         request_status = ""
         if request_row is not None:
             request_status = _derive_borrow_status(
                 due_date_value=request_row.get("due_date"),
                 return_date_value=request_row.get("return_date"),
+                status_value=request_row.get("status"),
+                borrow_date_value=request_row.get("borrow_date"),
+                has_allocations=bool(old_allocations or old_items),
             )
         if request_row is not None and _borrow_status_uses_inventory(request_status):
+            for allocation in old_allocations:
+                item_id = _to_int(allocation.get("item_id"))
+                row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"2"})
+                _set_inventory_status_with_movement(
+                    movement_rows=movement_rows,
+                    row=row,
+                    item_id=item_id,
+                    status="0",
+                    action="delete",
+                    entity="borrow_request",
+                    entity_id=request_id,
+                )
             for old_item in old_items:
                 item_id = _to_int(old_item.get("item_id"))
                 row = _validate_item_status(inventory_map=inventory_map, item_id=item_id, allowed_statuses={"2"})
@@ -2408,8 +2875,12 @@ def delete_borrow_request(request_id: int) -> bool:
                     entity_id=request_id,
                 )
         remaining_items = [row for row in item_rows if _to_int(row.get("request_id")) != request_id]
+        remaining_lines = [row for row in line_rows if _to_int(row.get("request_id")) != request_id]
+        remaining_allocations = [row for row in allocation_rows if _to_int(row.get("request_id")) != request_id]
         _write_rows(request_ws, SHEETS["borrow_requests"], remaining_requests)
         _write_rows(item_ws, SHEETS["borrow_items"], remaining_items)
+        _write_rows(line_ws, SHEETS["borrow_request_lines"], remaining_lines)
+        _write_rows(allocation_ws, SHEETS["borrow_allocations"], remaining_allocations)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         wb.save(DB_PATH)

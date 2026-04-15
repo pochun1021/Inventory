@@ -7,17 +7,36 @@ import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
-import { buildGroupedItemOptions } from './itemOptionGroups'
-import type { BorrowRequest, InventoryItem, PaginatedResponse } from './types'
+import type { BorrowRequest, BorrowReservationOption } from './types'
 
 type BorrowLine = {
-  item_id: number | ''
-  quantity: number
+  item_name: string
+  item_model: string
+  requested_qty: number
   note: string
+  allocated_qty?: number
+  allocated_item_ids?: number[]
+  name_search: string
+  model_search: string
 }
 
-const emptyLine = (): BorrowLine => ({ item_id: '', quantity: 1, note: '' })
-const GROUP_OPTION_PREFIX = '__group__:'
+type ShortageRow = {
+  item_name: string
+  item_model: string
+  requested_qty: number
+  available_qty: number
+  shortage_qty: number
+}
+
+const emptyLine = (): BorrowLine => ({
+  item_name: '',
+  item_model: '',
+  requested_qty: 1,
+  note: '',
+  name_search: '',
+  model_search: '',
+})
+
 const toast = Swal.mixin({
   toast: true,
   position: 'top-end',
@@ -30,9 +49,36 @@ type BorrowPageProps = {
   requestId?: number
 }
 
+function parseShortages(detail: unknown): ShortageRow[] {
+  if (!detail || typeof detail !== 'object') {
+    return []
+  }
+  const parsed = detail as { shortages?: unknown }
+  if (!Array.isArray(parsed.shortages)) {
+    return []
+  }
+  return parsed.shortages
+    .map((row) => {
+      const candidate = row as Partial<ShortageRow>
+      if (!candidate || typeof candidate !== 'object') {
+        return null
+      }
+      return {
+        item_name: typeof candidate.item_name === 'string' ? candidate.item_name : '',
+        item_model: typeof candidate.item_model === 'string' ? candidate.item_model : '',
+        requested_qty: Number(candidate.requested_qty ?? 0),
+        available_qty: Number(candidate.available_qty ?? 0),
+        shortage_qty: Number(candidate.shortage_qty ?? 0),
+      }
+    })
+    .filter((row): row is ShortageRow => row !== null)
+}
+
 export function BorrowPage({ requestId }: BorrowPageProps) {
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
+  const [reservationOptions, setReservationOptions] = useState<BorrowReservationOption[]>([])
   const [loadError, setLoadError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [shortages, setShortages] = useState<ShortageRow[]>([])
 
   const [borrower, setBorrower] = useState('')
   const [department, setDepartment] = useState('')
@@ -40,29 +86,52 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const [borrowDate, setBorrowDate] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [returnDate, setReturnDate] = useState('')
-  const [status, setStatus] = useState('borrowed')
+  const [status, setStatus] = useState('reserved')
   const [memo, setMemo] = useState('')
   const [lines, setLines] = useState<BorrowLine[]>([emptyLine()])
   const [submitting, setSubmitting] = useState(false)
   const isEditing = Number.isInteger(requestId)
 
+  const comboKeySet = useMemo(() => {
+    const keys = new Set<string>()
+    for (const option of reservationOptions) {
+      keys.add(`${option.item_name}__${option.item_model}`)
+    }
+    return keys
+  }, [reservationOptions])
+
+  const nameOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const option of reservationOptions) {
+      names.add(option.item_name)
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b))
+  }, [reservationOptions])
+
+  const refreshReservationOptions = async () => {
+    const searchParams = new URLSearchParams()
+    if (isEditing && requestId) {
+      searchParams.set('request_id', String(requestId))
+    }
+    const query = searchParams.toString()
+    const response = await fetch(apiUrl(`/api/lookups/borrow-reservations${query ? `?${query}` : ''}`))
+    if (!response.ok) {
+      throw new Error('無法載入可預約品項')
+    }
+    const payload = (await response.json()) as BorrowReservationOption[]
+    setReservationOptions(payload)
+  }
+
   useEffect(() => {
-    const loadData = async () => {
-      setLoadError('')
+    const loadOptions = async () => {
       try {
-        const itemsResponse = await fetch(apiUrl('/api/items?page=1&page_size=100000'))
-        if (!itemsResponse.ok) {
-          throw new Error('無法載入資料')
-        }
-        const itemsPayload = (await itemsResponse.json()) as PaginatedResponse<InventoryItem>
-        setInventoryItems(itemsPayload.items)
+        await refreshReservationOptions()
       } catch {
-        setLoadError('目前無法讀取借用資料，請稍後重試。')
+        setLoadError('目前無法讀取可預約品項，請稍後重試。')
       }
     }
-
-    void loadData()
-  }, [])
+    void loadOptions()
+  }, [isEditing, requestId])
 
   useEffect(() => {
     if (!isEditing || !requestId) {
@@ -84,15 +153,20 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         setBorrowDate(payload.borrow_date ?? '')
         setDueDate(payload.due_date ?? '')
         setReturnDate(payload.return_date ?? '')
-        setStatus(payload.status ?? 'borrowed')
+        setStatus(payload.status ?? 'reserved')
         setMemo(payload.memo ?? '')
         setLines(
-          payload.items.length > 0
-            ? payload.items.map((item) => ({
-              item_id: item.item_id,
-              quantity: item.quantity,
-              note: item.note ?? '',
-            }))
+          payload.request_lines.length > 0
+            ? payload.request_lines.map((line) => ({
+                item_name: line.item_name ?? '',
+                item_model: line.item_model ?? '',
+                requested_qty: line.requested_qty,
+                note: line.note ?? '',
+                allocated_qty: line.allocated_qty,
+                allocated_item_ids: line.allocated_item_ids,
+                name_search: '',
+                model_search: '',
+              }))
             : [emptyLine()],
         )
       } catch {
@@ -103,47 +177,65 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     void loadRequest()
   }, [isEditing, requestId])
 
-  const selectedItemIds = useMemo(
-    () => new Set(lines.map((line) => line.item_id).filter((itemId): itemId is number => itemId !== '')),
+  const canEditReservation = !isEditing || status === 'reserved' || status === 'expired'
+  const canPickup = isEditing && (status === 'reserved' || status === 'expired')
+  const canReturn = isEditing && (status === 'borrowed' || status === 'overdue')
+
+  const totalRequestedQty = useMemo(
+    () => lines.reduce((sum, line) => sum + Math.max(0, Number(line.requested_qty) || 0), 0),
+    [lines],
+  )
+  const totalAllocatedQty = useMemo(
+    () => lines.reduce((sum, line) => sum + Math.max(0, Number(line.allocated_qty) || 0), 0),
     [lines],
   )
 
-  const selectableItems = useMemo(() => {
-    return inventoryItems.filter((item) => {
-      if (item.asset_status === '0') {
-        return true
-      }
-      return isEditing && selectedItemIds.has(item.id)
-    })
-  }, [inventoryItems, isEditing, selectedItemIds])
+  const getModelOptionsByName = (itemName: string, searchKeyword: string) => {
+    const keyword = searchKeyword.trim().toLowerCase()
+    return reservationOptions
+      .filter((option) => option.item_name === itemName)
+      .filter((option) => !keyword || option.item_model.toLowerCase().includes(keyword))
+      .sort((a, b) => a.item_model.localeCompare(b.item_model))
+  }
 
-  const itemOptionGroups = useMemo(() => buildGroupedItemOptions(selectableItems), [selectableItems])
+  const getFilteredNames = (searchKeyword: string) => {
+    const keyword = searchKeyword.trim().toLowerCase()
+    return nameOptions.filter((name) => !keyword || name.toLowerCase().includes(keyword))
+  }
 
   const handleLineChange = (index: number, patch: Partial<BorrowLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
   }
 
-  const handleItemSelectChange = (index: number, rawValue: string) => {
-    if (!rawValue) {
-      handleLineChange(index, { item_id: '' })
-      return
-    }
-    if (rawValue.startsWith(GROUP_OPTION_PREFIX)) {
-      return
-    }
-    handleLineChange(index, { item_id: Number(rawValue) })
+  const handleNameChange = (index: number, nextName: string) => {
+    const line = lines[index]
+    const modelOptions = reservationOptions.filter((option) => option.item_name === nextName)
+    const modelStillValid = modelOptions.some((option) => option.item_model === line.item_model)
+    handleLineChange(index, {
+      item_name: nextName,
+      item_model: modelStillValid ? line.item_model : '',
+      name_search: '',
+      model_search: '',
+    })
   }
 
   const getLineValidationError = () => {
     if (lines.length === 0) {
-      return '請至少新增一筆借用品項。'
+      return '請至少新增一筆預約品項。'
     }
-    if (!lines.every((line) => line.item_id !== '' && line.quantity === 1)) {
-      return '單件模式下，每筆借用品項數量必須為 1。'
-    }
-    const pickedIds = lines.map((line) => line.item_id).filter((itemId): itemId is number => itemId !== '')
-    if (new Set(pickedIds).size !== pickedIds.length) {
-      return '同一張借用單不可重複選取同一品項。'
+    for (const line of lines) {
+      if (!line.item_name.trim()) {
+        return '請選擇品名。'
+      }
+      if (!line.item_model.trim()) {
+        return '請選擇型號。'
+      }
+      if (!Number.isInteger(line.requested_qty) || line.requested_qty <= 0) {
+        return '每筆預約數量需為正整數。'
+      }
+      if (!comboKeySet.has(`${line.item_name}__${line.item_model}`)) {
+        return `品項 ${line.item_name} / ${line.item_model} 不在可選清單。`
+      }
     }
     return null
   }
@@ -152,15 +244,42 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
   const getDateValidationError = () => {
     if (borrowDate && dueDate && borrowDate > dueDate) {
-      return '預計歸還日期不可早於借用日期。'
-    }
-    if (borrowDate && returnDate && returnDate < borrowDate) {
-      return '實際歸還日期不可早於借用日期。'
+      return '預計歸還日期不可早於領用日期。'
     }
     return null
   }
 
+  const refreshCurrentRequest = async () => {
+    if (!requestId) {
+      return
+    }
+    const response = await fetch(apiUrl(`/api/borrows/${requestId}`))
+    if (!response.ok) {
+      return
+    }
+    const payload = (await response.json()) as BorrowRequest
+    setReturnDate(payload.return_date ?? '')
+    setStatus(payload.status ?? 'reserved')
+    setLines(
+      payload.request_lines.length > 0
+        ? payload.request_lines.map((line) => ({
+            item_name: line.item_name ?? '',
+            item_model: line.item_model ?? '',
+            requested_qty: line.requested_qty,
+            note: line.note ?? '',
+            allocated_qty: line.allocated_qty,
+            allocated_item_ids: line.allocated_item_ids,
+            name_search: '',
+            model_search: '',
+          }))
+        : [emptyLine()],
+    )
+  }
+
   const handleSubmit = async () => {
+    setFormError('')
+    setShortages([])
+
     const validationError = getLineValidationError()
     if (validationError) {
       void toast.fire({ icon: 'error', title: validationError })
@@ -185,12 +304,11 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           purpose,
           borrow_date: normalizeDate(borrowDate),
           due_date: normalizeDate(dueDate),
-          return_date: normalizeDate(returnDate),
-          status,
           memo,
-          items: lines.map((line) => ({
-            item_id: line.item_id,
-            quantity: 1,
+          request_lines: lines.map((line) => ({
+            item_name: line.item_name,
+            item_model: line.item_model,
+            requested_qty: Number(line.requested_qty),
             note: line.note,
           })),
         }),
@@ -198,13 +316,22 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
-        const detail = typeof payload?.detail === 'string' ? payload.detail : null
-        throw new Error(detail ?? '建立失敗')
+        const detail = payload?.detail
+        const shortageRows = parseShortages(detail)
+        if (shortageRows.length > 0) {
+          setFormError('可預約量不足，請調整預約內容。')
+          setShortages(shortageRows)
+          return
+        }
+        const detailText = typeof detail === 'string' ? detail : null
+        throw new Error(detailText ?? (isEditing ? '更新預約失敗' : '建立預約失敗'))
       }
 
       await response.json()
+      await refreshReservationOptions()
       if (isEditing) {
-        void toast.fire({ icon: 'success', title: '借用單已更新。' })
+        void toast.fire({ icon: 'success', title: '借用預約已更新。' })
+        await refreshCurrentRequest()
       } else {
         setBorrower('')
         setDepartment('')
@@ -212,17 +339,73 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         setBorrowDate('')
         setDueDate('')
         setReturnDate('')
-        setStatus('borrowed')
+        setStatus('reserved')
         setMemo('')
         setLines([emptyLine()])
-        void toast.fire({ icon: 'success', title: '借用單已建立。' })
+        void toast.fire({ icon: 'success', title: '借用預約已建立。' })
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       void toast.fire({
         icon: 'error',
-        title: message || (isEditing ? '更新借用單失敗，請稍後再試。' : '建立借用單失敗，請稍後再試。'),
+        title: message || (isEditing ? '更新預約失敗，請稍後再試。' : '建立預約失敗，請稍後再試。'),
       })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handlePickup = async () => {
+    if (!requestId) {
+      return
+    }
+    setFormError('')
+    setShortages([])
+    setSubmitting(true)
+    try {
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/pickup`), { method: 'POST' })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const shortageRows = parseShortages(payload?.detail)
+        if (shortageRows.length > 0) {
+          setFormError('可領取數量不足，請確認目前庫存。')
+          setShortages(shortageRows)
+          return
+        }
+        const detail = typeof payload?.detail === 'string' ? payload.detail : null
+        throw new Error(detail ?? '執行領取失敗')
+      }
+      await refreshReservationOptions()
+      await refreshCurrentRequest()
+      void toast.fire({ icon: 'success', title: '已完成領取並分配資產。' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      void toast.fire({ icon: 'error', title: message || '執行領取失敗，請稍後再試。' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleReturnAll = async () => {
+    if (!requestId) {
+      return
+    }
+    setFormError('')
+    setShortages([])
+    setSubmitting(true)
+    try {
+      const response = await fetch(apiUrl(`/api/borrows/${requestId}/return`), { method: 'POST' })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        const detail = typeof payload?.detail === 'string' ? payload.detail : null
+        throw new Error(detail ?? '全數歸還失敗')
+      }
+      await refreshReservationOptions()
+      await refreshCurrentRequest()
+      void toast.fire({ icon: 'success', title: '已完成全數歸還。' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      void toast.fire({ icon: 'error', title: message || '全數歸還失敗，請稍後再試。' })
     } finally {
       setSubmitting(false)
     }
@@ -230,132 +413,171 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
 
   return (
     <div className="grid gap-4">
-        <SectionCard title="基本資料">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="grid gap-1.5">
-              <Label>借用人</Label>
-              <Input value={borrower} onChange={(event) => setBorrower(event.target.value)} />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>單位</Label>
-              <Input value={department} onChange={(event) => setDepartment(event.target.value)} />
-            </div>
-            <div className="grid gap-1.5 md:col-span-2">
-              <Label>用途</Label>
-              <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>借用日期</Label>
-              <Input
-                type="date"
-                value={borrowDate}
-                max={returnDate || dueDate || undefined}
-                onChange={(event) => setBorrowDate(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>預計歸還</Label>
-              <Input
-                type="date"
-                value={dueDate}
-                min={borrowDate || undefined}
-                max={returnDate || undefined}
-                onChange={(event) => setDueDate(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>實際歸還</Label>
-              <Input
-                type="date"
-                value={returnDate}
-                min={borrowDate || undefined}
-                onChange={(event) => setReturnDate(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>狀態</Label>
-              <Select value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="borrowed">借出中</option>
-                <option value="returned">已歸還</option>
-                <option value="overdue">逾期</option>
-              </Select>
-              <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">送出後會由系統依預計歸還日與實際歸還日自動判定狀態。</p>
-            </div>
-            <div className="grid gap-1.5 md:col-span-2">
-              <Label>備註</Label>
-              <Textarea rows={3} value={memo} onChange={(event) => setMemo(event.target.value)} />
-            </div>
+      <SectionCard title="基本資料">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-1.5">
+            <Label>借用人</Label>
+            <Input value={borrower} onChange={(event) => setBorrower(event.target.value)} disabled={!canEditReservation || submitting} />
           </div>
-        </SectionCard>
+          <div className="grid gap-1.5">
+            <Label>單位</Label>
+            <Input value={department} onChange={(event) => setDepartment(event.target.value)} disabled={!canEditReservation || submitting} />
+          </div>
+          <div className="grid gap-1.5 md:col-span-2">
+            <Label>用途</Label>
+            <Input value={purpose} onChange={(event) => setPurpose(event.target.value)} disabled={!canEditReservation || submitting} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>領用日</Label>
+            <Input type="date" value={borrowDate} onChange={(event) => setBorrowDate(event.target.value)} disabled={!canEditReservation || submitting} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>預計歸還</Label>
+            <Input type="date" value={dueDate} min={borrowDate || undefined} onChange={(event) => setDueDate(event.target.value)} disabled={!canEditReservation || submitting} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>狀態</Label>
+            <Input value={status || '--'} disabled />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>實際歸還</Label>
+            <Input type="date" value={returnDate} disabled />
+          </div>
+          <div className="grid gap-1.5 md:col-span-2">
+            <Label>備註</Label>
+            <Textarea rows={3} value={memo} onChange={(event) => setMemo(event.target.value)} disabled={!canEditReservation || submitting} />
+          </div>
+        </div>
+      </SectionCard>
 
-        <SectionCard title="借用品項">
-          <div className="grid gap-3">
-            {lines.map((line, index) => {
-              const selectedByOtherLines = new Set(
-                lines
-                  .filter((_, idx) => idx !== index)
-                  .map((itemLine) => itemLine.item_id)
-                  .filter((itemId): itemId is number => itemId !== ''),
-              )
-              return (
-              <article key={`borrow-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[2fr,1fr,2fr,auto]">
+      <SectionCard title="預約品項（品名 + 型號 + 數量）">
+        <div className="grid gap-3">
+          {lines.map((line, index) => {
+            const filteredNames = getFilteredNames(line.name_search)
+            const filteredModels = getModelOptionsByName(line.item_name, line.model_search)
+
+            return (
+              <article key={`borrow-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[2fr,2fr,1fr,2fr,auto]">
                 <div className="grid gap-1.5">
-                  <Label>品項</Label>
+                  <Label>品名</Label>
+                  <Input
+                    placeholder="搜尋品名..."
+                    value={line.name_search}
+                    onChange={(event) => handleLineChange(index, { name_search: event.target.value })}
+                    disabled={!canEditReservation || submitting}
+                  />
                   <Select
-                    value={line.item_id}
-                    onChange={(event) => handleItemSelectChange(index, event.target.value)}
+                    value={line.item_name}
+                    onChange={(event) => handleNameChange(index, event.target.value)}
+                    disabled={!canEditReservation || submitting}
                   >
-                    <option value="">請選擇品項</option>
-                    {itemOptionGroups.flatMap((group) => [
-                      <option
-                        key={`group-${group.groupLabel}`}
-                        value={`${GROUP_OPTION_PREFIX}${group.groupLabel}`}
-                        style={{ color: 'hsl(var(--foreground))', fontWeight: 700 }}
-                      >
-                        {`==== ${group.groupLabel} ====`}
-                      </option>,
-                      ...group.options.map((option) => (
-                        <option key={option.value} value={option.value} disabled={selectedByOtherLines.has(option.value)}>
-                          {`  ${option.label}`}
-                        </option>
-                      )),
-                    ])}
+                    <option value="">請選擇品名</option>
+                    {filteredNames.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
                   </Select>
                 </div>
                 <div className="grid gap-1.5">
-                  <Label>數量</Label>
+                  <Label>型號</Label>
+                  <Input
+                    placeholder="搜尋型號..."
+                    value={line.model_search}
+                    onChange={(event) => handleLineChange(index, { model_search: event.target.value })}
+                    disabled={!canEditReservation || submitting || !line.item_name}
+                  />
+                  <Select
+                    value={line.item_model}
+                    onChange={(event) => handleLineChange(index, { item_model: event.target.value })}
+                    disabled={!canEditReservation || submitting || !line.item_name}
+                  >
+                    <option value="">請選擇型號</option>
+                    {filteredModels.map((option) => (
+                      <option
+                        key={`${option.item_name}__${option.item_model}`}
+                        value={option.item_model}
+                        disabled={!option.selectable && line.item_model !== option.item_model}
+                      >
+                        {`${option.item_model}（可預約 ${option.reservable_qty} / 在庫 ${option.available_qty} / 已預約 ${option.reserved_qty}）`}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>預約數量</Label>
                   <Input
                     type="number"
                     min={1}
-                    max={1}
-                    value={1}
-                    disabled
+                    value={line.requested_qty}
+                    onChange={(event) => handleLineChange(index, { requested_qty: Number(event.target.value) || 0 })}
+                    disabled={!canEditReservation || submitting}
                   />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>備註</Label>
-                  <Input value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} />
+                  <Input value={line.note} onChange={(event) => handleLineChange(index, { note: event.target.value })} disabled={!canEditReservation || submitting} />
+                  {isEditing ? (
+                    <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+                      已分配：{line.allocated_qty ?? 0} / {line.requested_qty}
+                      {line.allocated_item_ids && line.allocated_item_ids.length > 0 ? `（ID: ${line.allocated_item_ids.join(', ')}）` : ''}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex items-end">
-                  <Button type="button" variant="secondary" onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== index))} disabled={lines.length <= 1}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setLines((prev) => prev.filter((_, idx) => idx !== index))}
+                    disabled={!canEditReservation || submitting || lines.length <= 1}
+                  >
                     移除
                   </Button>
                 </div>
               </article>
-              )
-            })}
-          </div>
+            )
+          })}
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-            <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine()])}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine()])} disabled={!canEditReservation || submitting}>
               新增品項
             </Button>
-            <Button type="button" onClick={() => void handleSubmit()} disabled={submitting}>
-              {submitting ? (isEditing ? '更新中...' : '建立中...') : (isEditing ? '更新借用單' : '建立借用單')}
-            </Button>
+            <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">預約總數：{totalRequestedQty}；已分配總數：{totalAllocatedQty}</p>
           </div>
-          {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
-        </SectionCard>
+        </div>
+      </SectionCard>
+
+      {loadError ? <p className="m-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p> : null}
+      {formError ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p className="m-0 font-semibold">{formError}</p>
+          {shortages.length > 0 ? (
+            <ul className="mt-2 mb-0 list-disc pl-5">
+              {shortages.map((row) => (
+                <li key={`${row.item_name}-${row.item_model}`}>
+                  {row.item_name} / {row.item_model}：需求 {row.requested_qty}，可用 {row.available_qty}，缺口 {row.shortage_qty}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" onClick={() => void handleSubmit()} disabled={submitting || !canEditReservation}>
+          {submitting ? '儲存中...' : isEditing ? '更新預約' : '建立預約'}
+        </Button>
+        {canPickup ? (
+          <Button type="button" variant="secondary" onClick={() => void handlePickup()} disabled={submitting}>
+            {submitting ? '處理中...' : '執行領取'}
+          </Button>
+        ) : null}
+        {canReturn ? (
+          <Button type="button" variant="secondary" onClick={() => void handleReturnAll()} disabled={submitting}>
+            {submitting ? '處理中...' : '全數歸還'}
+          </Button>
+        ) : null}
       </div>
+    </div>
   )
 }

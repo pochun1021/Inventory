@@ -86,8 +86,11 @@ export type IssueRequest = {
 
 export type BorrowItem = {
   id: number
-  item_id: number
+  item_id?: number | null
   quantity: number
+  requested_qty: number
+  allocated_qty: number
+  allocated_item_ids: number[]
   note: string
   item_name?: string | null
   item_model?: string | null
@@ -104,7 +107,16 @@ export type BorrowRequest = {
   status: string
   is_due_soon: boolean
   memo: string
-  items: BorrowItem[]
+  request_lines: BorrowItem[]
+}
+
+export type BorrowReservationOption = {
+  item_name: string
+  item_model: string
+  available_qty: number
+  reserved_qty: number
+  reservable_qty: number
+  selectable: boolean
 }
 
 export type DonationItem = {
