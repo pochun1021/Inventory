@@ -267,6 +267,26 @@ class RequestApiGuardTests(unittest.TestCase):
         fetched = app_main.get_borrow_request_api(created.id)
         self.assertEqual(fetched.status, 'expired')
 
+    def test_borrow_reservation_auto_cancelled_after_3_days(self) -> None:
+        self._create_item(name='相機', model='M3')
+        request = app_main.BorrowRequestCreate(
+            borrower='tester',
+            department='qa',
+            purpose='test',
+            borrow_date=(date.today() - timedelta(days=3)).isoformat(),
+            due_date=(date.today() + timedelta(days=3)).isoformat(),
+            memo='',
+            request_lines=[{'item_name': '相機', 'item_model': 'M3', 'requested_qty': 1, 'note': ''}],
+        )
+        created = app_main.create_borrow_request_api(request, BackgroundTasks())
+        fetched = app_main.get_borrow_request_api(created.id)
+        self.assertEqual(fetched.status, 'cancelled')
+
+        logs = db.list_operation_logs(action='auto_cancel_reservation', entity='borrow_request', entity_id=created.id)
+        self.assertGreaterEqual(len(logs), 1)
+        self.assertEqual(logs[0].get('action'), 'auto_cancel_reservation')
+        self.assertEqual(logs[0].get('entity_id'), created.id)
+
     def test_logs_api_rejects_invalid_scope(self) -> None:
         with self.assertRaises(HTTPException) as exc:
             app_main.list_operation_logs_api(scope='archive-only', page=1, page_size=10)

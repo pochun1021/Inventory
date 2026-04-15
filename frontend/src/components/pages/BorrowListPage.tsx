@@ -15,6 +15,7 @@ import type { BorrowRequest, PaginatedResponse } from './types'
 
 type BorrowSortKey = 'id' | 'borrow_date' | 'borrower' | 'purpose' | 'return_info' | 'items' | 'memo'
 type SortDirection = 'asc' | 'desc'
+type BorrowStatusFilter = 'all' | 'reserved' | 'borrowed' | 'returned' | 'overdue' | 'expired' | 'cancelled'
 
 const statusLabelMap: Record<string, string> = {
   reserved: '已預約',
@@ -22,6 +23,7 @@ const statusLabelMap: Record<string, string> = {
   returned: '已歸還',
   overdue: '逾期',
   expired: '預約失效',
+  cancelled: '已取消',
 }
 
 const statusBadgeClassMap: Record<string, string> = {
@@ -30,6 +32,7 @@ const statusBadgeClassMap: Record<string, string> = {
   returned: 'border-emerald-200 bg-emerald-100 text-emerald-800',
   overdue: 'border-red-200 bg-red-100 text-red-800',
   expired: 'border-zinc-300 bg-zinc-100 text-zinc-700',
+  cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
 }
 
 function getStatusBadgeClass(status: string): string {
@@ -59,11 +62,12 @@ function parseBorrowSortKey(value: string | null, fallback: BorrowSortKey): Borr
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   const statusParam = params.get('status')
-  const status: 'all' | 'reserved' | 'borrowed' | 'returned' | 'overdue' | 'expired' =
+  const status: BorrowStatusFilter =
     statusParam === 'reserved'
     || statusParam === 'borrowed'
     || statusParam === 'returned'
     || statusParam === 'overdue'
+    || statusParam === 'cancelled'
     || statusParam === 'expired'
       ? statusParam
       : 'all'
@@ -84,7 +88,7 @@ export function BorrowListPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [keyword, setKeyword] = useState(initialState.keyword)
-  const [statusFilter, setStatusFilter] = useState<'all' | 'reserved' | 'borrowed' | 'returned' | 'overdue' | 'expired'>(initialState.status)
+  const [statusFilter, setStatusFilter] = useState<BorrowStatusFilter>(initialState.status)
   const [sortBy, setSortBy] = useState<BorrowSortKey>(initialState.sortBy)
   const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
@@ -222,7 +226,7 @@ export function BorrowListPage() {
               id="borrow-status"
               value={statusFilter}
               onChange={(event) => {
-                setStatusFilter(event.target.value as 'all' | 'borrowed' | 'returned' | 'overdue')
+                setStatusFilter(event.target.value as BorrowStatusFilter)
                 setPage(1)
               }}
             >
@@ -232,6 +236,7 @@ export function BorrowListPage() {
               <option value="returned">已歸還</option>
               <option value="overdue">逾期</option>
               <option value="expired">預約失效</option>
+              <option value="cancelled">已取消</option>
             </Select>
           </div>
           <div className="flex items-end text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</div>

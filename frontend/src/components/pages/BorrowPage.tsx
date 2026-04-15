@@ -71,6 +71,7 @@ const BORROW_STATUS_LABEL_MAP: Record<string, string> = {
   returned: '已歸還',
   overdue: '逾期',
   expired: '預約失效',
+  cancelled: '已取消',
 }
 
 function parseShortages(detail: unknown): ShortageRow[] {

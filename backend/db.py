@@ -17,6 +17,7 @@ ASSET_CATEGORY_NAME_PATH = BASE_DIR.parent / "asset_category_name.xlsx"
 LOG_ARCHIVE_DIR = BASE_DIR / "log_archive"
 HOT_LOG_RETENTION_DAYS = 90
 MAX_BORROW_RESERVATION_DAYS = 30
+BORROW_RESERVATION_CANCEL_AFTER_DAYS = 3
 ARCHIVE_FILE_PATTERN = re.compile(r"^logs_(\d{6})\.xlsx$")
 
 SHEETS: dict[str, list[str]] = {
@@ -1164,6 +1165,28 @@ def log_inventory_action(
         wb.save(DB_PATH)
 
 
+def _append_operation_log_entry(
+    operation_rows: list[dict[str, Any]],
+    *,
+    action: str,
+    entity: str = "inventory_item",
+    entity_id: int | None = None,
+    status: str = "success",
+    detail: dict[str, Any] | None = None,
+) -> None:
+    operation_rows.append(
+        {
+            "id": _next_id(operation_rows),
+            "action": action,
+            "entity": entity,
+            "entity_id": entity_id if entity_id is not None else "",
+            "status": status,
+            "detail": json.dumps(detail or {}, ensure_ascii=False),
+            "created_at": _now_str(),
+        }
+    )
+
+
 def _append_movement_ledger_entry(
     movement_rows: list[dict[str, Any]],
     *,
@@ -2126,8 +2149,12 @@ def _derive_borrow_status(
     status = _to_str(status_value).strip().lower()
     borrow_date = _parse_request_date(borrow_date_value)
     if not has_allocations:
-        if borrow_date is not None and borrow_date < now:
-            return "expired"
+        if borrow_date is not None:
+            overdue_days = (now - borrow_date).days
+            if overdue_days >= BORROW_RESERVATION_CANCEL_AFTER_DAYS:
+                return "cancelled"
+            if overdue_days >= 1:
+                return "expired"
         if status in {"expired", "cancelled"}:
             return status
         return "reserved"
@@ -2323,6 +2350,7 @@ def _sync_borrow_statuses_in_place(
     request_rows: list[dict[str, Any]],
     allocation_rows: list[dict[str, Any]],
     legacy_item_rows: list[dict[str, Any]] | None = None,
+    operation_rows: list[dict[str, Any]] | None = None,
     today: date | None = None,
 ) -> bool:
     legacy_rows = legacy_item_rows or []
@@ -2336,12 +2364,33 @@ def _sync_borrow_statuses_in_place(
     status_changed = False
     for row in request_rows:
         request_id = _to_int(row.get("id"))
+        previous_status = _to_str(row.get("status")).strip().lower()
         if _normalize_borrow_status_in_place(
             row,
             has_allocations=allocation_count_map.get(request_id, 0) > 0,
             today=today,
         ):
             status_changed = True
+            next_status = _to_str(row.get("status")).strip().lower()
+            if previous_status != "cancelled" and next_status == "cancelled" and operation_rows is not None:
+                borrow_date = _parse_request_date(row.get("borrow_date"))
+                expired_days = 0
+                if borrow_date is not None:
+                    current_day = today or date.today()
+                    expired_days = max((current_day - borrow_date).days, 0)
+                _append_operation_log_entry(
+                    operation_rows,
+                    action="auto_cancel_reservation",
+                    entity="borrow_request",
+                    entity_id=request_id if request_id > 0 else None,
+                    detail={
+                        "request_id": request_id if request_id > 0 else None,
+                        "borrower": _to_str(row.get("borrower")),
+                        "borrow_date": _to_str(row.get("borrow_date")),
+                        "expired_days": expired_days,
+                        "rule_days": BORROW_RESERVATION_CANCEL_AFTER_DAYS,
+                    },
+                )
     return status_changed
 
 
@@ -2353,18 +2402,21 @@ def create_borrow_request(request_data: dict[str, Any], request_lines: list[dict
     normalized_lines = _normalize_borrow_request_lines(request_lines)
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_ws = wb["borrow_request_lines"]
         allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
         line_rows = _read_rows(line_ws)
         allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
 
         requested_totals: dict[tuple[str, str], int] = {}
@@ -2418,6 +2470,8 @@ def create_borrow_request(request_data: dict[str, Any], request_lines: list[dict
         _write_rows(line_ws, SHEETS["borrow_request_lines"], line_rows)
         _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        if status_changed:
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
         wb.save(DB_PATH)
         return request_id
 
@@ -2425,16 +2479,20 @@ def create_borrow_request(request_data: dict[str, Any], request_lines: list[dict
 def list_borrow_requests() -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
+        operation_rows = _read_rows(operation_ws)
         rows = _read_rows(request_ws)
         status_changed = _sync_borrow_statuses_in_place(
             request_rows=rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
             wb.save(DB_PATH)
     allocation_count_map: dict[int, int] = {}
     for row in allocation_rows:
@@ -2459,13 +2517,16 @@ def list_borrow_requests() -> list[dict[str, Any]]:
 def get_borrow_request(request_id: int) -> dict[str, Any] | None:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
+        operation_rows = _read_rows(operation_ws)
         rows = _read_rows(request_ws)
         status_changed = _sync_borrow_statuses_in_place(
             request_rows=rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
         target_row: dict[str, Any] | None = None
         for row in rows:
@@ -2475,6 +2536,7 @@ def get_borrow_request(request_id: int) -> dict[str, Any] | None:
             break
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
             wb.save(DB_PATH)
     if target_row is None:
         return None
@@ -2600,17 +2662,24 @@ def _inventory_serial_values(row: dict[str, Any]) -> list[str]:
 def list_borrow_pickup_lines(request_id: int) -> list[dict[str, Any]] | None:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_rows = _read_rows(wb["borrow_request_lines"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
         inventory_rows = _read_rows(wb["inventory_items"])
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
 
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
+        if status_changed:
+            _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
+            wb.save(DB_PATH)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -2646,17 +2715,24 @@ def list_borrow_pickup_line_candidates(
 ) -> dict[str, Any] | None:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_rows = _read_rows(wb["borrow_request_lines"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
         inventory_rows = _read_rows(wb["inventory_items"])
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
 
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
+        if status_changed:
+            _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
+            wb.save(DB_PATH)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -2715,17 +2791,24 @@ def resolve_borrow_pickup_scan(request_id: int, code: str) -> dict[str, Any] | N
 
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_rows = _read_rows(wb["borrow_request_lines"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
         inventory_rows = _read_rows(wb["inventory_items"])
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
 
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
+        if status_changed:
+            _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
+            wb.save(DB_PATH)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -2776,17 +2859,24 @@ def resolve_borrow_pickup_scan(request_id: int, code: str) -> dict[str, Any] | N
 def list_borrow_pickup_candidates(request_id: int) -> list[dict[str, Any]] | None:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_rows = _read_rows(wb["borrow_request_lines"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
         inventory_rows = _read_rows(wb["inventory_items"])
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
 
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
+        if status_changed:
+            _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
+            wb.save(DB_PATH)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -2827,17 +2917,24 @@ def list_borrow_pickup_candidates(request_id: int) -> list[dict[str, Any]] | Non
 
 def list_borrow_reservation_options(*, exclude_request_id: int | None = None) -> list[dict[str, Any]]:
     with _locked_workbook() as wb:
-        request_rows = _read_rows(wb["borrow_requests"])
+        request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
+        request_rows = _read_rows(request_ws)
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_rows = _read_rows(wb["borrow_request_lines"])
         allocation_rows = _read_rows(wb["borrow_allocations"])
         inventory_rows = _read_rows(wb["inventory_items"])
-
-    _sync_borrow_statuses_in_place(
-        request_rows=request_rows,
-        allocation_rows=allocation_rows,
-        legacy_item_rows=legacy_item_rows,
-    )
+        operation_rows = _read_rows(operation_ws)
+        status_changed = _sync_borrow_statuses_in_place(
+            request_rows=request_rows,
+            allocation_rows=allocation_rows,
+            legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
+        )
+        if status_changed:
+            _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
+            wb.save(DB_PATH)
     reserved_usage = _build_borrow_reservation_usage(
         request_rows=request_rows,
         line_rows=line_rows,
@@ -2880,18 +2977,21 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], request
     normalized_lines = _normalize_borrow_request_lines(request_lines)
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_ws = wb["borrow_request_lines"]
         allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
         line_rows = _read_rows(line_ws)
         allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
 
         request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
@@ -2952,6 +3052,8 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], request
         _write_rows(line_ws, SHEETS["borrow_request_lines"], line_rows)
         _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        if status_changed:
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
         wb.save(DB_PATH)
         return True
 
@@ -2959,21 +3061,24 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], request
 def pickup_borrow_request(request_id: int, selections_data: list[dict[str, Any]]) -> bool:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_ws = wb["borrow_request_lines"]
         allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
         movement_ws = wb["movement_ledger"]
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
         line_rows = _read_rows(line_ws)
         allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
         movement_rows = _read_rows(movement_ws)
 
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
         request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
         if request_row is None:
@@ -3076,6 +3181,8 @@ def pickup_borrow_request(request_id: int, selections_data: list[dict[str, Any]]
         _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
+        if status_changed:
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
         wb.save(DB_PATH)
         return True
 
@@ -3083,21 +3190,24 @@ def pickup_borrow_request(request_id: int, selections_data: list[dict[str, Any]]
 def return_borrow_request(request_id: int, *, return_date_value: Any = None) -> bool:
     with _locked_workbook() as wb:
         request_ws = wb["borrow_requests"]
+        operation_ws = wb["operation_logs"]
         legacy_item_rows = _read_rows(wb["borrow_items"])
         line_ws = wb["borrow_request_lines"]
         allocation_ws = wb["borrow_allocations"]
         inventory_ws = wb["inventory_items"]
         movement_ws = wb["movement_ledger"]
+        operation_rows = _read_rows(operation_ws)
         request_rows = _read_rows(request_ws)
         line_rows = _read_rows(line_ws)
         allocation_rows = _read_rows(allocation_ws)
         inventory_rows = _read_rows(inventory_ws)
         movement_rows = _read_rows(movement_ws)
 
-        _sync_borrow_statuses_in_place(
+        status_changed = _sync_borrow_statuses_in_place(
             request_rows=request_rows,
             allocation_rows=allocation_rows,
             legacy_item_rows=legacy_item_rows,
+            operation_rows=operation_rows,
         )
         request_row = next((row for row in request_rows if _to_int(row.get("id")) == request_id), None)
         if request_row is None:
@@ -3138,6 +3248,8 @@ def return_borrow_request(request_id: int, *, return_date_value: Any = None) -> 
         _write_rows(allocation_ws, SHEETS["borrow_allocations"], allocation_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
+        if status_changed:
+            _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
         wb.save(DB_PATH)
         return True
 
