@@ -15,10 +15,11 @@ import type { BorrowRequest, PaginatedResponse } from './types'
 
 type BorrowSortKey = 'id' | 'borrow_date' | 'borrower' | 'purpose' | 'return_info' | 'items' | 'memo'
 type SortDirection = 'asc' | 'desc'
-type BorrowStatusFilter = 'all' | 'reserved' | 'borrowed' | 'returned' | 'overdue' | 'expired' | 'cancelled'
+type BorrowStatusFilter = 'all' | 'reserved' | 'partial_borrowed' | 'borrowed' | 'returned' | 'overdue' | 'expired' | 'cancelled'
 
 const statusLabelMap: Record<string, string> = {
   reserved: '已預約',
+  partial_borrowed: '部分借出',
   borrowed: '借出中',
   returned: '已歸還',
   overdue: '逾期',
@@ -28,6 +29,7 @@ const statusLabelMap: Record<string, string> = {
 
 const statusBadgeClassMap: Record<string, string> = {
   reserved: 'border-amber-200 bg-amber-100 text-amber-800',
+  partial_borrowed: 'border-cyan-200 bg-cyan-100 text-cyan-800',
   borrowed: 'border-sky-200 bg-sky-100 text-sky-800',
   returned: 'border-emerald-200 bg-emerald-100 text-emerald-800',
   overdue: 'border-red-200 bg-red-100 text-red-800',
@@ -64,6 +66,7 @@ function readInitialState() {
   const statusParam = params.get('status')
   const status: BorrowStatusFilter =
     statusParam === 'reserved'
+    || statusParam === 'partial_borrowed'
     || statusParam === 'borrowed'
     || statusParam === 'returned'
     || statusParam === 'overdue'
@@ -232,6 +235,7 @@ export function BorrowListPage() {
             >
               <option value="all">全部狀態</option>
               <option value="reserved">已預約</option>
+              <option value="partial_borrowed">部分借出</option>
               <option value="borrowed">借出中</option>
               <option value="returned">已歸還</option>
               <option value="overdue">逾期</option>

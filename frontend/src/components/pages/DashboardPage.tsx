@@ -60,6 +60,7 @@ export function DashboardPage() {
 
   const pendingFixCount = dashboardData?.pendingFix ?? 0
   const totalRecords = dashboardData?.totalRecords ?? 0
+  const reservedBorrowCount = dashboardData?.reservedBorrowCount ?? 0
   const overdueBorrowCount = dashboardData?.overdueBorrowCount ?? 0
   const dueSoonBorrowCount = dashboardData?.dueSoonBorrowCount ?? 0
   const donatedItemsCount = dashboardData?.donatedItemsCount ?? 0
@@ -124,7 +125,7 @@ export function DashboardPage() {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>異常提醒</CardTitle>
+                <CardTitle>重點提醒</CardTitle>
                 <CardDescription>優先處理可能造成資料錯誤或流程延遲的項目。</CardDescription>
               </div>
               <AlertTriangle className="size-5 text-[hsl(var(--muted-foreground))]" />
@@ -133,6 +134,9 @@ export function DashboardPage() {
           <CardContent className="grid gap-2">
             <div className="rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900">
               待修正資產資料：<strong>{pendingFixCount}</strong> 筆
+            </div>
+            <div className="rounded-lg border border-blue-300 bg-blue-100 px-3 py-2 text-sm font-medium text-blue-800">
+              預約借用：<strong>{reservedBorrowCount}</strong> 筆
             </div>
             <div className="rounded-lg border border-red-300 bg-red-100 px-3 py-2 text-sm font-medium text-red-800">
               逾期借用：<strong>{overdueBorrowCount}</strong> 筆

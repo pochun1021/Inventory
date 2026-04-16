@@ -51,12 +51,14 @@ class RequestApiGuardTests(unittest.TestCase):
 
     @staticmethod
     def _borrow_request(lines: list[dict]) -> app_main.BorrowRequestCreate:
+        borrow_date = (date.today() + timedelta(days=1)).isoformat()
+        due_date = (date.today() + timedelta(days=10)).isoformat()
         return app_main.BorrowRequestCreate(
             borrower='tester',
             department='qa',
             purpose='test',
-            borrow_date='2026-04-10',
-            due_date='2026-04-20',
+            borrow_date=borrow_date,
+            due_date=due_date,
             memo='',
             request_lines=lines,
         )
@@ -122,6 +124,64 @@ class RequestApiGuardTests(unittest.TestCase):
         picked = app_main.pickup_borrow_request_api(created.id, pickup_payload, BackgroundTasks())
         self.assertIn(picked.status, {'borrowed', 'overdue'})
         self.assertEqual(picked.request_lines[0].allocated_qty, 2)
+
+        returned = app_main.return_borrow_request_api(created.id, BackgroundTasks())
+        self.assertEqual(returned.status, 'returned')
+
+    def test_borrow_api_supports_partial_pickup_then_complete(self) -> None:
+        first_item_id = self._create_item(name='筆電', model='B2')
+        second_item_id = self._create_item(name='筆電', model='B2')
+        created = app_main.create_borrow_request_api(
+            self._borrow_request([{'item_name': '筆電', 'item_model': 'B2', 'requested_qty': 2, 'note': ''}]),
+            BackgroundTasks(),
+        )
+
+        first_pickup = app_main.BorrowPickupRequest(
+            selections=[
+                app_main.BorrowPickupSelection(
+                    line_id=created.request_lines[0].id,
+                    item_ids=[first_item_id],
+                )
+            ]
+        )
+        partially_picked = app_main.pickup_borrow_request_api(created.id, first_pickup, BackgroundTasks())
+        self.assertEqual(partially_picked.status, 'partial_borrowed')
+        self.assertEqual(partially_picked.request_lines[0].allocated_qty, 1)
+
+        pickup_lines = app_main.list_borrow_pickup_lines_api(created.id)
+        self.assertEqual(len(pickup_lines), 1)
+        self.assertEqual(pickup_lines[0].allocated_qty, 1)
+        self.assertEqual(pickup_lines[0].remaining_qty, 1)
+
+        second_pickup = app_main.BorrowPickupRequest(
+            selections=[
+                app_main.BorrowPickupSelection(
+                    line_id=created.request_lines[0].id,
+                    item_ids=[second_item_id],
+                )
+            ]
+        )
+        fully_picked = app_main.pickup_borrow_request_api(created.id, second_pickup, BackgroundTasks())
+        self.assertIn(fully_picked.status, {'borrowed', 'overdue'})
+        self.assertEqual(fully_picked.request_lines[0].allocated_qty, 2)
+
+    def test_borrow_api_allows_return_from_partial_borrowed(self) -> None:
+        first_item_id = self._create_item(name='平板', model='R2')
+        self._create_item(name='平板', model='R2')
+        created = app_main.create_borrow_request_api(
+            self._borrow_request([{'item_name': '平板', 'item_model': 'R2', 'requested_qty': 2, 'note': ''}]),
+            BackgroundTasks(),
+        )
+        partial_pickup = app_main.BorrowPickupRequest(
+            selections=[
+                app_main.BorrowPickupSelection(
+                    line_id=created.request_lines[0].id,
+                    item_ids=[first_item_id],
+                )
+            ]
+        )
+        partially_picked = app_main.pickup_borrow_request_api(created.id, partial_pickup, BackgroundTasks())
+        self.assertEqual(partially_picked.status, 'partial_borrowed')
 
         returned = app_main.return_borrow_request_api(created.id, BackgroundTasks())
         self.assertEqual(returned.status, 'returned')

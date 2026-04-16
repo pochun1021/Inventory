@@ -44,13 +44,15 @@ class TransactionConsistencyTests(unittest.TestCase):
             'memo': '',
         }
 
-    def _borrow_payload(self, *, borrow_date: str = '2026-04-10', due_date: str = '2026-04-20') -> dict:
+    def _borrow_payload(self, *, borrow_date: str | None = None, due_date: str | None = None) -> dict:
+        resolved_borrow_date = borrow_date or (date.today() + timedelta(days=1)).strftime('%Y-%m-%d')
+        resolved_due_date = due_date or (date.today() + timedelta(days=10)).strftime('%Y-%m-%d')
         return {
             'borrower': 'tester',
             'department': 'qa',
             'purpose': 'test',
-            'borrow_date': borrow_date,
-            'due_date': due_date,
+            'borrow_date': resolved_borrow_date,
+            'due_date': resolved_due_date,
             'memo': '',
         }
 

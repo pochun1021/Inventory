@@ -191,6 +191,8 @@ class BorrowPickupCandidateLine(BaseModel):
     item_name: str = ""
     item_model: str = ""
     requested_qty: int = 0
+    allocated_qty: int = 0
+    remaining_qty: int = 0
     candidates: list[BorrowPickupCandidateItem] = Field(default_factory=list)
 
 
@@ -199,6 +201,8 @@ class BorrowPickupLineSummary(BaseModel):
     item_name: str = ""
     item_model: str = ""
     requested_qty: int = 0
+    allocated_qty: int = 0
+    remaining_qty: int = 0
     candidate_count: int = 0
 
 
@@ -207,6 +211,8 @@ class BorrowPickupLineCandidatePage(BaseModel):
     item_name: str = ""
     item_model: str = ""
     requested_qty: int = 0
+    allocated_qty: int = 0
+    remaining_qty: int = 0
     items: list[BorrowPickupCandidateItem] = Field(default_factory=list)
     page: int
     page_size: int

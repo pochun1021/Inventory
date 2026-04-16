@@ -67,6 +67,7 @@ const SCAN_MIN_LENGTH = 4
 const MAX_BORROW_RESERVATION_DAYS = 30
 const BORROW_STATUS_LABEL_MAP: Record<string, string> = {
   reserved: '已預約',
+  partial_borrowed: '部分借出',
   borrowed: '借出中',
   returned: '已歸還',
   overdue: '逾期',
@@ -234,8 +235,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   }, [isEditing, requestId])
 
   const canEditReservation = !isEditing || status === 'reserved' || status === 'expired'
-  const canPickup = isEditing && (status === 'reserved' || status === 'expired')
-  const canReturn = isEditing && (status === 'borrowed' || status === 'overdue')
+  const canPickup = isEditing && (status === 'reserved' || status === 'expired' || status === 'partial_borrowed')
+  const canReturn = isEditing && (status === 'partial_borrowed' || status === 'borrowed' || status === 'overdue')
 
   const totalRequestedQty = useMemo(
     () => lines.reduce((sum, line) => sum + Math.max(0, Number(line.requested_qty) || 0), 0),
@@ -245,10 +246,11 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     () => lines.reduce((sum, line) => sum + Math.max(0, Number(line.allocated_qty) || 0), 0),
     [lines],
   )
-  const pickupSelectionComplete = useMemo(
-    () => pickupLines.length > 0 && pickupLines.every((line) => (pickupSelections[line.line_id] ?? []).length === line.requested_qty),
+  const pickupSelectedTotal = useMemo(
+    () => pickupLines.reduce((sum, line) => sum + (pickupSelections[line.line_id] ?? []).length, 0),
     [pickupLines, pickupSelections],
   )
+  const pickupHasAnySelection = pickupSelectedTotal > 0
 
   useEffect(() => {
     if (!pickupDialogOpen) {
@@ -378,6 +380,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const getPickupLineById = (lineId: number) => pickupLines.find((line) => line.line_id === lineId)
 
   const getPickupSelectedQty = (lineId: number) => (pickupSelections[lineId] ?? []).length
+  const getPickupLineRemainingQty = (line: BorrowPickupLineSummary) => Math.max(line.remaining_qty ?? line.requested_qty, 0)
 
   const getSelectedItemIdsExceptLine = (lineId: number) => {
     const selectedIds = new Set<number>()
@@ -423,7 +426,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       if (current.includes(itemId)) {
         return { ...prev, [lineId]: current.filter((id) => id !== itemId) }
       }
-      if (current.length >= line.requested_qty) {
+      if (current.length >= getPickupLineRemainingQty(line)) {
         return prev
       }
       if (Object.entries(prev).some(([rawLineId, ids]) => Number(rawLineId) !== lineId && ids.includes(itemId))) {
@@ -529,21 +532,23 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       }
 
       const eligibleLineIdSet = new Set(payload.eligible_line_ids)
-      const targetLine = pickupLines.find((line) => eligibleLineIdSet.has(line.line_id) && getPickupSelectedQty(line.line_id) < line.requested_qty)
-      if (!targetLine) {
+      const targetLineWithRemaining = pickupLines.find(
+        (line) => eligibleLineIdSet.has(line.line_id) && getPickupSelectedQty(line.line_id) < getPickupLineRemainingQty(line),
+      )
+      if (!targetLineWithRemaining) {
         setScanFeedback({ type: 'error', message: `條碼 ${rawCode} 對應的預約列已選滿。` })
         return
       }
 
       setPickupSelections((prev) => ({
         ...prev,
-        [targetLine.line_id]: [...(prev[targetLine.line_id] ?? []), payload.item.id],
+        [targetLineWithRemaining.line_id]: [...(prev[targetLineWithRemaining.line_id] ?? []), payload.item.id],
       }))
-      setPickupExpandedLineId(targetLine.line_id)
-      mergeLineCandidateItem(targetLine.line_id, payload.item)
+      setPickupExpandedLineId(targetLineWithRemaining.line_id)
+      mergeLineCandidateItem(targetLineWithRemaining.line_id, payload.item)
       setScanFeedback({
         type: 'success',
-        message: `已加入 ${targetLine.item_name} / ${targetLine.item_model}（${getPickupItemSerialLabel(payload.item)}）`,
+        message: `已加入 ${targetLineWithRemaining.item_name} / ${targetLineWithRemaining.item_model}（${getPickupItemSerialLabel(payload.item)}）`,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
@@ -676,8 +681,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     if (!requestId) {
       return
     }
-    if (!pickupSelectionComplete) {
-      void toast.fire({ icon: 'error', title: '請先完成每個品項的借出編號選擇。' })
+    if (!pickupHasAnySelection) {
+      void toast.fire({ icon: 'error', title: '請先選擇至少一個借出編號。' })
       return
     }
     setFormError('')
@@ -688,10 +693,12 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          selections: pickupLines.map((line) => ({
+          selections: pickupLines
+            .map((line) => ({
             line_id: line.line_id,
             item_ids: pickupSelections[line.line_id] ?? [],
-          })),
+            }))
+            .filter((selection) => selection.item_ids.length > 0),
         }),
       })
       if (!response.ok) {
@@ -708,7 +715,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       await refreshReservationOptions()
       await refreshCurrentRequest()
       closePickupDialog()
-      void toast.fire({ icon: 'success', title: '已完成領取並分配資產。' })
+      void toast.fire({ icon: 'success', title: '已完成本次領取並分配資產。' })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       void toast.fire({ icon: 'error', title: message || '執行領取失敗，請稍後再試。' })
@@ -921,7 +928,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         open={pickupDialogOpen}
         onClose={closePickupDialog}
         title="確認借出編號"
-        description="大量清單可先掃碼，再按列檢查。每個編號只能使用一次。"
+        description="可分批領取。大量清單可先掃碼，再按列檢查；每個編號只能使用一次。"
         panelClassName="max-w-6xl h-[85vh] flex flex-col"
         bodyClassName="min-h-0 flex-1 overflow-hidden"
         actions={
@@ -929,8 +936,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
             <Button type="button" variant="secondary" onClick={closePickupDialog} disabled={submitting}>
               取消
             </Button>
-            <Button type="button" onClick={() => void handlePickup()} disabled={submitting || !pickupSelectionComplete}>
-              {submitting ? '處理中...' : '確認領取'}
+            <Button type="button" onClick={() => void handlePickup()} disabled={submitting || !pickupHasAnySelection}>
+              {submitting ? '處理中...' : '確認本次領取'}
             </Button>
           </>
         }
@@ -941,6 +948,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
             <div className="grid max-h-full gap-2 overflow-y-auto">
               {pickupLines.map((line) => {
                 const selectedQty = getPickupSelectedQty(line.line_id)
+                const allocatedQty = line.allocated_qty ?? 0
+                const remainingQty = getPickupLineRemainingQty(line)
                 const isExpanded = pickupExpandedLineId === line.line_id
                 return (
                   <button
@@ -953,7 +962,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                   >
                     <span className="text-sm font-semibold">{line.item_name} / {line.item_model}</span>
                     <span className="text-xs text-[hsl(var(--muted-foreground))]">
-                      已選 {selectedQty} / {line.requested_qty}，候選約 {line.candidate_count}
+                      已領 {allocatedQty + selectedQty} / {line.requested_qty}（本次可選 {remainingQty}），候選約 {line.candidate_count}
                     </span>
                   </button>
                 )

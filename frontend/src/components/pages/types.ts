@@ -4,6 +4,7 @@ export type DashboardPayload = {
   items: number
   pendingFix: number
   totalRecords?: number
+  reservedBorrowCount?: number
   overdueBorrowCount?: number
   dueSoonBorrowCount?: number
   donatedItemsCount?: number
@@ -132,6 +133,8 @@ export type BorrowPickupLineSummary = {
   item_name: string
   item_model: string
   requested_qty: number
+  allocated_qty: number
+  remaining_qty: number
   candidate_count: number
 }
 
@@ -140,6 +143,8 @@ export type BorrowPickupCandidateLine = {
   item_name: string
   item_model: string
   requested_qty: number
+  allocated_qty: number
+  remaining_qty: number
   candidates: BorrowPickupCandidateItem[]
 }
 
@@ -148,6 +153,8 @@ export type BorrowPickupLineCandidatePage = {
   item_name: string
   item_model: string
   requested_qty: number
+  allocated_qty: number
+  remaining_qty: number
   items: BorrowPickupCandidateItem[]
   page: number
   page_size: number
