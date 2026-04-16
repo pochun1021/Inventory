@@ -7,17 +7,29 @@ import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
-import { buildGroupedItemOptions } from './itemOptionGroups'
+import {
+  EMPTY_MODEL_LABEL,
+  EMPTY_NAME_LABEL,
+  buildItemOptions,
+  buildModelOptions,
+  buildNameOptions,
+  decodeSelectValue,
+  encodeSelectValue,
+  getItemModelValue,
+  getItemNameValue,
+  getItemSerialLabel,
+} from './itemCascadeOptions'
 import type { InventoryItem, IssueRequest, PaginatedResponse } from './types'
 
 type IssueLine = {
   item_id: number | ''
   quantity: number
   note: string
+  selected_name: string | null
+  selected_model: string | null
 }
 
-const emptyLine = (): IssueLine => ({ item_id: '', quantity: 1, note: '' })
-const GROUP_OPTION_PREFIX = '__group__:'
+const emptyLine = (): IssueLine => ({ item_id: '', quantity: 1, note: '', selected_name: null, selected_model: null })
 const toast = Swal.mixin({
   toast: true,
   position: 'top-end',
@@ -87,6 +99,8 @@ export function IssuePage({ requestId }: IssuePageProps) {
               item_id: item.item_id,
               quantity: item.quantity,
               note: item.note ?? '',
+              selected_name: null,
+              selected_model: null,
             }))
             : [emptyLine()],
         )
@@ -112,11 +126,53 @@ export function IssuePage({ requestId }: IssuePageProps) {
     })
   }, [inventoryItems, isEditing, selectedItemIds])
 
-  const itemOptionGroups = useMemo(() => buildGroupedItemOptions(selectableItems), [selectableItems])
+  const nameOptions = useMemo(() => buildNameOptions(selectableItems), [selectableItems])
   const selectableItemIdSet = useMemo(() => new Set(selectableItems.map((item) => item.id)), [selectableItems])
+  const selectableItemMap = useMemo(() => new Map(selectableItems.map((item) => [item.id, item])), [selectableItems])
+
+  useEffect(() => {
+    setLines((prev) => {
+      let changed = false
+      const next = prev.map((line) => {
+        if (line.item_id === '') {
+          return line
+        }
+        const item = selectableItemMap.get(line.item_id)
+        if (!item) {
+          return line
+        }
+        const selectedName = getItemNameValue(item)
+        const selectedModel = getItemModelValue(item)
+        if (line.selected_name === selectedName && line.selected_model === selectedModel) {
+          return line
+        }
+        changed = true
+        return { ...line, selected_name: selectedName, selected_model: selectedModel }
+      })
+      return changed ? next : prev
+    })
+  }, [selectableItemMap])
 
   const handleLineChange = (index: number, patch: Partial<IssueLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
+  }
+
+  const handleNameSelectChange = (index: number, rawValue: string) => {
+    const decoded = decodeSelectValue(rawValue)
+    if (decoded === null) {
+      handleLineChange(index, { selected_name: null, selected_model: null, item_id: '' })
+      return
+    }
+    handleLineChange(index, { selected_name: decoded, selected_model: null, item_id: '' })
+  }
+
+  const handleModelSelectChange = (index: number, rawValue: string) => {
+    const decoded = decodeSelectValue(rawValue)
+    if (decoded === null) {
+      handleLineChange(index, { selected_model: null, item_id: '' })
+      return
+    }
+    handleLineChange(index, { selected_model: decoded, item_id: '' })
   }
 
   const handleItemSelectChange = (index: number, rawValue: string) => {
@@ -124,10 +180,20 @@ export function IssuePage({ requestId }: IssuePageProps) {
       handleLineChange(index, { item_id: '' })
       return
     }
-    if (rawValue.startsWith(GROUP_OPTION_PREFIX)) {
+
+    const itemId = Number(rawValue)
+    if (!Number.isInteger(itemId)) {
       return
     }
-    handleLineChange(index, { item_id: Number(rawValue) })
+    const item = selectableItemMap.get(itemId)
+    if (!item) {
+      return
+    }
+    handleLineChange(index, {
+      item_id: itemId,
+      selected_name: getItemNameValue(item),
+      selected_model: getItemModelValue(item),
+    })
   }
 
   const normalizeScanCode = (value: string) => value.trim().toLowerCase()
@@ -144,21 +210,22 @@ export function IssuePage({ requestId }: IssuePageProps) {
   }
 
   const assignScannedItem = (itemId: number) => {
+    const matchedItem = inventoryItems.find((item) => item.id === itemId)
+    const selectedName = matchedItem ? getItemNameValue(matchedItem) : null
+    const selectedModel = matchedItem ? getItemModelValue(matchedItem) : null
     setLines((prev) => {
       const emptyIndex = prev.findIndex((line) => line.item_id === '')
       if (emptyIndex >= 0) {
-        return prev.map((line, index) => (index === emptyIndex ? { ...line, item_id: itemId } : line))
+        return prev.map((line, index) => (
+          index === emptyIndex ? { ...line, item_id: itemId, selected_name: selectedName, selected_model: selectedModel } : line
+        ))
       }
-      return [...prev, { ...emptyLine(), item_id: itemId }]
+      return [...prev, { ...emptyLine(), item_id: itemId, selected_name: selectedName, selected_model: selectedModel }]
     })
   }
 
-  const getItemSerialLabel = (item: InventoryItem) => {
-    return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || `ID ${item.id}`
-  }
-
   const getItemScanOptionLabel = (item: InventoryItem) => {
-    const base = `${item.name || '未命名'} / ${item.model || '未填型號'}（${getItemSerialLabel(item)}）`
+    const base = `${item.name || EMPTY_NAME_LABEL} / ${item.model || EMPTY_MODEL_LABEL}（${getItemSerialLabel(item)}）`
     if (lines.some((line) => line.item_id === item.id)) {
       return `${base} [已在單內]`
     }
@@ -376,29 +443,55 @@ export function IssuePage({ requestId }: IssuePageProps) {
                   .map((itemLine) => itemLine.item_id)
                   .filter((itemId): itemId is number => itemId !== ''),
               )
+              const modelOptions = line.selected_name === null ? [] : buildModelOptions(selectableItems, line.selected_name)
+              const itemOptions =
+                line.selected_name === null || line.selected_model === null
+                  ? []
+                  : buildItemOptions(selectableItems, line.selected_name, line.selected_model)
               return (
-              <article key={`issue-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[2fr,1fr,2fr,auto]">
+              <article key={`issue-line-${index}`} className="grid gap-2 rounded-lg border border-[hsl(var(--border))] p-3 md:grid-cols-[1.2fr,1.2fr,1.6fr,1fr,2fr,auto]">
                 <div className="grid gap-1.5">
-                  <Label>品項</Label>
+                  <Label>品名</Label>
                   <Select
-                    value={line.item_id}
-                    onChange={(event) => handleItemSelectChange(index, event.target.value)}
+                    value={line.selected_name === null ? '' : encodeSelectValue(line.selected_name)}
+                    onChange={(event) => handleNameSelectChange(index, event.target.value)}
                   >
-                    <option value="">請選擇品項</option>
-                    {itemOptionGroups.flatMap((group) => [
-                      <option
-                        key={`group-${group.groupLabel}`}
-                        value={`${GROUP_OPTION_PREFIX}${group.groupLabel}`}
-                        style={{ color: 'hsl(var(--foreground))', fontWeight: 700 }}
-                      >
-                        {`==== ${group.groupLabel} ====`}
-                      </option>,
-                      ...group.options.map((option) => (
-                        <option key={option.value} value={option.value} disabled={selectedByOtherLines.has(option.value)}>
-                          {`  ${option.label}`}
-                        </option>
-                      )),
-                    ])}
+                    <option value="">請選擇品名</option>
+                    {nameOptions.map((option) => (
+                      <option key={`issue-name-${option.value || '__empty__'}`} value={encodeSelectValue(option.value)}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>型號</Label>
+                  <Select
+                    value={line.selected_model === null ? '' : encodeSelectValue(line.selected_model)}
+                    onChange={(event) => handleModelSelectChange(index, event.target.value)}
+                    disabled={line.selected_name === null}
+                  >
+                    <option value="">請選擇型號</option>
+                    {modelOptions.map((option) => (
+                      <option key={`issue-model-${option.value || '__empty__'}`} value={encodeSelectValue(option.value)}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>編號</Label>
+                  <Select
+                    value={line.item_id === '' ? '' : String(line.item_id)}
+                    onChange={(event) => handleItemSelectChange(index, event.target.value)}
+                    disabled={line.selected_name === null || line.selected_model === null}
+                  >
+                    <option value="">請選擇編號</option>
+                    {itemOptions.map((option) => (
+                      <option key={`issue-item-${option.value}`} value={option.value} disabled={selectedByOtherLines.has(option.value)}>
+                        {option.label}
+                      </option>
+                    ))}
                   </Select>
                 </div>
                 <div className="grid gap-1.5">

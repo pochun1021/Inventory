@@ -111,12 +111,80 @@ class TransactionConsistencyTests(unittest.TestCase):
         self.assertEqual(item_after_delete['count'], 1)
         self.assertEqual(item_after_delete['asset_status'], '0')
 
+    def test_issue_request_sets_keeper_to_requester_for_asset(self) -> None:
+        item_id = db.create_item(
+            {
+                'asset_type': '11',
+                'asset_status': '0',
+                'name': '財產設備',
+                'model': 'A-1',
+                'count': 1,
+                'keeper': '原保管人',
+            }
+        )
+
+        db.create_issue_request(
+            {
+                **self._issue_payload(),
+                'requester': '新領用人',
+            },
+            [{'item_id': item_id, 'quantity': 1, 'note': ''}],
+        )
+
+        item_after_create = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_create)
+        self.assertEqual(item_after_create['asset_status'], '1')
+        self.assertEqual(item_after_create['keeper'], '新領用人')
+
+    def test_issue_request_sets_keeper_to_requester_for_non_asset(self) -> None:
+        item_id = db.create_item(
+            {
+                'asset_type': 'A1',
+                'asset_status': '0',
+                'name': '耗材',
+                'model': 'I-1',
+                'count': 1,
+                'keeper': '原保管人',
+            }
+        )
+
+        db.create_issue_request(
+            {
+                **self._issue_payload(),
+                'requester': '新領用人',
+            },
+            [{'item_id': item_id, 'quantity': 1, 'note': ''}],
+        )
+
+        item_after_create = db.get_item_by_id(item_id)
+        self.assertIsNotNone(item_after_create)
+        self.assertEqual(item_after_create['asset_status'], '1')
+        self.assertEqual(item_after_create['keeper'], '新領用人')
+
     def test_borrow_reservation_pickup_return_flow_updates_status_only(self) -> None:
-        first_id = self._create_item(name='平板', model='T1')
-        second_id = self._create_item(name='平板', model='T1')
+        first_id = db.create_item(
+            {
+                'asset_type': 'A1',
+                'asset_status': '0',
+                'name': '平板',
+                'model': 'T1',
+                'count': 1,
+                'keeper': '原保管人A',
+            }
+        )
+        second_id = db.create_item(
+            {
+                'asset_type': 'A1',
+                'asset_status': '0',
+                'name': '平板',
+                'model': 'T1',
+                'count': 1,
+                'keeper': '原保管人B',
+            }
+        )
 
         request_id = db.create_borrow_request(
-            self._borrow_payload(),
+            {**self._borrow_payload(), 'borrower': '借用人A'},
             [{'item_name': '平板', 'item_model': 'T1', 'requested_qty': 2, 'note': ''}],
         )
         request = db.get_borrow_request(request_id)
@@ -137,12 +205,61 @@ class TransactionConsistencyTests(unittest.TestCase):
         item_after_pickup_2 = db.get_item_by_id(second_id)
         self.assertEqual(item_after_pickup_1['asset_status'], '2')
         self.assertEqual(item_after_pickup_2['asset_status'], '2')
+        self.assertEqual(item_after_pickup_1['keeper'], '借用人A')
+        self.assertEqual(item_after_pickup_2['keeper'], '借用人A')
 
         db.return_borrow_request(request_id)
         item_after_return_1 = db.get_item_by_id(first_id)
         item_after_return_2 = db.get_item_by_id(second_id)
         self.assertEqual(item_after_return_1['asset_status'], '0')
         self.assertEqual(item_after_return_2['asset_status'], '0')
+        self.assertEqual(item_after_return_1['keeper'], '')
+        self.assertEqual(item_after_return_2['keeper'], '')
+
+    def test_partial_pickup_updates_keeper_only_for_picked_items(self) -> None:
+        first_id = db.create_item(
+            {
+                'asset_type': 'A1',
+                'asset_status': '0',
+                'name': '相機',
+                'model': 'C1',
+                'count': 1,
+                'keeper': '原保管人A',
+            }
+        )
+        second_id = db.create_item(
+            {
+                'asset_type': 'A1',
+                'asset_status': '0',
+                'name': '相機',
+                'model': 'C1',
+                'count': 1,
+                'keeper': '原保管人B',
+            }
+        )
+
+        request_id = db.create_borrow_request(
+            {**self._borrow_payload(), 'borrower': '借用人B'},
+            [{'item_name': '相機', 'item_model': 'C1', 'requested_qty': 2, 'note': ''}],
+        )
+        line_id = db.list_borrow_items(request_id)[0]['id']
+        db.pickup_borrow_request(
+            request_id,
+            [{'line_id': line_id, 'item_ids': [first_id]}],
+        )
+
+        request_after_pickup = db.get_borrow_request(request_id)
+        self.assertIsNotNone(request_after_pickup)
+        self.assertEqual(request_after_pickup['status'], 'partial_borrowed')
+
+        picked_item = db.get_item_by_id(first_id)
+        unpicked_item = db.get_item_by_id(second_id)
+        self.assertIsNotNone(picked_item)
+        self.assertIsNotNone(unpicked_item)
+        self.assertEqual(picked_item['asset_status'], '2')
+        self.assertEqual(picked_item['keeper'], '借用人B')
+        self.assertEqual(unpicked_item['asset_status'], '0')
+        self.assertEqual(unpicked_item['keeper'], '原保管人B')
 
     def test_legacy_borrow_items_can_be_returned_without_allocations(self) -> None:
         item_id = self._create_item(asset_status='2', name='老資料設備', model='L1')
