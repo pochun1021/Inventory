@@ -39,6 +39,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
   const [purpose, setPurpose] = useState('')
   const [requestDate, setRequestDate] = useState('')
   const [memo, setMemo] = useState('')
+  const [scanCode, setScanCode] = useState('')
   const [lines, setLines] = useState<IssueLine[]>([emptyLine()])
   const [submitting, setSubmitting] = useState(false)
   const isEditing = Number.isInteger(requestId)
@@ -112,6 +113,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
   }, [inventoryItems, isEditing, selectedItemIds])
 
   const itemOptionGroups = useMemo(() => buildGroupedItemOptions(selectableItems), [selectableItems])
+  const selectableItemIdSet = useMemo(() => new Set(selectableItems.map((item) => item.id)), [selectableItems])
 
   const handleLineChange = (index: number, patch: Partial<IssueLine>) => {
     setLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)))
@@ -126,6 +128,130 @@ export function IssuePage({ requestId }: IssuePageProps) {
       return
     }
     handleLineChange(index, { item_id: Number(rawValue) })
+  }
+
+  const normalizeScanCode = (value: string) => value.trim().toLowerCase()
+
+  const getScanMatchedItems = (rawCode: string) => {
+    const normalizedCode = normalizeScanCode(rawCode)
+    if (!normalizedCode) {
+      return []
+    }
+    return inventoryItems.filter((item) => {
+      const serialFields = [item.n_property_sn, item.property_sn, item.n_item_sn, item.item_sn]
+      return serialFields.some((serial) => normalizeScanCode(serial) === normalizedCode)
+    })
+  }
+
+  const assignScannedItem = (itemId: number) => {
+    setLines((prev) => {
+      const emptyIndex = prev.findIndex((line) => line.item_id === '')
+      if (emptyIndex >= 0) {
+        return prev.map((line, index) => (index === emptyIndex ? { ...line, item_id: itemId } : line))
+      }
+      return [...prev, { ...emptyLine(), item_id: itemId }]
+    })
+  }
+
+  const getItemSerialLabel = (item: InventoryItem) => {
+    return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || `ID ${item.id}`
+  }
+
+  const getItemScanOptionLabel = (item: InventoryItem) => {
+    const base = `${item.name || '未命名'} / ${item.model || '未填型號'}（${getItemSerialLabel(item)}）`
+    if (lines.some((line) => line.item_id === item.id)) {
+      return `${base} [已在單內]`
+    }
+    if (!selectableItemIdSet.has(item.id)) {
+      return `${base} [目前不可選]`
+    }
+    return base
+  }
+
+  const escapeHtml = (value: string) => {
+    return value
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;')
+  }
+
+  const pickMatchedItemFromDialog = async (rawCode: string, matchedItems: InventoryItem[]) => {
+    const optionsHtml = matchedItems
+      .map((item, index) => (
+        `<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;">` +
+        `<input type="radio" name="issue-scan-item" value="${item.id}" ${index === 0 ? 'checked' : ''} style="margin-top:3px;" />` +
+        `<span style="white-space:normal;word-break:break-word;text-align:left;">${escapeHtml(getItemScanOptionLabel(item))}</span>` +
+        `</label>`
+      ))
+      .join('')
+    const { isConfirmed, value } = await Swal.fire({
+      title: '掃碼命中多筆，請選擇品項',
+      width: '48rem',
+      html:
+        `<p style="margin:0 0 10px 0;text-align:left;font-size:18px;line-height:1.4;">條碼：<strong>${escapeHtml(rawCode)}</strong></p>` +
+        `<div style="display:grid;gap:8px;max-height:320px;overflow-y:auto;padding-right:2px;">${optionsHtml}</div>`,
+      showCancelButton: true,
+      confirmButtonText: '加入品項',
+      cancelButtonText: '取消',
+      focusConfirm: false,
+      preConfirm: () => {
+        const selectedInput = document.querySelector('input[name="issue-scan-item"]:checked') as HTMLInputElement | null
+        if (!selectedInput || !selectedInput.value) {
+          Swal.showValidationMessage('請選擇一筆品項。')
+          return null
+        }
+        const itemId = Number(selectedInput.value)
+        if (!Number.isInteger(itemId)) {
+          Swal.showValidationMessage('品項選擇無效，請重試。')
+          return null
+        }
+        if (lines.some((line) => line.item_id === itemId)) {
+          Swal.showValidationMessage('所選品項已在單內。')
+          return null
+        }
+        if (!selectableItemIdSet.has(itemId)) {
+          Swal.showValidationMessage('所選品項目前不可選。')
+          return null
+        }
+        return itemId
+      },
+    })
+    return isConfirmed && typeof value === 'number' ? value : null
+  }
+
+  const handleApplyScanCode = async () => {
+    const rawCode = scanCode.trim()
+    if (!rawCode) {
+      return
+    }
+    const matchedItems = getScanMatchedItems(rawCode)
+    setScanCode('')
+
+    if (matchedItems.length === 0) {
+      void toast.fire({ icon: 'error', title: `查無條碼：${rawCode}` })
+      return
+    }
+
+    const targetItemId = matchedItems.length > 1
+      ? await pickMatchedItemFromDialog(rawCode, matchedItems)
+      : matchedItems[0].id
+    if (!targetItemId) {
+      return
+    }
+
+    if (lines.some((line) => line.item_id === targetItemId)) {
+      void toast.fire({ icon: 'info', title: `條碼 ${rawCode} 對應品項已在單內。` })
+      return
+    }
+    if (!selectableItemIdSet.has(targetItemId)) {
+      void toast.fire({ icon: 'error', title: `條碼 ${rawCode} 對應品項目前不可選。` })
+      return
+    }
+
+    assignScannedItem(targetItemId)
+    void toast.fire({ icon: 'success', title: `已透過條碼加入品項（${rawCode}）。` })
   }
 
   const getLineValidationError = () => {
@@ -227,6 +353,21 @@ export function IssuePage({ requestId }: IssuePageProps) {
         </SectionCard>
 
         <SectionCard title="領用品項">
+          <div className="mb-3 grid gap-1.5">
+            <Label htmlFor="issue-scan-code">掃碼加入品項</Label>
+            <Input
+              id="issue-scan-code"
+              value={scanCode}
+              placeholder="請掃描或輸入條碼後按 Enter"
+              onChange={(event) => setScanCode(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void handleApplyScanCode()
+                }
+              }}
+            />
+          </div>
           <div className="grid gap-3">
             {lines.map((line, index) => {
               const selectedByOtherLines = new Set(
