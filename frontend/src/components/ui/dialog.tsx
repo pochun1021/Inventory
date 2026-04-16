@@ -9,9 +9,11 @@ type DialogProps = {
   description?: string
   children?: React.ReactNode
   actions?: React.ReactNode
+  panelClassName?: string
+  bodyClassName?: string
 }
 
-export function Dialog({ open, onClose, title, description, children, actions }: DialogProps) {
+export function Dialog({ open, onClose, title, description, children, actions, panelClassName, bodyClassName }: DialogProps) {
   if (!open) {
     return null
   }
@@ -21,12 +23,12 @@ export function Dialog({ open, onClose, title, description, children, actions }:
       <div
         role="dialog"
         aria-modal="true"
-        className={cn('w-full max-w-md rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 shadow-xl')}
+        className={cn('w-full max-w-md rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-6 shadow-xl', panelClassName)}
         onClick={(event) => event.stopPropagation()}
       >
         <h3 className="m-0 text-base font-semibold text-[hsl(var(--foreground))]">{title}</h3>
         {description ? <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">{description}</p> : null}
-        {children ? <div className="mt-4">{children}</div> : null}
+        {children ? <div className={cn('mt-4', bodyClassName)}>{children}</div> : null}
         {actions ? <div className="mt-5 flex justify-end gap-2">{actions}</div> : null}
       </div>
     </div>,

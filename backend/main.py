@@ -34,6 +34,10 @@ from db import (
     list_issue_requests,
     list_borrow_items,
     list_borrow_items_map,
+    list_borrow_pickup_line_candidates,
+    list_borrow_pickup_lines,
+    list_borrow_pickup_candidates,
+    list_borrow_reservation_options,
     list_borrow_requests,
     list_donation_items,
     list_donation_items_map,
@@ -42,7 +46,10 @@ from db import (
     list_movement_ledger,
     list_operation_logs,
     log_inventory_action,
+    pickup_borrow_request,
     purge_soft_deleted_items,
+    resolve_borrow_pickup_scan,
+    return_borrow_request,
     update_asset_status_code,
     update_item,
     update_issue_request,
@@ -147,16 +154,84 @@ class IssueRequest(IssueRequestCreate):
     items: list[IssueItem]
 
 
-class BorrowItemCreate(BaseModel):
-    item_id: int
-    quantity: int = 1
+class BorrowRequestLineCreate(BaseModel):
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 1
     note: str = ""
 
 
-class BorrowItem(BorrowItemCreate):
+class BorrowRequestLine(BorrowRequestLineCreate):
     id: int
-    item_name: str | None = None
-    item_model: str | None = None
+    item_id: int | None = None
+    quantity: int = 0
+    allocated_qty: int = 0
+    allocated_item_ids: list[int] = Field(default_factory=list)
+
+
+class BorrowPickupSelection(BaseModel):
+    line_id: int
+    item_ids: list[int] = Field(default_factory=list)
+
+
+class BorrowPickupRequest(BaseModel):
+    selections: list[BorrowPickupSelection] = Field(default_factory=list)
+
+
+class BorrowPickupCandidateItem(BaseModel):
+    id: int
+    n_property_sn: str = ""
+    property_sn: str = ""
+    n_item_sn: str = ""
+    item_sn: str = ""
+
+
+class BorrowPickupCandidateLine(BaseModel):
+    line_id: int
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 0
+    allocated_qty: int = 0
+    remaining_qty: int = 0
+    candidates: list[BorrowPickupCandidateItem] = Field(default_factory=list)
+
+
+class BorrowPickupLineSummary(BaseModel):
+    line_id: int
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 0
+    allocated_qty: int = 0
+    remaining_qty: int = 0
+    candidate_count: int = 0
+
+
+class BorrowPickupLineCandidatePage(BaseModel):
+    line_id: int
+    item_name: str = ""
+    item_model: str = ""
+    requested_qty: int = 0
+    allocated_qty: int = 0
+    remaining_qty: int = 0
+    items: list[BorrowPickupCandidateItem] = Field(default_factory=list)
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+
+
+class BorrowPickupScanResolveRequest(BaseModel):
+    code: str = ""
+
+
+class BorrowPickupScanResolveItem(BorrowPickupCandidateItem):
+    item_name: str = ""
+    item_model: str = ""
+
+
+class BorrowPickupScanResolveResponse(BaseModel):
+    item: BorrowPickupScanResolveItem
+    eligible_line_ids: list[int] = Field(default_factory=list)
 
 
 class BorrowRequestCreate(BaseModel):
@@ -165,16 +240,16 @@ class BorrowRequestCreate(BaseModel):
     purpose: str = ""
     borrow_date: date | None = None
     due_date: date | None = None
-    return_date: date | None = None
-    status: str = "borrowed"
     memo: str = ""
-    items: list[BorrowItemCreate] = Field(default_factory=list)
+    request_lines: list[BorrowRequestLineCreate] = Field(default_factory=list)
 
 
 class BorrowRequest(BorrowRequestCreate):
     id: int
+    return_date: date | None = None
+    status: str = "reserved"
     is_due_soon: bool = False
-    items: list[BorrowItem]
+    request_lines: list[BorrowRequestLine]
 
 
 class DonationItemCreate(BaseModel):
@@ -226,6 +301,15 @@ class BorrowRequestListResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class BorrowReservationOption(BaseModel):
+    item_name: str = ""
+    item_model: str = ""
+    available_qty: int = 0
+    reserved_qty: int = 0
+    reservable_qty: int = 0
+    selectable: bool = False
 
 
 class DonationRequestListResponse(BaseModel):
@@ -449,7 +533,9 @@ def _request_items_sort_key(items: list[Any]) -> tuple[str, int, int]:
     item_count = len(items)
     total_quantity = 0
     for item in items:
-        quantity = getattr(item, "quantity", 0)
+        quantity = getattr(item, "requested_qty", None)
+        if quantity is None:
+            quantity = getattr(item, "quantity", 0)
         try:
             total_quantity += int(quantity or 0)
         except (TypeError, ValueError):
@@ -538,14 +624,25 @@ def row_to_issue_item(row) -> IssueItem:
     )
 
 
-def row_to_borrow_item(row) -> BorrowItem:
-    return BorrowItem(
+def row_to_borrow_item(row) -> BorrowRequestLine:
+    allocated_ids: list[int] = []
+    for raw_item_id in row.get("allocated_item_ids", []):
+        try:
+            item_id = int(raw_item_id)
+        except (TypeError, ValueError):
+            continue
+        if item_id > 0:
+            allocated_ids.append(item_id)
+    return BorrowRequestLine(
         id=row["id"],
-        item_id=row["item_id"],
+        item_id=row.get("item_id") if row.get("item_id") not in ("", None) else None,
         quantity=row["quantity"],
         note=_coerce_str(row["note"]),
-        item_name=row["item_name"],
-        item_model=row["item_model"],
+        item_name=_coerce_str(row.get("item_name")),
+        item_model=_coerce_str(row.get("item_model")),
+        requested_qty=int(row.get("requested_qty") or row.get("quantity") or 0),
+        allocated_qty=int(row.get("allocated_qty") or 0),
+        allocated_item_ids=allocated_ids,
     )
 
 
@@ -577,8 +674,6 @@ def borrow_request_to_db_payload(request: BorrowRequestCreate) -> dict:
         "purpose": request.purpose,
         "borrow_date": _format_date(request.borrow_date),
         "due_date": _format_date(request.due_date),
-        "return_date": _format_date(request.return_date),
-        "status": request.status,
         "memo": request.memo,
     }
 
@@ -607,7 +702,7 @@ def issue_request_row_to_model(row, items: list[IssueItem]) -> IssueRequest:
     )
 
 
-def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
+def borrow_request_row_to_model(row, request_lines: list[BorrowRequestLine]) -> BorrowRequest:
     borrow_date = _parse_purchase_date(row["borrow_date"]) if row["borrow_date"] else None
     due_date = _parse_purchase_date(row["due_date"]) if row["due_date"] else None
     return_date = _parse_purchase_date(row["return_date"]) if row["return_date"] else None
@@ -622,7 +717,7 @@ def borrow_request_row_to_model(row, items: list[BorrowItem]) -> BorrowRequest:
         status=_coerce_str(row["status"]),
         is_due_soon=bool(row.get("is_due_soon")),
         memo=_coerce_str(row["memo"]),
-        items=items,
+        request_lines=request_lines,
     )
 
 
@@ -653,6 +748,17 @@ def _ensure_available_item_ids(
     )
     if not is_available:
         raise HTTPException(status_code=400, detail=error_message or "invalid item_id")
+
+
+def _to_http_error_detail(error: ValueError) -> str | dict[str, Any]:
+    raw = str(error)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(parsed, dict):
+        return parsed
+    return raw
 
 
 def _sync_requests_safe() -> None:
@@ -744,6 +850,12 @@ def delete_asset_status_code_api(code: str):
 
     log_inventory_action(action="delete", entity="asset_status_code", detail={"code": code})
     return {"success": True}
+
+
+@app.get("/api/lookups/borrow-reservations", response_model=list[BorrowReservationOption], response_model_by_alias=False)
+def list_borrow_reservation_options_api(request_id: int | None = None):
+    rows = list_borrow_reservation_options(exclude_request_id=request_id)
+    return [BorrowReservationOption(**row) for row in rows]
 
 
 @app.get("/api/items", response_model=InventoryItemListResponse, response_model_by_alias=False)
@@ -1055,12 +1167,12 @@ def list_borrow_requests_api(
     normalized_keyword = keyword.strip().lower()
     results: list[BorrowRequest] = []
     for row in rows:
-        items = [row_to_borrow_item(item) for item in request_item_map.get(int(row.get("id") or 0), [])]
-        model = borrow_request_row_to_model(row, items)
+        request_lines = [row_to_borrow_item(item) for item in request_item_map.get(int(row.get("id") or 0), [])]
+        model = borrow_request_row_to_model(row, request_lines)
         if status != "all" and model.status != status:
             continue
         if normalized_keyword:
-            item_matches = any((item.item_name or "").lower().find(normalized_keyword) >= 0 for item in model.items)
+            item_matches = any((line.item_name or "").lower().find(normalized_keyword) >= 0 for line in model.request_lines)
             fields = [
                 model.borrower or "",
                 model.department or "",
@@ -1089,7 +1201,7 @@ def list_borrow_requests_api(
                 int(bool(row.is_due_soon)),
                 row.id,
             ),
-            "items": lambda row: (_request_items_sort_key(row.items), row.id),
+            "items": lambda row: (_request_items_sort_key(row.request_lines), row.id),
             "memo": lambda row: (_coerce_str(row.memo).lower(), row.id),
         },
     )
@@ -1103,22 +1215,81 @@ def get_borrow_request_api(request_id: int):
     row = get_borrow_request(request_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Borrow request not found")
-    items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    request_lines = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
     log_inventory_action(action="read", entity="borrow_request", entity_id=request_id, detail={"mode": "single"})
-    return borrow_request_row_to_model(row, items)
+    return borrow_request_row_to_model(row, request_lines)
+
+
+@app.get("/api/borrows/{request_id}/pickup-candidates", response_model=list[BorrowPickupCandidateLine], response_model_by_alias=False)
+def list_borrow_pickup_candidates_api(request_id: int):
+    try:
+        rows = list_borrow_pickup_candidates(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rows is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return [BorrowPickupCandidateLine(**row) for row in rows]
+
+
+@app.get("/api/borrows/{request_id}/pickup-lines", response_model=list[BorrowPickupLineSummary], response_model_by_alias=False)
+def list_borrow_pickup_lines_api(request_id: int):
+    try:
+        rows = list_borrow_pickup_lines(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if rows is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return [BorrowPickupLineSummary(**row) for row in rows]
+
+
+@app.get("/api/borrows/{request_id}/pickup-lines/{line_id}/candidates", response_model=BorrowPickupLineCandidatePage, response_model_by_alias=False)
+def list_borrow_pickup_line_candidates_api(
+    request_id: int,
+    line_id: int,
+    keyword: str = "",
+    page: int = Query(default=1),
+    page_size: int = Query(default=50),
+):
+    page, page_size = _normalize_pagination(page, page_size)
+    if page_size > 200:
+        raise HTTPException(status_code=400, detail="page_size must be less than or equal to 200")
+    try:
+        payload = list_borrow_pickup_line_candidates(
+            request_id,
+            line_id,
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return BorrowPickupLineCandidatePage(**payload)
+
+
+@app.post("/api/borrows/{request_id}/pickup-resolve-scan", response_model=BorrowPickupScanResolveResponse, response_model_by_alias=False)
+def resolve_borrow_pickup_scan_api(request_id: int, payload: BorrowPickupScanResolveRequest):
+    try:
+        result = resolve_borrow_pickup_scan(request_id, payload.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    return BorrowPickupScanResolveResponse(**result)
 
 
 @app.post("/api/borrows", response_model=BorrowRequest, response_model_by_alias=False)
 def create_borrow_request_api(request: BorrowRequestCreate, background_tasks: BackgroundTasks):
-    if not request.items:
-        raise HTTPException(status_code=400, detail="items is required")
-    for item in request.items:
-        if item.quantity != 1:
-            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
+    if not request.request_lines:
+        raise HTTPException(status_code=400, detail="request_lines is required")
     try:
-        request_id = create_borrow_request(borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+        request_id = create_borrow_request(
+            borrow_request_to_db_payload(request),
+            [line.model_dump() for line in request.request_lines],
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_to_http_error_detail(exc)) from exc
     row = get_borrow_request(request_id)
     if row is None:
         log_inventory_action(
@@ -1129,24 +1300,25 @@ def create_borrow_request_api(request: BorrowRequestCreate, background_tasks: Ba
             detail={"reason": "Borrow request created but cannot be loaded"},
         )
         raise HTTPException(status_code=500, detail="Borrow request created but cannot be loaded")
-    items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    request_lines = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
     log_inventory_action(action="create", entity="borrow_request", entity_id=request_id)
     if is_google_sheets_configured():
         background_tasks.add_task(_sync_requests_safe)
-    return borrow_request_row_to_model(row, items)
+    return borrow_request_row_to_model(row, request_lines)
 
 
 @app.put("/api/borrows/{request_id}", response_model=BorrowRequest, response_model_by_alias=False)
 def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, background_tasks: BackgroundTasks):
-    if not request.items:
-        raise HTTPException(status_code=400, detail="items is required")
-    for item in request.items:
-        if item.quantity != 1:
-            raise HTTPException(status_code=400, detail="quantity must be 1 in single-item mode")
+    if not request.request_lines:
+        raise HTTPException(status_code=400, detail="request_lines is required")
     try:
-        updated = update_borrow_request(request_id, borrow_request_to_db_payload(request), [item.model_dump() for item in request.items])
+        updated = update_borrow_request(
+            request_id,
+            borrow_request_to_db_payload(request),
+            [line.model_dump() for line in request.request_lines],
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_to_http_error_detail(exc)) from exc
     if not updated:
         log_inventory_action(
             action="update",
@@ -1166,11 +1338,47 @@ def update_borrow_request_api(request_id: int, request: BorrowRequestCreate, bac
             detail={"reason": "Borrow request not found after update"},
         )
         raise HTTPException(status_code=404, detail="Borrow request not found")
-    items = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    request_lines = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
     log_inventory_action(action="update", entity="borrow_request", entity_id=request_id)
     if is_google_sheets_configured():
         background_tasks.add_task(_sync_requests_safe)
-    return borrow_request_row_to_model(row, items)
+    return borrow_request_row_to_model(row, request_lines)
+
+
+@app.post("/api/borrows/{request_id}/pickup", response_model=BorrowRequest, response_model_by_alias=False)
+def pickup_borrow_request_api(request_id: int, payload: BorrowPickupRequest, background_tasks: BackgroundTasks):
+    try:
+        picked = pickup_borrow_request(request_id, [selection.model_dump() for selection in payload.selections])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_to_http_error_detail(exc)) from exc
+    if not picked:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    row = get_borrow_request(request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    request_lines = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    log_inventory_action(action="pickup", entity="borrow_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
+    return borrow_request_row_to_model(row, request_lines)
+
+
+@app.post("/api/borrows/{request_id}/return", response_model=BorrowRequest, response_model_by_alias=False)
+def return_borrow_request_api(request_id: int, background_tasks: BackgroundTasks):
+    try:
+        returned = return_borrow_request(request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_to_http_error_detail(exc)) from exc
+    if not returned:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    row = get_borrow_request(request_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Borrow request not found")
+    request_lines = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
+    log_inventory_action(action="return", entity="borrow_request", entity_id=request_id)
+    if is_google_sheets_configured():
+        background_tasks.add_task(_sync_requests_safe)
+    return borrow_request_row_to_model(row, request_lines)
 
 
 @app.delete("/api/borrows/{request_id}")

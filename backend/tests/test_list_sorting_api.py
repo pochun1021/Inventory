@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -146,9 +147,30 @@ class ListSortingApiTests(unittest.TestCase):
         payload = app_main.get_dashboard_data()
         self.assertEqual(payload["status"], "success")
         self.assertIn("totalRecords", payload)
+        self.assertIn("reservedBorrowCount", payload)
         self.assertIn("itemCategoryDistribution", payload)
         self.assertIn("recentActivities", payload)
         self.assertGreaterEqual(payload["totalRecords"], 1)
+
+    def test_dashboard_counts_reserved_borrow_requests(self) -> None:
+        self._create_item(name="Lens")
+        borrow_date = (date.today() + timedelta(days=1)).isoformat()
+        due_date = (date.today() + timedelta(days=5)).isoformat()
+        app_main.create_borrow_request_api(
+            app_main.BorrowRequestCreate(
+                borrower="tester",
+                department="qa",
+                purpose="dash-reserved",
+                borrow_date=borrow_date,
+                due_date=due_date,
+                memo="",
+                request_lines=[{"item_name": "Lens", "item_model": "M1", "requested_qty": 1, "note": ""}],
+            ),
+            app_main.BackgroundTasks(),
+        )
+
+        payload = app_main.get_dashboard_data()
+        self.assertGreaterEqual(payload.get("reservedBorrowCount", 0), 1)
 
 
 if __name__ == "__main__":

@@ -89,6 +89,8 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ## 規則與資料行為
 
 - 領用/借用/捐贈為單件模式：`quantity` 必須是 `1`
+- 借用預約 `borrow_date`、`due_date` 必填，且 `due_date` 不可早於 `borrow_date`
+- 借用預約天數上限為 30 天（`due_date - borrow_date <= 30`）
 - 捐贈單建立與更新時 `recipient` 必填
 - API 會驗證 item 可用性，避免重複占用
 - 刪除採軟刪除，超過 6 個月自動清除

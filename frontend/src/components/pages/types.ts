@@ -4,6 +4,7 @@ export type DashboardPayload = {
   items: number
   pendingFix: number
   totalRecords?: number
+  reservedBorrowCount?: number
   overdueBorrowCount?: number
   dueSoonBorrowCount?: number
   donatedItemsCount?: number
@@ -86,8 +87,11 @@ export type IssueRequest = {
 
 export type BorrowItem = {
   id: number
-  item_id: number
+  item_id?: number | null
   quantity: number
+  requested_qty: number
+  allocated_qty: number
+  allocated_item_ids: number[]
   note: string
   item_name?: string | null
   item_model?: string | null
@@ -104,7 +108,66 @@ export type BorrowRequest = {
   status: string
   is_due_soon: boolean
   memo: string
-  items: BorrowItem[]
+  request_lines: BorrowItem[]
+}
+
+export type BorrowReservationOption = {
+  item_name: string
+  item_model: string
+  available_qty: number
+  reserved_qty: number
+  reservable_qty: number
+  selectable: boolean
+}
+
+export type BorrowPickupCandidateItem = {
+  id: number
+  n_property_sn: string
+  property_sn: string
+  n_item_sn: string
+  item_sn: string
+}
+
+export type BorrowPickupLineSummary = {
+  line_id: number
+  item_name: string
+  item_model: string
+  requested_qty: number
+  allocated_qty: number
+  remaining_qty: number
+  candidate_count: number
+}
+
+export type BorrowPickupCandidateLine = {
+  line_id: number
+  item_name: string
+  item_model: string
+  requested_qty: number
+  allocated_qty: number
+  remaining_qty: number
+  candidates: BorrowPickupCandidateItem[]
+}
+
+export type BorrowPickupLineCandidatePage = {
+  line_id: number
+  item_name: string
+  item_model: string
+  requested_qty: number
+  allocated_qty: number
+  remaining_qty: number
+  items: BorrowPickupCandidateItem[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+}
+
+export type BorrowPickupScanResolveResponse = {
+  item: BorrowPickupCandidateItem & {
+    item_name: string
+    item_model: string
+  }
+  eligible_line_ids: number[]
 }
 
 export type DonationItem = {

@@ -15,17 +15,26 @@ import type { BorrowRequest, PaginatedResponse } from './types'
 
 type BorrowSortKey = 'id' | 'borrow_date' | 'borrower' | 'purpose' | 'return_info' | 'items' | 'memo'
 type SortDirection = 'asc' | 'desc'
+type BorrowStatusFilter = 'all' | 'reserved' | 'partial_borrowed' | 'borrowed' | 'returned' | 'overdue' | 'expired' | 'cancelled'
 
 const statusLabelMap: Record<string, string> = {
+  reserved: '已預約',
+  partial_borrowed: '部分借出',
   borrowed: '借出中',
   returned: '已歸還',
   overdue: '逾期',
+  expired: '預約失效',
+  cancelled: '已取消',
 }
 
 const statusBadgeClassMap: Record<string, string> = {
+  reserved: 'border-amber-200 bg-amber-100 text-amber-800',
+  partial_borrowed: 'border-cyan-200 bg-cyan-100 text-cyan-800',
   borrowed: 'border-sky-200 bg-sky-100 text-sky-800',
   returned: 'border-emerald-200 bg-emerald-100 text-emerald-800',
   overdue: 'border-red-200 bg-red-100 text-red-800',
+  expired: 'border-zinc-300 bg-zinc-100 text-zinc-700',
+  cancelled: 'border-slate-300 bg-slate-100 text-slate-700',
 }
 
 function getStatusBadgeClass(status: string): string {
@@ -55,8 +64,16 @@ function parseBorrowSortKey(value: string | null, fallback: BorrowSortKey): Borr
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   const statusParam = params.get('status')
-  const status: 'all' | 'borrowed' | 'returned' | 'overdue' =
-    statusParam === 'borrowed' || statusParam === 'returned' || statusParam === 'overdue' ? statusParam : 'all'
+  const status: BorrowStatusFilter =
+    statusParam === 'reserved'
+    || statusParam === 'partial_borrowed'
+    || statusParam === 'borrowed'
+    || statusParam === 'returned'
+    || statusParam === 'overdue'
+    || statusParam === 'cancelled'
+    || statusParam === 'expired'
+      ? statusParam
+      : 'all'
 
   return {
     keyword: params.get('keyword') ?? '',
@@ -74,7 +91,7 @@ export function BorrowListPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [keyword, setKeyword] = useState(initialState.keyword)
-  const [statusFilter, setStatusFilter] = useState<'all' | 'borrowed' | 'returned' | 'overdue'>(initialState.status)
+  const [statusFilter, setStatusFilter] = useState<BorrowStatusFilter>(initialState.status)
   const [sortBy, setSortBy] = useState<BorrowSortKey>(initialState.sortBy)
   const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
@@ -212,14 +229,18 @@ export function BorrowListPage() {
               id="borrow-status"
               value={statusFilter}
               onChange={(event) => {
-                setStatusFilter(event.target.value as 'all' | 'borrowed' | 'returned' | 'overdue')
+                setStatusFilter(event.target.value as BorrowStatusFilter)
                 setPage(1)
               }}
             >
               <option value="all">全部狀態</option>
+              <option value="reserved">已預約</option>
+              <option value="partial_borrowed">部分借出</option>
               <option value="borrowed">借出中</option>
               <option value="returned">已歸還</option>
               <option value="overdue">逾期</option>
+              <option value="expired">預約失效</option>
+              <option value="cancelled">已取消</option>
             </Select>
           </div>
           <div className="flex items-end text-sm text-[hsl(var(--muted-foreground))]">共 {total} 筆資料</div>
@@ -281,9 +302,9 @@ export function BorrowListPage() {
                         </TableCell>
                         <TableCell>
                           <div className="grid gap-1">
-                            {request.items.map((item) => (
+                            {request.request_lines.map((item) => (
                               <div key={item.id} className="text-xs">
-                                {(item.item_name || `#${item.item_id}`)} x {item.quantity}
+                                {(item.item_name || `#${item.item_id || '--'}`)} / {item.item_model || '--'}：預約 {item.requested_qty}、已領取 {item.allocated_qty}
                               </div>
                             ))}
                           </div>
@@ -319,7 +340,7 @@ export function BorrowListPage() {
                     <p className="mt-0.5 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{request.department || '--'}</p>
                     <p className="mt-2 mb-0 text-sm">借用：{request.borrow_date || '--'} / 歸還：{request.return_date || '--'}</p>
                     <p className="mt-2 mb-0 text-xs text-[hsl(var(--muted-foreground))]">
-                      品項：{request.items.map((item) => `${item.item_name || `#${item.item_id}`} x ${item.quantity}`).join('，') || '--'}
+                      品項：{request.request_lines.map((item) => `${item.item_name || `#${item.item_id || '--'}`} / ${item.item_model || '--'}（預約 ${item.requested_qty}、已領取 ${item.allocated_qty}）`).join('，') || '--'}
                     </p>
                   </article>
                 ))
