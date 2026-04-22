@@ -13,7 +13,6 @@ from openpyxl import Workbook, load_workbook
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "inventory.xlsx"
 LOCK_PATH = BASE_DIR / "inventory.xlsx.lock"
-ASSET_CATEGORY_NAME_PATH = BASE_DIR.parent / "asset_category_name.xlsx"
 LOG_ARCHIVE_DIR = BASE_DIR / "log_archive"
 HOT_LOG_RETENTION_DAYS = 90
 MAX_BORROW_RESERVATION_DAYS = 30
@@ -25,6 +24,7 @@ SHEETS: dict[str, list[str]] = {
         "id",
         "asset_type",
         "asset_status",
+        "condition_status",
         "key",
         "n_property_sn",
         "property_sn",
@@ -44,8 +44,14 @@ SHEETS: dict[str, list[str]] = {
         "memo",
         "memo2",
         "keeper",
+        "borrower",
+        "start_date",
+        "create_at",
+        "create_by",
         "created_at",
         "created_by",
+        "update_at",
+        "update_by",
         "updated_at",
         "updated_by",
         "deleted_at",
@@ -60,6 +66,28 @@ SHEETS: dict[str, list[str]] = {
         "description",
         "created_at",
         "updated_at",
+    ],
+    "condition_status_code": [
+        "condition_status",
+        "description",
+    ],
+    "asset_category_name": [
+        "name_code",
+        "asset_category_name",
+        "name_code2",
+        "description",
+    ],
+    "inventory_items_schema": [
+        "field",
+        "description",
+    ],
+    "transaction_log": [
+        "timestamp",
+        "key_value",
+        "log_action",
+        "log_content",
+        "user_email",
+        "mode",
     ],
     "operation_logs": [
         "id",
@@ -154,6 +182,7 @@ STRING_FIELDS: dict[str, list[str]] = {
     "inventory_items": [
         "asset_type",
         "asset_status",
+        "condition_status",
         "key",
         "n_property_sn",
         "property_sn",
@@ -173,8 +202,14 @@ STRING_FIELDS: dict[str, list[str]] = {
         "memo",
         "memo2",
         "keeper",
+        "borrower",
+        "start_date",
+        "create_at",
+        "create_by",
         "created_at",
         "created_by",
+        "update_at",
+        "update_by",
         "updated_at",
         "updated_by",
         "deleted_at",
@@ -207,6 +242,10 @@ STRING_FIELDS: dict[str, list[str]] = {
     ],
     "donation_items": ["note"],
     "asset_status_codes": ["code", "description", "created_at", "updated_at"],
+    "condition_status_code": ["condition_status", "description"],
+    "asset_category_name": ["name_code", "asset_category_name", "name_code2", "description"],
+    "inventory_items_schema": ["field", "description"],
+    "transaction_log": ["timestamp", "key_value", "log_action", "log_content", "user_email", "mode"],
     "movement_ledger": ["from_status", "to_status", "action", "entity", "operator", "created_at"],
 }
 
@@ -260,6 +299,54 @@ DEFAULT_ASSET_STATUS_CODES: list[tuple[str, str]] = [
     ("4", "減損"),
     ("5", "報廢"),
 ]
+DEFAULT_CONDITION_STATUS_CODES: list[tuple[str, str]] = [
+    ("0", "良好"),
+    ("1", "損壞"),
+    ("2", "報廢"),
+]
+DEFAULT_ASSET_CATEGORY_ROWS: list[tuple[str, str, str, str]] = [
+    ("01", "筆記型電腦", "01", "商務系列"),
+    ("01", "筆記型電腦", "99", ""),
+    ("02", "桌上型電腦", "01", "一般用途"),
+    ("02", "桌上型電腦", "99", ""),
+]
+INVENTORY_ITEM_SCHEMA_DESCRIPTION_BY_FIELD: dict[str, str] = {
+    "id": "ID",
+    "asset_type": "資產類型",
+    "asset_status": "資產狀態",
+    "condition_status": "物料狀況",
+    "key": "資產編號",
+    "n_property_sn": "財產序號",
+    "property_sn": "財產條碼",
+    "n_item_sn": "物品序號",
+    "item_sn": "物品條碼",
+    "name": "品名",
+    "name_code": "主分類代碼",
+    "name_code2": "次分類代碼",
+    "model": "型號",
+    "specification": "規格描述",
+    "unit": "單位",
+    "count": "數量",
+    "purchase_date": "採購日期",
+    "due_date": "借用到期日",
+    "return_date": "歸還日",
+    "location": "地點",
+    "memo": "備忘錄",
+    "memo2": "備忘錄2",
+    "keeper": "保管人",
+    "borrower": "借用人",
+    "start_date": "起始日期",
+    "create_at": "建立時間",
+    "create_by": "建立人員",
+    "created_at": "建立時間",
+    "created_by": "建立人員",
+    "update_at": "更新時間",
+    "update_by": "更新人員",
+    "updated_at": "更新時間",
+    "updated_by": "更新人員",
+    "deleted_at": "刪除時間",
+    "deleted_by": "刪除人員",
+}
 ASSET_TYPE_TO_KIND = {value: key for key, value in KIND_TO_ASSET_TYPE.items()}
 VALID_NAME_CODE_PAIRS: set[tuple[str, str]] = set()
 ASSET_CATEGORY_MAPPING_LOADED = False
@@ -289,36 +376,33 @@ def _normalize_name_code_value(value: Any) -> str:
 def _normalize_name_codes(name_code: Any, name_code2: Any) -> tuple[str, str]:
     normalized_code = _normalize_name_code_value(name_code)
     normalized_code2 = _normalize_name_code_value(name_code2)
+    if not normalized_code and not normalized_code2:
+        return "", ""
     if not normalized_code or not normalized_code2:
-        return "", ""
+        raise ValueError("name_code and name_code2 must be provided together")
     if not VALID_NAME_CODE_PAIRS:
-        return "", ""
+        raise ValueError("asset_category_name lookup is empty")
     if (normalized_code, normalized_code2) not in VALID_NAME_CODE_PAIRS:
-        return "", ""
+        raise ValueError("invalid name_code/name_code2 pair")
     return normalized_code, normalized_code2
 
 
-def _load_asset_category_mapping() -> None:
+def _normalize_asset_category_text(value: Any) -> str:
+    return _to_str(value).strip()
+
+
+def _refresh_valid_name_code_pairs(wb: Workbook) -> None:
     global ASSET_CATEGORY_MAPPING_LOADED
-    if ASSET_CATEGORY_MAPPING_LOADED:
-        return
 
     pairs: set[tuple[str, str]] = set()
-    if ASSET_CATEGORY_NAME_PATH.exists():
-        try:
-            wb = load_workbook(ASSET_CATEGORY_NAME_PATH, read_only=True, data_only=True)
-            ws = wb["asset_category_name"] if "asset_category_name" in wb.sheetnames else wb.active
-            rows = ws.iter_rows(min_row=2, values_only=True)
-            for row in rows:
-                if not row:
-                    continue
-                name_code = _normalize_name_code_value(row[0] if len(row) > 0 else "")
-                name_code2 = _normalize_name_code_value(row[1] if len(row) > 1 else "")
-                if not name_code or not name_code2:
-                    continue
-                pairs.add((name_code, name_code2))
-        except Exception:  # noqa: BLE001
-            pairs = set()
+    if "asset_category_name" in wb.sheetnames:
+        rows = _read_rows(wb["asset_category_name"])
+        for row in rows:
+            name_code = _normalize_name_code_value(row.get("name_code"))
+            name_code2 = _normalize_name_code_value(row.get("name_code2"))
+            if not name_code or not name_code2:
+                continue
+            pairs.add((name_code, name_code2))
 
     VALID_NAME_CODE_PAIRS.clear()
     VALID_NAME_CODE_PAIRS.update(pairs)
@@ -370,6 +454,7 @@ def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_nu
         "id": new_id,
         "asset_type": asset_type,
         "asset_status": _to_str(item_data.get("asset_status")).strip() or "0",
+        "condition_status": _to_str(item_data.get("condition_status")).strip() or "0",
         "key": _inventory_key(row_for_key, serial_for_key),
         "n_property_sn": n_property_sn,
         "property_sn": property_sn,
@@ -389,8 +474,14 @@ def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_nu
         "memo": _to_str(item_data.get("memo")),
         "memo2": _to_str(item_data.get("memo2")),
         "keeper": _to_str(item_data.get("keeper")),
+        "borrower": _to_str(item_data.get("borrower")),
+        "start_date": _to_str(item_data.get("start_date")),
+        "create_at": now,
+        "create_by": "system",
         "created_at": now,
         "created_by": "system",
+        "update_at": "",
+        "update_by": "",
         "updated_at": "",
         "updated_by": "",
         "deleted_at": "",
@@ -414,6 +505,7 @@ def _to_inventory_api_row(
         "id": item_id,
         "asset_type": _to_str(row.get("asset_type")),
         "asset_status": _to_str(row.get("asset_status")),
+        "condition_status": _to_str(row.get("condition_status")),
         "key": _to_str(row.get("key")),
         "n_property_sn": _to_str(row.get("n_property_sn")),
         "property_sn": _to_str(row.get("property_sn")),
@@ -433,8 +525,14 @@ def _to_inventory_api_row(
         "memo": _to_str(row.get("memo")),
         "memo2": _to_str(row.get("memo2")),
         "keeper": _to_str(row.get("keeper")),
+        "borrower": _to_str(row.get("borrower")),
+        "start_date": _to_str(row.get("start_date")),
+        "create_at": _to_str(row.get("create_at")),
+        "create_by": _to_str(row.get("create_by")),
         "created_at": _to_str(row.get("created_at")),
         "created_by": _to_str(row.get("created_by")),
+        "update_at": _to_str(row.get("update_at")),
+        "update_by": _to_str(row.get("update_by")),
         "updated_at": _to_str(row.get("updated_at")),
         "updated_by": _to_str(row.get("updated_by")),
         "deleted_at": _to_str(row.get("deleted_at")),
@@ -463,6 +561,9 @@ def _create_workbook() -> Workbook:
 
     _seed_order_sn(wb["order_sn"])
     _seed_asset_status_codes(wb["asset_status_codes"])
+    _seed_condition_status_codes(wb["condition_status_code"])
+    _seed_asset_category_name(wb["asset_category_name"])
+    _seed_inventory_items_schema(wb["inventory_items_schema"])
     return wb
 
 
@@ -489,6 +590,54 @@ def _seed_asset_status_codes(ws) -> bool:
     return added
 
 
+def _seed_condition_status_codes(ws) -> bool:
+    existing_rows = _read_rows(ws)
+    existing_codes = {_to_str(row.get("condition_status")).strip() for row in existing_rows if not _is_blank(row.get("condition_status"))}
+    added = False
+    for code, description in DEFAULT_CONDITION_STATUS_CODES:
+        if code in existing_codes:
+            continue
+        ws.append([code, description])
+        added = True
+    return added
+
+
+def _seed_asset_category_name(ws) -> bool:
+    existing_rows = _read_rows(ws)
+    existing_pairs = {
+        (
+            _normalize_name_code_value(row.get("name_code")),
+            _normalize_name_code_value(row.get("name_code2")),
+        )
+        for row in existing_rows
+    }
+    added = False
+    for name_code, category_name, name_code2, description in DEFAULT_ASSET_CATEGORY_ROWS:
+        normalized_pair = (
+            _normalize_name_code_value(name_code),
+            _normalize_name_code_value(name_code2),
+        )
+        if normalized_pair in existing_pairs:
+            continue
+        ws.append([normalized_pair[0], category_name, normalized_pair[1], description])
+        existing_pairs.add(normalized_pair)
+        added = True
+    return added
+
+
+def _seed_inventory_items_schema(ws) -> bool:
+    existing_rows = _read_rows(ws)
+    existing_fields = {_to_str(row.get("field")).strip() for row in existing_rows if not _is_blank(row.get("field"))}
+    added = False
+    for field in SHEETS["inventory_items"]:
+        if field in existing_fields:
+            continue
+        description = INVENTORY_ITEM_SCHEMA_DESCRIPTION_BY_FIELD.get(field, field)
+        ws.append([field, description])
+        added = True
+    return added
+
+
 def _ensure_sheet(wb: Workbook, sheet_name: str, headers: list[str]) -> bool:
     changed = False
     if sheet_name not in wb.sheetnames:
@@ -499,7 +648,7 @@ def _ensure_sheet(wb: Workbook, sheet_name: str, headers: list[str]) -> bool:
     ws = wb[sheet_name]
     existing_headers = [cell.value for cell in ws[1]] if ws.max_row >= 1 else []
     if existing_headers != headers:
-        rows = _read_rows(ws, existing_headers) if sheet_name != "inventory_items" else []
+        rows = _read_rows(ws, existing_headers)
         ws.delete_rows(1, ws.max_row or 1)
         ws.append(headers)
         for row in rows:
@@ -511,6 +660,15 @@ def _ensure_sheet(wb: Workbook, sheet_name: str, headers: list[str]) -> bool:
             changed = True
     elif sheet_name == "asset_status_codes":
         if _seed_asset_status_codes(ws):
+            changed = True
+    elif sheet_name == "condition_status_code":
+        if _seed_condition_status_codes(ws):
+            changed = True
+    elif sheet_name == "asset_category_name":
+        if _seed_asset_category_name(ws):
+            changed = True
+    elif sheet_name == "inventory_items_schema":
+        if _seed_inventory_items_schema(ws):
             changed = True
 
     return changed
@@ -557,12 +715,14 @@ def _ensure_workbook(wb: Workbook) -> bool:
 def _load_workbook() -> Workbook:
     if not DB_PATH.exists():
         wb = _create_workbook()
+        _refresh_valid_name_code_pairs(wb)
         wb.save(DB_PATH)
         return wb
 
     wb = load_workbook(DB_PATH)
     if _ensure_workbook(wb):
         wb.save(DB_PATH)
+    _refresh_valid_name_code_pairs(wb)
     return wb
 
 
@@ -628,10 +788,10 @@ def _next_id(rows: list[dict[str, Any]]) -> int:
 
 
 def init_db() -> None:
-    _load_asset_category_mapping()
     with _locked_workbook() as wb:
         if _ensure_workbook(wb):
             wb.save(DB_PATH)
+        _refresh_valid_name_code_pairs(wb)
 
 
 def _normalize_asset_status_code(value: Any) -> str:
@@ -647,6 +807,10 @@ def _asset_status_sort_key(code: str) -> tuple[int, int | str]:
     if stripped.isdigit():
         return (0, int(stripped))
     return (1, stripped)
+
+
+def _asset_category_sort_key(name_code: str, name_code2: str) -> tuple[tuple[int, int | str], tuple[int, int | str]]:
+    return (_asset_status_sort_key(name_code), _asset_status_sort_key(name_code2))
 
 
 def list_asset_status_codes() -> list[dict[str, Any]]:
@@ -665,6 +829,183 @@ def list_asset_status_codes() -> list[dict[str, Any]]:
             }
         )
     return sorted(results, key=lambda row: _asset_status_sort_key(row["code"]))
+
+
+def list_asset_categories() -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["asset_category_name"])
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        name_code = _normalize_name_code_value(row.get("name_code"))
+        name_code2 = _normalize_name_code_value(row.get("name_code2"))
+        if not name_code or not name_code2:
+            continue
+        results.append(
+            {
+                "name_code": name_code,
+                "asset_category_name": _normalize_asset_category_text(row.get("asset_category_name")),
+                "name_code2": name_code2,
+                "description": _normalize_asset_category_text(row.get("description")),
+            }
+        )
+    return sorted(results, key=lambda row: _asset_category_sort_key(row["name_code"], row["name_code2"]))
+
+
+def create_asset_category(name_code: str, category_name: str, name_code2: str, description: str) -> dict[str, Any]:
+    normalized_code = _normalize_name_code_value(name_code)
+    normalized_code2 = _normalize_name_code_value(name_code2)
+    normalized_category_name = _normalize_asset_category_text(category_name)
+    normalized_description = _normalize_asset_category_text(description)
+    if not normalized_code:
+        raise ValueError("name_code is required")
+    if not normalized_code2:
+        raise ValueError("name_code2 is required")
+    if not normalized_category_name:
+        raise ValueError("asset_category_name is required")
+
+    with _locked_workbook() as wb:
+        ws = wb["asset_category_name"]
+        rows = _read_rows(ws)
+        for row in rows:
+            existing_code = _normalize_name_code_value(row.get("name_code"))
+            existing_code2 = _normalize_name_code_value(row.get("name_code2"))
+            if (existing_code, existing_code2) == (normalized_code, normalized_code2):
+                raise ValueError("asset_category pair already exists")
+        rows.append(
+            {
+                "name_code": normalized_code,
+                "asset_category_name": normalized_category_name,
+                "name_code2": normalized_code2,
+                "description": normalized_description,
+            }
+        )
+        _write_rows(ws, SHEETS["asset_category_name"], rows)
+        _refresh_valid_name_code_pairs(wb)
+        wb.save(DB_PATH)
+    return {
+        "name_code": normalized_code,
+        "asset_category_name": normalized_category_name,
+        "name_code2": normalized_code2,
+        "description": normalized_description,
+    }
+
+
+def update_asset_category(
+    name_code: str,
+    name_code2: str,
+    next_name_code: str,
+    next_name_code2: str,
+    category_name: str,
+    description: str,
+) -> dict[str, Any]:
+    normalized_code = _normalize_name_code_value(name_code)
+    normalized_code2 = _normalize_name_code_value(name_code2)
+    normalized_next_code = _normalize_name_code_value(next_name_code)
+    normalized_next_code2 = _normalize_name_code_value(next_name_code2)
+    normalized_category_name = _normalize_asset_category_text(category_name)
+    normalized_description = _normalize_asset_category_text(description)
+
+    if not normalized_code:
+        raise ValueError("name_code is required")
+    if not normalized_code2:
+        raise ValueError("name_code2 is required")
+    if not normalized_next_code:
+        raise ValueError("name_code is required")
+    if not normalized_next_code2:
+        raise ValueError("name_code2 is required")
+    if not normalized_category_name:
+        raise ValueError("asset_category_name is required")
+
+    with _locked_workbook() as wb:
+        category_ws = wb["asset_category_name"]
+        inventory_ws = wb["inventory_items"]
+        category_rows = _read_rows(category_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        target_row: dict[str, Any] | None = None
+        for row in category_rows:
+            existing_code = _normalize_name_code_value(row.get("name_code"))
+            existing_code2 = _normalize_name_code_value(row.get("name_code2"))
+            if (existing_code, existing_code2) == (normalized_code, normalized_code2):
+                target_row = row
+                break
+        if target_row is None:
+            raise ValueError("asset_category pair not found")
+
+        if (normalized_next_code, normalized_next_code2) != (normalized_code, normalized_code2):
+            for row in category_rows:
+                existing_code = _normalize_name_code_value(row.get("name_code"))
+                existing_code2 = _normalize_name_code_value(row.get("name_code2"))
+                if (existing_code, existing_code2) == (normalized_next_code, normalized_next_code2):
+                    raise ValueError("asset_category pair already exists")
+
+        target_row["name_code"] = normalized_next_code
+        target_row["name_code2"] = normalized_next_code2
+        target_row["asset_category_name"] = normalized_category_name
+        target_row["description"] = normalized_description
+
+        if (normalized_next_code, normalized_next_code2) != (normalized_code, normalized_code2):
+            for row in inventory_rows:
+                existing_code = _normalize_name_code_value(row.get("name_code"))
+                existing_code2 = _normalize_name_code_value(row.get("name_code2"))
+                if (existing_code, existing_code2) == (normalized_code, normalized_code2):
+                    row["name_code"] = normalized_next_code
+                    row["name_code2"] = normalized_next_code2
+
+        _write_rows(category_ws, SHEETS["asset_category_name"], category_rows)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _refresh_valid_name_code_pairs(wb)
+        wb.save(DB_PATH)
+
+    return {
+        "name_code": normalized_next_code,
+        "asset_category_name": normalized_category_name,
+        "name_code2": normalized_next_code2,
+        "description": normalized_description,
+    }
+
+
+def delete_asset_category(name_code: str, name_code2: str) -> None:
+    normalized_code = _normalize_name_code_value(name_code)
+    normalized_code2 = _normalize_name_code_value(name_code2)
+    if not normalized_code:
+        raise ValueError("name_code is required")
+    if not normalized_code2:
+        raise ValueError("name_code2 is required")
+
+    with _locked_workbook() as wb:
+        category_ws = wb["asset_category_name"]
+        inventory_ws = wb["inventory_items"]
+        category_rows = _read_rows(category_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        remaining_rows = [
+            row
+            for row in category_rows
+            if (
+                _normalize_name_code_value(row.get("name_code")),
+                _normalize_name_code_value(row.get("name_code2")),
+            )
+            != (normalized_code, normalized_code2)
+        ]
+        if len(remaining_rows) == len(category_rows):
+            raise ValueError("asset_category pair not found")
+
+        in_use = any(
+            _is_blank(row.get("deleted_at"))
+            and (
+                _normalize_name_code_value(row.get("name_code")),
+                _normalize_name_code_value(row.get("name_code2")),
+            )
+            == (normalized_code, normalized_code2)
+            for row in inventory_rows
+        )
+        if in_use:
+            raise ValueError("asset_category pair is in use")
+
+        _write_rows(category_ws, SHEETS["asset_category_name"], remaining_rows)
+        _refresh_valid_name_code_pairs(wb)
+        wb.save(DB_PATH)
 
 
 def create_asset_status_code(code: str, description: str) -> dict[str, Any]:
@@ -1044,6 +1385,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
         updated = False
         for row in rows:
             if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
+                now = _now_str()
                 asset_type = _normalize_asset_type_input(item_data.get("asset_type"))
                 n_property_sn = _to_str(item_data.get("n_property_sn")).strip()
                 property_sn = _to_str(item_data.get("property_sn")).strip()
@@ -1053,6 +1395,10 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                 name_code, name_code2 = _normalize_name_codes(item_data.get("name_code"), item_data.get("name_code2"))
                 count = 1
                 next_key = _to_str(item_data.get("key")).strip()
+                next_condition_status = _to_str(item_data.get("condition_status", row.get("condition_status"))).strip()
+                next_condition_status = next_condition_status or _to_str(row.get("condition_status")).strip() or "0"
+                next_borrower = _to_str(item_data.get("borrower", row.get("borrower")))
+                next_start_date = _to_str(item_data.get("start_date", row.get("start_date")))
                 if not next_key:
                     tmp_row = {
                         "id": row.get("id"),
@@ -1067,6 +1413,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                     {
                         "asset_type": asset_type,
                         "asset_status": _to_str(item_data.get("asset_status")).strip() or "0",
+                        "condition_status": next_condition_status,
                         "key": next_key,
                         "n_property_sn": n_property_sn,
                         "property_sn": property_sn,
@@ -1086,8 +1433,12 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                         "keeper": _to_str(item_data.get("keeper")),
                         "memo": _to_str(item_data.get("memo")),
                         "memo2": _to_str(item_data.get("memo2")),
-                        "updated_at": _now_str(),
+                        "updated_at": now,
                         "updated_by": "system",
+                        "borrower": next_borrower,
+                        "start_date": next_start_date,
+                        "update_at": now,
+                        "update_by": "system",
                     }
                 )
                 updated = True
