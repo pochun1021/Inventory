@@ -11,12 +11,16 @@ from pydantic import BaseModel, Field
 
 from db import (
     archive_old_logs,
+    create_asset_category,
+    create_condition_status_code,
     create_asset_status_code,
     create_item,
     create_items_bulk,
     create_issue_request,
     create_borrow_request,
     create_donation_request,
+    delete_asset_category,
+    delete_condition_status_code,
     delete_asset_status_code,
     delete_item,
     delete_issue_request,
@@ -28,6 +32,8 @@ from db import (
     get_donation_request,
     get_dashboard_snapshot,
     init_db,
+    list_asset_categories,
+    list_condition_status_codes,
     list_asset_status_codes,
     list_issue_items,
     list_issue_items_map,
@@ -48,9 +54,12 @@ from db import (
     log_inventory_action,
     pickup_borrow_request,
     purge_soft_deleted_items,
+    restore_item,
     resolve_borrow_pickup_scan,
     return_borrow_request,
     update_asset_status_code,
+    update_condition_status_code,
+    update_asset_category,
     update_item,
     update_issue_request,
     update_borrow_request,
@@ -80,6 +89,7 @@ app.add_middleware(
 class InventoryItemCreate(BaseModel):
     asset_type: str = ""
     asset_status: str = ""
+    condition_status: str = ""
     key: str = ""
     n_property_sn: str = ""
     property_sn: str = ""
@@ -99,12 +109,18 @@ class InventoryItemCreate(BaseModel):
     memo: str = ""
     memo2: str = ""
     keeper: str = ""
+    borrower: str = ""
+    start_date: date | None = None
 
 
 class InventoryItem(InventoryItemCreate):
     id: int
+    create_at: datetime | None = None
+    create_by: str = ""
     created_at: datetime | None = None
     created_by: str = ""
+    update_at: datetime | None = None
+    update_by: str = ""
     updated_at: datetime | None = None
     updated_by: str = ""
     deleted_at: datetime | None = None
@@ -125,6 +141,42 @@ class AssetStatusCodeCreate(BaseModel):
 
 class AssetStatusCodeUpdate(BaseModel):
     code: str = ""
+    description: str = ""
+
+
+class ConditionStatusCode(BaseModel):
+    code: str
+    description: str
+
+
+class ConditionStatusCodeCreate(BaseModel):
+    code: str = ""
+    description: str = ""
+
+
+class ConditionStatusCodeUpdate(BaseModel):
+    code: str = ""
+    description: str = ""
+
+
+class AssetCategoryLookup(BaseModel):
+    name_code: str
+    asset_category_name: str
+    name_code2: str
+    description: str
+
+
+class AssetCategoryLookupCreate(BaseModel):
+    name_code: str = ""
+    asset_category_name: str = ""
+    name_code2: str = ""
+    description: str = ""
+
+
+class AssetCategoryLookupUpdate(BaseModel):
+    name_code: str = ""
+    name_code2: str = ""
+    asset_category_name: str = ""
     description: str = ""
 
 
@@ -384,6 +436,10 @@ def _parse_purchase_date(value: str) -> date:
 def _parse_datetime(value: str) -> datetime | None:
     if not value:
         return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def _parse_datetime_filter_value(value: str, *, field_name: str, is_end: bool = False) -> datetime | None:
@@ -411,10 +467,6 @@ def _parse_datetime_range_filters(start_at: str, end_at: str) -> tuple[datetime 
     if start_time and end_time and start_time > end_time:
         raise HTTPException(status_code=400, detail="start_at must be earlier than or equal to end_at")
     return start_time, end_time
-    try:
-        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return None
 
 
 def _resolve_frontend_index() -> Path | None:
@@ -445,6 +497,7 @@ def to_db_payload(item: InventoryItemCreate) -> dict:
     return {
         "asset_type": item.asset_type,
         "asset_status": item.asset_status,
+        "condition_status": item.condition_status,
         "key": item.key,
         "n_property_sn": item.n_property_sn,
         "property_sn": item.property_sn,
@@ -464,6 +517,8 @@ def to_db_payload(item: InventoryItemCreate) -> dict:
         "memo": item.memo,
         "memo2": item.memo2,
         "keeper": item.keeper,
+        "borrower": item.borrower,
+        "start_date": _format_date(item.start_date),
     }
 
 
@@ -583,6 +638,7 @@ def row_to_item(row) -> InventoryItem:
         id=row["id"],
         asset_type=_coerce_str(row.get("asset_type")),
         asset_status=_coerce_str(row.get("asset_status")),
+        condition_status=_coerce_str(row.get("condition_status")),
         key=_coerce_str(row.get("key")),
         n_property_sn=_coerce_str(row.get("n_property_sn")),
         property_sn=_coerce_str(row.get("property_sn")),
@@ -602,8 +658,14 @@ def row_to_item(row) -> InventoryItem:
         memo=_coerce_str(row.get("memo")),
         memo2=_coerce_str(row.get("memo2")),
         keeper=_coerce_str(row.get("keeper")),
+        borrower=_coerce_str(row.get("borrower")),
+        start_date=_parse_purchase_date(_coerce_str(row.get("start_date"))) if _coerce_str(row.get("start_date")) else None,
+        create_at=_parse_datetime(_coerce_str(row.get("create_at"))),
+        create_by=_coerce_str(row.get("create_by")),
         created_at=_parse_datetime(_coerce_str(row.get("created_at"))),
         created_by=_coerce_str(row.get("created_by")),
+        update_at=_parse_datetime(_coerce_str(row.get("update_at"))),
+        update_by=_coerce_str(row.get("update_by")),
         updated_at=_parse_datetime(_coerce_str(row.get("updated_at"))),
         updated_by=_coerce_str(row.get("updated_by")),
         deleted_at=_parse_datetime(_coerce_str(row.get("deleted_at"))),
@@ -852,6 +914,124 @@ def delete_asset_status_code_api(code: str):
     return {"success": True}
 
 
+@app.get("/api/lookups/condition-status", response_model=list[ConditionStatusCode], response_model_by_alias=False)
+def list_condition_status_codes_api():
+    rows = list_condition_status_codes()
+    return [ConditionStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description"))) for row in rows]
+
+
+@app.post("/api/lookups/condition-status", response_model=ConditionStatusCode, response_model_by_alias=False)
+def create_condition_status_code_api(payload: ConditionStatusCodeCreate):
+    try:
+        row = create_condition_status_code(payload.code, payload.description)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already exists" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    log_inventory_action(action="create", entity="condition_status_code", detail=row)
+    return ConditionStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description")))
+
+
+@app.put("/api/lookups/condition-status/{code}", response_model=ConditionStatusCode, response_model_by_alias=False)
+def update_condition_status_code_api(code: str, payload: ConditionStatusCodeUpdate):
+    try:
+        row = update_condition_status_code(code, payload.code or code, payload.description)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "already exists" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="update", entity="condition_status_code", detail={"from_code": code, **row})
+    return ConditionStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description")))
+
+
+@app.delete("/api/lookups/condition-status/{code}")
+def delete_condition_status_code_api(code: str):
+    try:
+        delete_condition_status_code(code)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "in use" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="delete", entity="condition_status_code", detail={"code": code})
+    return {"success": True}
+
+
+@app.get("/api/lookups/asset-category", response_model=list[AssetCategoryLookup], response_model_by_alias=False)
+def list_asset_categories_api():
+    rows = list_asset_categories()
+    return [AssetCategoryLookup(**row) for row in rows]
+
+
+@app.post("/api/lookups/asset-category", response_model=AssetCategoryLookup, response_model_by_alias=False)
+def create_asset_category_api(payload: AssetCategoryLookupCreate):
+    try:
+        row = create_asset_category(
+            payload.name_code,
+            payload.asset_category_name,
+            payload.name_code2,
+            payload.description,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already exists" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    log_inventory_action(action="create", entity="asset_category_name", detail=row)
+    return AssetCategoryLookup(**row)
+
+
+@app.put("/api/lookups/asset-category/{name_code}/{name_code2}", response_model=AssetCategoryLookup, response_model_by_alias=False)
+def update_asset_category_api(name_code: str, name_code2: str, payload: AssetCategoryLookupUpdate):
+    try:
+        row = update_asset_category(
+            name_code,
+            name_code2,
+            payload.name_code or name_code,
+            payload.name_code2 or name_code2,
+            payload.asset_category_name,
+            payload.description,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "already exists" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(
+        action="update",
+        entity="asset_category_name",
+        detail={"from_name_code": name_code, "from_name_code2": name_code2, **row},
+    )
+    return AssetCategoryLookup(**row)
+
+
+@app.delete("/api/lookups/asset-category/{name_code}/{name_code2}")
+def delete_asset_category_api(name_code: str, name_code2: str):
+    try:
+        delete_asset_category(name_code, name_code2)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "in use" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="delete", entity="asset_category_name", detail={"name_code": name_code, "name_code2": name_code2})
+    return {"success": True}
+
+
 @app.get("/api/lookups/borrow-reservations", response_model=list[BorrowReservationOption], response_model_by_alias=False)
 def list_borrow_reservation_options_api(request_id: int | None = None):
     rows = list_borrow_reservation_options(exclude_request_id=request_id)
@@ -861,6 +1041,7 @@ def list_borrow_reservation_options_api(request_id: int | None = None):
 @app.get("/api/items", response_model=InventoryItemListResponse, response_model_by_alias=False)
 def get_inventory_items(
     include_donated: bool = False,
+    deleted_scope: str = "active",
     keyword: str = "",
     asset_type: str = "all",
     correction_status: str = "all",
@@ -871,7 +1052,10 @@ def get_inventory_items(
 ):
     page, page_size = _normalize_pagination(page, page_size)
     normalized_sort_dir = _normalize_sort_direction(sort_dir)
-    rows = [row_to_item(row) for row in list_items(include_donated=include_donated)]
+    try:
+        rows = [row_to_item(row) for row in list_items(include_donated=include_donated, deleted_scope=deleted_scope)]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     normalized_keyword = keyword.strip().lower()
     filtered_rows: list[InventoryItem] = []
@@ -936,7 +1120,10 @@ def get_inventory_item_api(item_id: int):
 @app.post("/api/items", response_model=InventoryItem, response_model_by_alias=False)
 def create_inventory_item_api(item: InventoryItemCreate):
     item_data = to_db_payload(item)
-    item_id = create_item(item_data)
+    try:
+        item_id = create_item(item_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     row = get_item_by_id(item_id)
     if row is None:
         log_inventory_action(
@@ -955,7 +1142,10 @@ def create_inventory_item_api(item: InventoryItemCreate):
 @app.put("/api/items/{item_id}", response_model=InventoryItem, response_model_by_alias=False)
 def update_inventory_item_api(item_id: int, item: InventoryItemCreate):
     item_data = to_db_payload(item)
-    updated = update_item(item_id, item_data)
+    try:
+        updated = update_item(item_id, item_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not updated:
         log_inventory_action(
             action="update",
@@ -1001,6 +1191,32 @@ def delete_inventory_item_api(item_id: int):
         raise HTTPException(status_code=404, detail="Item not found")
 
     log_inventory_action(action="soft_delete", entity="inventory_item", entity_id=item_id)
+    return {"success": True}
+
+
+@app.post("/api/items/{item_id}/restore")
+def restore_inventory_item_api(item_id: int):
+    restored_meta = restore_item(item_id)
+    if restored_meta is None:
+        log_inventory_action(
+            action="restore",
+            entity="inventory_item",
+            entity_id=item_id,
+            status="failed",
+            detail={"reason": "Item not found"},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    log_inventory_action(
+        action="restore",
+        entity="inventory_item",
+        entity_id=item_id,
+        detail={
+            "deleted_at": restored_meta.get("deleted_at", ""),
+            "deleted_by": restored_meta.get("deleted_by", ""),
+            "restored_by": "system",
+        },
+    )
     return {"success": True}
 
 

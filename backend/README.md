@@ -54,6 +54,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/items`
 - `PUT /api/items/{item_id}`
 - `DELETE /api/items/{item_id}`
+- `POST /api/items/{item_id}/restore`
 
 ### 領用
 
@@ -94,6 +95,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - 捐贈單建立與更新時 `recipient` 必填
 - API 會驗證 item 可用性，避免重複占用
 - 刪除採軟刪除，超過 6 個月自動清除
+- `GET /api/items` 可用 `deleted_scope=active|deleted` 篩選是否查詢已軟刪除資料（預設 `active`）
 
 ## Excel 欄位需求
 

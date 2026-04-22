@@ -10,6 +10,7 @@ import { InventoryListPage } from './components/pages/InventoryListPage'
 import { IssueListPage } from './components/pages/IssueListPage'
 import { IssuePage } from './components/pages/IssuePage'
 import { LogsPage } from './components/pages/LogsPage'
+import { MasterDataPage } from './components/pages/MasterDataPage'
 import { UploadPage } from './components/pages/UploadPage'
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
 
@@ -175,6 +176,12 @@ const logsRoute = createRoute({
   component: LogsPage,
 })
 
+const masterDataRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/features/master-data',
+  component: MasterDataPage,
+})
+
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
   inventoryRoute,
@@ -191,6 +198,7 @@ const routeTree = rootRoute.addChildren([
   donationEditRoute,
   uploadRoute,
   logsRoute,
+  masterDataRoute,
 ])
 
 const router = createRouter({ routeTree, defaultPreload: 'intent' })

@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { MoreHorizontal, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { DataPagination } from '../ui/data-pagination'
 import { Button } from '../ui/button'
 import { Dialog } from '../ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu'
 import { FilterBar } from '../ui/filter-bar'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -41,6 +40,7 @@ type ScanBuffer = {
 
 type InventorySortKey = 'id' | 'asset_type' | 'serial' | 'name' | 'specification' | 'location' | 'keeper' | 'asset_status'
 type SortDirection = 'asc' | 'desc'
+type DeletedScope = 'active' | 'deleted'
 
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
@@ -72,6 +72,10 @@ function parseInventorySortKey(value: string | null, fallback: InventorySortKey)
   return value && allowed.includes(value as InventorySortKey) ? (value as InventorySortKey) : fallback
 }
 
+function parseDeletedScope(value: string | null, fallback: DeletedScope): DeletedScope {
+  return value === 'deleted' || value === 'active' ? value : fallback
+}
+
 function readInitialState() {
   const params = new URLSearchParams(window.location.search)
   const correctionParam = params.get('correction_status')
@@ -80,8 +84,12 @@ function readInitialState() {
   return {
     keyword: params.get('keyword') ?? '',
     selectedAssetType: params.get('asset_type') ?? 'all',
+    selectedAssetStatus: params.get('asset_status') ?? 'all',
+    selectedLocation: params.get('location') ?? 'all',
+    selectedKeeper: params.get('keeper') ?? 'all',
     selectedCorrectionStatus: correctionStatus as 'all' | 'needs_fix',
     showDonated: parseBoolean(params.get('include_donated'), false),
+    deletedScope: parseDeletedScope(params.get('deleted_scope'), 'active'),
     sortBy: parseInventorySortKey(params.get('sort_by'), 'id'),
     sortDir: parseSortDirection(params.get('sort_dir'), 'desc'),
     page: parsePositiveInt(params.get('page'), 1),
@@ -93,14 +101,20 @@ export function InventoryListPage() {
   const initialState = readInitialState()
   const [items, setItems] = useState<InventoryItem[]>([])
   const [assetTypeOptions, setAssetTypeOptions] = useState<string[]>(['all'])
+  const [locationOptions, setLocationOptions] = useState<string[]>(['all'])
+  const [keeperOptions, setKeeperOptions] = useState<string[]>(['all'])
   const [assetStatusLabelMap, setAssetStatusLabelMap] = useState<Record<string, string>>({})
   const [loadError, setLoadError] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState(initialState.keyword)
   const [selectedAssetType, setSelectedAssetType] = useState(initialState.selectedAssetType)
+  const [selectedAssetStatus, setSelectedAssetStatus] = useState(initialState.selectedAssetStatus)
+  const [selectedLocation, setSelectedLocation] = useState(initialState.selectedLocation)
+  const [selectedKeeper, setSelectedKeeper] = useState(initialState.selectedKeeper)
   const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>(initialState.selectedCorrectionStatus)
   const [showDonated, setShowDonated] = useState(initialState.showDonated)
+  const [deletedScope, setDeletedScope] = useState<DeletedScope>(initialState.deletedScope)
   const [sortBy, setSortBy] = useState<InventorySortKey>(initialState.sortBy)
   const [sortDir, setSortDir] = useState<SortDirection>(initialState.sortDir)
   const [page, setPage] = useState(initialState.page)
@@ -124,11 +138,23 @@ export function InventoryListPage() {
     if (selectedAssetType !== 'all') {
       params.set('asset_type', selectedAssetType)
     }
+    if (selectedAssetStatus !== 'all') {
+      params.set('asset_status', selectedAssetStatus)
+    }
+    if (selectedLocation !== 'all') {
+      params.set('location', selectedLocation)
+    }
+    if (selectedKeeper !== 'all') {
+      params.set('keeper', selectedKeeper)
+    }
     if (selectedCorrectionStatus !== 'all') {
       params.set('correction_status', selectedCorrectionStatus)
     }
     if (showDonated) {
       params.set('include_donated', 'true')
+    }
+    if (deletedScope !== 'active') {
+      params.set('deleted_scope', deletedScope)
     }
     if (sortBy !== 'id') {
       params.set('sort_by', sortBy)
@@ -145,7 +171,7 @@ export function InventoryListPage() {
     const queryString = params.toString()
     const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
     window.history.replaceState(null, '', url)
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize])
+  }, [keyword, selectedAssetType, selectedAssetStatus, selectedLocation, selectedKeeper, selectedCorrectionStatus, showDonated, deletedScope, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
     const requestSeq = ++listRequestSeqRef.current
@@ -156,9 +182,10 @@ export function InventoryListPage() {
       setLoadError('')
       try {
         const params = new URLSearchParams({
-          page: String(page),
-          page_size: String(pageSize),
+          page: '1',
+          page_size: '100000',
           include_donated: String(showDonated),
+          deleted_scope: deletedScope,
           correction_status: selectedCorrectionStatus,
           sort_by: sortBy,
           sort_dir: sortDir,
@@ -179,9 +206,41 @@ export function InventoryListPage() {
         if (listRequestSeqRef.current !== requestSeq) {
           return
         }
-        setItems(payload.items)
-        setTotal(payload.total)
-        setTotalPages(payload.total_pages)
+        const rows = payload.items
+        const toUniqueSortedOptions = (values: string[]) => {
+          const uniqueValues = Array.from(new Set(values.filter((value) => value.trim())))
+          uniqueValues.sort((left, right) => left.localeCompare(right, 'zh-TW', { sensitivity: 'base', numeric: true }))
+          return ['all', ...uniqueValues]
+        }
+
+        setLocationOptions(toUniqueSortedOptions(rows.map((item) => item.location || '')))
+        setKeeperOptions(toUniqueSortedOptions(rows.map((item) => item.keeper || '')))
+
+        const filteredRows = rows.filter((item) => {
+          if (selectedAssetStatus !== 'all' && item.asset_status !== selectedAssetStatus) {
+            return false
+          }
+          if (selectedLocation !== 'all' && (item.location || '') !== selectedLocation) {
+            return false
+          }
+          if (selectedKeeper !== 'all' && (item.keeper || '') !== selectedKeeper) {
+            return false
+          }
+          return true
+        })
+
+        const filteredTotal = filteredRows.length
+        const filteredTotalPages = filteredTotal > 0 ? Math.ceil(filteredTotal / pageSize) : 1
+        const normalizedPage = Math.min(page, filteredTotalPages)
+        if (normalizedPage !== page) {
+          setPage(normalizedPage)
+        }
+        const startIndex = (normalizedPage - 1) * pageSize
+        const pagedRows = filteredRows.slice(startIndex, startIndex + pageSize)
+
+        setItems(pagedRows)
+        setTotal(filteredTotal)
+        setTotalPages(filteredTotalPages)
       } catch {
         if (controller.signal.aborted || listRequestSeqRef.current !== requestSeq) {
           return
@@ -198,7 +257,7 @@ export function InventoryListPage() {
     return () => {
       controller.abort()
     }
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize, reloadKey])
+  }, [keyword, selectedAssetType, selectedAssetStatus, selectedLocation, selectedKeeper, selectedCorrectionStatus, showDonated, deletedScope, sortBy, sortDir, page, pageSize, reloadKey])
 
   useEffect(() => {
     const loadAssetTypes = async () => {
@@ -207,6 +266,7 @@ export function InventoryListPage() {
           page: '1',
           page_size: '100000',
           include_donated: String(showDonated),
+          deleted_scope: deletedScope,
         })
         const response = await fetch(apiUrl(`/api/items?${params.toString()}`))
         if (!response.ok) {
@@ -221,7 +281,7 @@ export function InventoryListPage() {
     }
 
     void loadAssetTypes()
-  }, [showDonated, reloadKey])
+  }, [showDonated, deletedScope, reloadKey])
 
   useEffect(() => {
     let cancelled = false
@@ -353,6 +413,33 @@ export function InventoryListPage() {
     }
   }
 
+  const handleRestoreItem = async (item: InventoryItem) => {
+    if (!item.id) {
+      return
+    }
+
+    setLoadError('')
+    setActionMessage('')
+    setDeletingItemId(item.id)
+
+    try {
+      const response = await fetch(apiUrl(`/api/items/${item.id}/restore`), {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        throw new Error('還原失敗')
+      }
+
+      setActionMessage('財產資料已還原。')
+      setReloadKey((previous) => previous + 1)
+    } catch {
+      setLoadError('還原財產資料失敗，請稍後再試。')
+    } finally {
+      setDeletingItemId(null)
+    }
+  }
+
   const correctionSummary = useMemo(() => {
     if (selectedCorrectionStatus !== 'needs_fix') {
       return null
@@ -429,6 +516,69 @@ export function InventoryListPage() {
             </Select>
           </div>
 
+          <div className="grid gap-2 xl:col-span-4">
+            <Label>進階篩選</Label>
+            <div className="grid gap-2 md:grid-cols-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="asset-status-filter">資產狀態</Label>
+                <Select
+                  id="asset-status-filter"
+                  value={selectedAssetStatus}
+                  onChange={(event) => {
+                    setSelectedAssetStatus(event.target.value)
+                    setPage(1)
+                  }}
+                >
+                  <option value="all">全部狀態</option>
+                  {Object.entries(assetStatusLabelMap).map(([statusCode, statusLabel]) => (
+                    <option key={statusCode} value={statusCode}>
+                      {statusLabel}
+                    </option>
+                  ))}
+                  {selectedAssetStatus !== 'all' && !(selectedAssetStatus in assetStatusLabelMap) ? (
+                    <option value={selectedAssetStatus}>{selectedAssetStatus}</option>
+                  ) : null}
+                </Select>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="location-filter">放置地點</Label>
+                <Select
+                  id="location-filter"
+                  value={selectedLocation}
+                  onChange={(event) => {
+                    setSelectedLocation(event.target.value)
+                    setPage(1)
+                  }}
+                >
+                  {locationOptions.map((locationOption) => (
+                    <option key={locationOption} value={locationOption}>
+                      {locationOption === 'all' ? '全部地點' : locationOption}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="keeper-filter">保管人</Label>
+                <Select
+                  id="keeper-filter"
+                  value={selectedKeeper}
+                  onChange={(event) => {
+                    setSelectedKeeper(event.target.value)
+                    setPage(1)
+                  }}
+                >
+                  {keeperOptions.map((keeperOption) => (
+                    <option key={keeperOption} value={keeperOption}>
+                      {keeperOption === 'all' ? '全部保管人' : keeperOption}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2 xl:col-span-4">
             <Label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium">
               <input
@@ -440,6 +590,17 @@ export function InventoryListPage() {
                 }}
               />
               顯示已捐贈資料
+            </Label>
+            <Label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={deletedScope === 'deleted'}
+                onChange={(event) => {
+                  setDeletedScope(event.target.checked ? 'deleted' : 'active')
+                  setPage(1)
+                }}
+              />
+              顯示已刪除資料
             </Label>
             <div className="text-sm text-[hsl(var(--muted-foreground))]">
               共 {total} 筆資料{correctionSummary !== null ? `，本頁待修正 ${correctionSummary} 筆` : ''}
@@ -476,7 +637,7 @@ export function InventoryListPage() {
                   {items.length === 0 ? (
                     <TableRow>
                       <TableCell className="text-center text-[hsl(var(--muted-foreground))]" colSpan={9}>
-                        查無符合條件的財產資料。
+                        {deletedScope === 'deleted' ? '查無已刪除財產資料。' : '查無符合條件的財產資料。'}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -502,23 +663,27 @@ export function InventoryListPage() {
                         <TableCell>{item.keeper || '--'}</TableCell>
                         <TableCell>{toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}</TableCell>
                         <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger>
-                              <MoreHorizontal className="size-4" />
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent>
-                              <Link
-                                className="flex items-center rounded-sm px-2 py-1.5 text-sm text-[hsl(var(--foreground))] no-underline hover:bg-[hsl(var(--secondary))]"
-                                to="/inventory/edit/$itemId"
-                                params={{ itemId: String(item.id) }}
-                              >
-                                編輯
+                          {deletedScope === 'deleted' ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={deletingItemId === item.id}
+                              onClick={() => {
+                                void handleRestoreItem(item)
+                              }}
+                            >
+                              {deletingItemId === item.id ? '還原中...' : '還原'}
+                            </Button>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <Link to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
+                                <Button size="sm" variant="secondary">編輯</Button>
                               </Link>
-                              <DropdownMenuItem className="text-red-600" onClick={() => setConfirmDeleteItem(item)}>
+                              <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
                                 刪除
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                              </Button>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))
@@ -530,7 +695,7 @@ export function InventoryListPage() {
             <div className="grid gap-3 md:hidden">
               {items.length === 0 ? (
                 <p className="m-0 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] px-3 py-2 text-sm text-[hsl(var(--muted-foreground))]">
-                  查無符合條件的財產資料。
+                  {deletedScope === 'deleted' ? '查無已刪除財產資料。' : '查無符合條件的財產資料。'}
                 </p>
               ) : (
                 items.map((item) => (
@@ -544,12 +709,28 @@ export function InventoryListPage() {
                     <p className="mt-1 mb-0 text-sm">地點：{item.location || '--'}</p>
                     <p className="mt-1 mb-0 text-sm">狀態：{toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}</p>
                     <div className="mt-3 flex gap-2">
-                      <Link className="flex-1" to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
-                        <Button className="w-full" size="sm" variant="secondary">編輯</Button>
-                      </Link>
-                      <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
-                        刪除
-                      </Button>
+                      {deletedScope === 'deleted' ? (
+                        <Button
+                          className="w-full"
+                          size="sm"
+                          variant="secondary"
+                          disabled={deletingItemId === item.id}
+                          onClick={() => {
+                            void handleRestoreItem(item)
+                          }}
+                        >
+                          {deletingItemId === item.id ? '還原中...' : '還原'}
+                        </Button>
+                      ) : (
+                        <>
+                          <Link className="flex-1" to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
+                            <Button className="w-full" size="sm" variant="secondary">編輯</Button>
+                          </Link>
+                          <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
+                            刪除
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </article>
                 ))
