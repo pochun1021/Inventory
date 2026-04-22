@@ -2149,7 +2149,7 @@ def _set_issue_keeper_for_create_issue(
     row["keeper"] = normalized_requester
 
 
-def _set_item_keeper_from_actor(
+def _set_item_borrower_from_actor(
     *,
     row: dict[str, Any],
     actor: str,
@@ -2157,14 +2157,14 @@ def _set_item_keeper_from_actor(
     normalized_actor = actor.strip()
     if not normalized_actor:
         return
-    row["keeper"] = normalized_actor
+    row["borrower"] = normalized_actor
 
 
-def _clear_item_keeper(
+def _clear_item_borrower(
     *,
     row: dict[str, Any],
 ) -> None:
-    row["keeper"] = ""
+    row["borrower"] = ""
 
 
 def _validate_item_status(
@@ -3821,7 +3821,7 @@ def pickup_borrow_request(request_id: int, selections_data: list[dict[str, Any]]
                     entity="borrow_request",
                     entity_id=request_id,
                 )
-                _set_item_keeper_from_actor(row=inventory_row, actor=borrower)
+                _set_item_borrower_from_actor(row=inventory_row, actor=borrower)
                 created_allocations.append(
                     {
                         "id": next_allocation_id + len(created_allocations),
@@ -3912,7 +3912,7 @@ def return_borrow_request(request_id: int, *, return_date_value: Any = None) -> 
                 entity="borrow_request",
                 entity_id=request_id,
             )
-            _clear_item_keeper(row=row)
+            _clear_item_borrower(row=row)
 
         normalized_return_date = _parse_request_date(return_date_value) or date.today()
         request_row["return_date"] = normalized_return_date.strftime("%Y/%m/%d")

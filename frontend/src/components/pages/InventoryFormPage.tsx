@@ -504,22 +504,6 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                 <Label>保管人</Label>
                 <Input value={formData.keeper} onChange={(event) => handleInputChange('keeper', event.target.value)} />
               </div>
-              <div className="grid gap-1.5">
-                <Label>借用人</Label>
-                <Input value={formData.borrower} onChange={(event) => handleInputChange('borrower', event.target.value)} />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>起始日期</Label>
-                <Input type="date" value={formData.start_date} onChange={(event) => handleInputChange('start_date', event.target.value)} />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>到期日</Label>
-                <Input type="date" value={formData.due_date} onChange={(event) => handleInputChange('due_date', event.target.value)} />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>歸還日</Label>
-                <Input type="date" value={formData.return_date} onChange={(event) => handleInputChange('return_date', event.target.value)} />
-              </div>
               <div className="grid gap-1.5 md:col-span-2 xl:col-span-3">
                 <Label>memo</Label>
                 <Textarea rows={4} value={formData.memo} onChange={(event) => handleInputChange('memo', event.target.value)} />
@@ -530,6 +514,30 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
               </div>
             </div>
           </SectionCard>
+
+          {isEditMode ? (
+            <SectionCard>
+              <h2 className="m-0 text-base font-semibold">借用資訊（唯讀）</h2>
+              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-1.5">
+                  <Label>借用人</Label>
+                  <Input value={formData.borrower || '--'} readOnly disabled />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>起始日期</Label>
+                  <Input type="text" value={formData.start_date || '--'} readOnly disabled />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>到期日</Label>
+                  <Input type="text" value={formData.due_date || '--'} readOnly disabled />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>歸還日</Label>
+                  <Input type="text" value={formData.return_date || '--'} readOnly disabled />
+                </div>
+              </div>
+            </SectionCard>
+          ) : null}
 
           <SectionCard>
             <h2 className="m-0 text-base font-semibold">異動紀錄</h2>
