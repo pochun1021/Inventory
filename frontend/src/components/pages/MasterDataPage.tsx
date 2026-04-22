@@ -113,7 +113,7 @@ export function MasterDataPage() {
       const rows = await fetchAssetStatusOptions()
       setAssetStatuses(sortByCode(rows))
     } catch (error) {
-      setStatusError(error instanceof Error ? error.message : '無法讀取資產狀態主檔。')
+      setStatusError(error instanceof Error ? error.message : '無法讀取資產狀態設定資料。')
     } finally {
       setLoadingStatus(false)
     }
@@ -126,7 +126,7 @@ export function MasterDataPage() {
       const rows = await fetchConditionStatusOptions()
       setConditionStatuses(sortByCode(rows))
     } catch (error) {
-      setConditionStatusError(error instanceof Error ? error.message : '無法讀取物品狀況主檔。')
+      setConditionStatusError(error instanceof Error ? error.message : '無法讀取物品狀況設定資料。')
     } finally {
       setLoadingConditionStatus(false)
     }
@@ -145,7 +145,7 @@ export function MasterDataPage() {
         }),
       )
     } catch (error) {
-      setCategoryError(error instanceof Error ? error.message : '無法讀取資產分類主檔。')
+      setCategoryError(error instanceof Error ? error.message : '無法讀取資產分類設定資料。')
     } finally {
       setLoadingCategory(false)
     }
@@ -416,7 +416,7 @@ export function MasterDataPage() {
         </TabsList>
 
         <TabsContent value="asset-status">
-          <SectionCard title="資產狀態碼主檔" description="維護資產狀態下拉選單（新增、編輯、刪除）。">
+          <SectionCard title="資產狀態碼設定" description="維護資產狀態下拉選單（新增、編輯、刪除）。">
             <div className="mb-3 flex justify-end">
               <Button type="button" onClick={openCreateStatusDialog}>
                 新增狀態碼
@@ -463,7 +463,7 @@ export function MasterDataPage() {
         </TabsContent>
 
         <TabsContent value="condition-status">
-          <SectionCard title="物品狀況碼主檔" description="維護物品狀況下拉選單（新增、編輯、刪除）。">
+          <SectionCard title="物品狀況碼設定" description="維護物品狀況下拉選單（新增、編輯、刪除）。">
             <div className="mb-3 flex justify-end">
               <Button type="button" onClick={openCreateConditionStatusDialog}>
                 新增狀況碼
@@ -519,7 +519,7 @@ export function MasterDataPage() {
         </TabsContent>
 
         <TabsContent value="asset-category">
-          <SectionCard title="資產分類主檔" description="維護資產分類代碼對照（新增、編輯、刪除）。">
+          <SectionCard title="資產分類設定" description="維護資產分類代碼對照（新增、編輯、刪除）。">
             <div className="mb-3 flex justify-end">
               <Button type="button" onClick={openCreateCategoryDialog}>
                 新增分類

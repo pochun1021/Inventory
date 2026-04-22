@@ -20,7 +20,7 @@ async function toApiErrorMessage(response: Response, fallbackMessage: string): P
 export async function fetchAssetStatusOptions(): Promise<AssetStatusOption[]> {
   const response = await fetch(apiUrl('/api/lookups/asset-status'))
   if (!response.ok) {
-    throw new Error(await toApiErrorMessage(response, '無法讀取資產狀態主檔'))
+    throw new Error(await toApiErrorMessage(response, '無法讀取資產狀態設定資料'))
   }
   const payload = (await response.json()) as AssetStatusOption[]
   return payload.filter((option) => Boolean(option?.code?.trim()))

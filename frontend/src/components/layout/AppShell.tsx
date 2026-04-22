@@ -75,8 +75,8 @@ const NAVIGATION_SECTIONS: NavigationSection[] = [
     links: [{ to: '/logs', label: '日誌查詢', icon: <Logs className="size-4" />, exact: true }],
   },
   {
-    title: '功能選單',
-    links: [{ to: '/features/master-data', label: '主檔設定', icon: <Settings2 className="size-4" />, exact: true }],
+    title: '系統設定',
+    links: [{ to: '/features/master-data', label: '代碼設定', icon: <Settings2 className="size-4" />, exact: true }],
   },
 ]
 
@@ -132,7 +132,7 @@ function resolvePageMeta(pathname: string): PageMeta {
     return { title: '日誌查詢', description: '檢視異動流水帳與操作日誌' }
   }
   if (pathname === '/features/master-data') {
-    return { title: '主檔設定', description: '維護資產狀態與分類主檔資料' }
+    return { title: '代碼設定', description: '維護資產狀態與分類代碼設定' }
   }
 
   return { title: '頁面', description: '系統頁面' }

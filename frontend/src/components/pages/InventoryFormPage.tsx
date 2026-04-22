@@ -157,7 +157,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
           setAssetStatusOptions([])
           setConditionStatusOptions([])
           setAssetCategoryOptions([])
-          setAssetCategoryLoadError('無法讀取分類主檔，請稍後再試。')
+          setAssetCategoryLoadError('無法讀取分類設定資料，請稍後再試。')
         }
       }
     }
@@ -300,7 +300,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     setSuccessMessage('')
 
     if (assetCategoryLoadError || assetCategoryOptions.length === 0) {
-      setErrorMessage('分類主檔尚未就緒，暫時無法送出。')
+      setErrorMessage('分類設定尚未就緒，暫時無法送出。')
       return
     }
     if (!isCategoryPairSelected) {
@@ -464,7 +464,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                     </option>
                   ))}
                   {!hasNameCodeOption && formData.name_code ? (
-                    <option value={formData.name_code}>{`${formData.name_code}（目前值，不在主檔）`}</option>
+                    <option value={formData.name_code}>{`${formData.name_code}（目前值，不在設定清單）`}</option>
                   ) : null}
                 </Select>
               </div>
@@ -482,13 +482,13 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                     </option>
                   ))}
                   {!hasNameCode2Option && formData.name_code2 ? (
-                    <option value={formData.name_code2}>{`${formData.name_code2}（目前值，不在主檔）`}</option>
+                    <option value={formData.name_code2}>{`${formData.name_code2}（目前值，不在設定清單）`}</option>
                   ) : null}
                 </Select>
               </div>
               {assetCategoryLoadError ? <p className="m-0 text-xs text-red-700">{assetCategoryLoadError}</p> : null}
               {isCategoryPairSelected && !isCategoryPairValid ? (
-                <p className="m-0 text-xs text-amber-700">目前資料的主分類/次分類不在分類主檔，請改為合法組合後再儲存。</p>
+                <p className="m-0 text-xs text-amber-700">目前資料的主分類/次分類不在分類設定清單，請改為合法組合後再儲存。</p>
               ) : null}
             </div>
           </SectionCard>

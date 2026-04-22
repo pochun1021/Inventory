@@ -20,7 +20,7 @@ async function toApiErrorMessage(response: Response, fallbackMessage: string): P
 export async function fetchConditionStatusOptions(): Promise<ConditionStatusOption[]> {
   const response = await fetch(apiUrl('/api/lookups/condition-status'))
   if (!response.ok) {
-    throw new Error(await toApiErrorMessage(response, '無法讀取物品狀況主檔'))
+    throw new Error(await toApiErrorMessage(response, '無法讀取物品狀況設定資料'))
   }
   const payload = (await response.json()) as ConditionStatusOption[]
   return payload.filter((option) => Boolean(option?.code?.trim()))

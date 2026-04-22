@@ -24,7 +24,7 @@ async function toApiErrorMessage(response: Response, fallbackMessage: string): P
 export async function fetchAssetCategoryOptions(): Promise<AssetCategoryOption[]> {
   const response = await fetch(apiUrl('/api/lookups/asset-category'))
   if (!response.ok) {
-    throw new Error(await toApiErrorMessage(response, '無法讀取資產分類主檔'))
+    throw new Error(await toApiErrorMessage(response, '無法讀取資產分類設定資料'))
   }
   const payload = (await response.json()) as AssetCategoryOption[]
   return payload.filter((option) => Boolean(option?.name_code?.trim()) && Boolean(option?.name_code2?.trim()))
