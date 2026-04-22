@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from db import (
     archive_old_logs,
     create_asset_category,
+    create_condition_status_code,
     create_asset_status_code,
     create_item,
     create_items_bulk,
@@ -19,6 +20,7 @@ from db import (
     create_borrow_request,
     create_donation_request,
     delete_asset_category,
+    delete_condition_status_code,
     delete_asset_status_code,
     delete_item,
     delete_issue_request,
@@ -31,6 +33,7 @@ from db import (
     get_dashboard_snapshot,
     init_db,
     list_asset_categories,
+    list_condition_status_codes,
     list_asset_status_codes,
     list_issue_items,
     list_issue_items_map,
@@ -51,9 +54,11 @@ from db import (
     log_inventory_action,
     pickup_borrow_request,
     purge_soft_deleted_items,
+    restore_item,
     resolve_borrow_pickup_scan,
     return_borrow_request,
     update_asset_status_code,
+    update_condition_status_code,
     update_asset_category,
     update_item,
     update_issue_request,
@@ -135,6 +140,21 @@ class AssetStatusCodeCreate(BaseModel):
 
 
 class AssetStatusCodeUpdate(BaseModel):
+    code: str = ""
+    description: str = ""
+
+
+class ConditionStatusCode(BaseModel):
+    code: str
+    description: str
+
+
+class ConditionStatusCodeCreate(BaseModel):
+    code: str = ""
+    description: str = ""
+
+
+class ConditionStatusCodeUpdate(BaseModel):
     code: str = ""
     description: str = ""
 
@@ -894,6 +914,57 @@ def delete_asset_status_code_api(code: str):
     return {"success": True}
 
 
+@app.get("/api/lookups/condition-status", response_model=list[ConditionStatusCode], response_model_by_alias=False)
+def list_condition_status_codes_api():
+    rows = list_condition_status_codes()
+    return [ConditionStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description"))) for row in rows]
+
+
+@app.post("/api/lookups/condition-status", response_model=ConditionStatusCode, response_model_by_alias=False)
+def create_condition_status_code_api(payload: ConditionStatusCodeCreate):
+    try:
+        row = create_condition_status_code(payload.code, payload.description)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 409 if "already exists" in message else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+
+    log_inventory_action(action="create", entity="condition_status_code", detail=row)
+    return ConditionStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description")))
+
+
+@app.put("/api/lookups/condition-status/{code}", response_model=ConditionStatusCode, response_model_by_alias=False)
+def update_condition_status_code_api(code: str, payload: ConditionStatusCodeUpdate):
+    try:
+        row = update_condition_status_code(code, payload.code or code, payload.description)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "already exists" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="update", entity="condition_status_code", detail={"from_code": code, **row})
+    return ConditionStatusCode(code=_coerce_str(row.get("code")), description=_coerce_str(row.get("description")))
+
+
+@app.delete("/api/lookups/condition-status/{code}")
+def delete_condition_status_code_api(code: str):
+    try:
+        delete_condition_status_code(code)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "in use" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    log_inventory_action(action="delete", entity="condition_status_code", detail={"code": code})
+    return {"success": True}
+
+
 @app.get("/api/lookups/asset-category", response_model=list[AssetCategoryLookup], response_model_by_alias=False)
 def list_asset_categories_api():
     rows = list_asset_categories()
@@ -970,6 +1041,7 @@ def list_borrow_reservation_options_api(request_id: int | None = None):
 @app.get("/api/items", response_model=InventoryItemListResponse, response_model_by_alias=False)
 def get_inventory_items(
     include_donated: bool = False,
+    deleted_scope: str = "active",
     keyword: str = "",
     asset_type: str = "all",
     correction_status: str = "all",
@@ -980,7 +1052,10 @@ def get_inventory_items(
 ):
     page, page_size = _normalize_pagination(page, page_size)
     normalized_sort_dir = _normalize_sort_direction(sort_dir)
-    rows = [row_to_item(row) for row in list_items(include_donated=include_donated)]
+    try:
+        rows = [row_to_item(row) for row in list_items(include_donated=include_donated, deleted_scope=deleted_scope)]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     normalized_keyword = keyword.strip().lower()
     filtered_rows: list[InventoryItem] = []
@@ -1116,6 +1191,32 @@ def delete_inventory_item_api(item_id: int):
         raise HTTPException(status_code=404, detail="Item not found")
 
     log_inventory_action(action="soft_delete", entity="inventory_item", entity_id=item_id)
+    return {"success": True}
+
+
+@app.post("/api/items/{item_id}/restore")
+def restore_inventory_item_api(item_id: int):
+    restored_meta = restore_item(item_id)
+    if restored_meta is None:
+        log_inventory_action(
+            action="restore",
+            entity="inventory_item",
+            entity_id=item_id,
+            status="failed",
+            detail={"reason": "Item not found"},
+        )
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    log_inventory_action(
+        action="restore",
+        entity="inventory_item",
+        entity_id=item_id,
+        detail={
+            "deleted_at": restored_meta.get("deleted_at", ""),
+            "deleted_by": restored_meta.get("deleted_by", ""),
+            "restored_by": "system",
+        },
+    )
     return {"success": True}
 
 

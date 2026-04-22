@@ -804,6 +804,14 @@ def _normalize_asset_status_description(value: Any) -> str:
     return _to_str(value).strip()
 
 
+def _normalize_condition_status_code(value: Any) -> str:
+    return _to_str(value).strip()
+
+
+def _normalize_condition_status_description(value: Any) -> str:
+    return _to_str(value).strip()
+
+
 def _asset_status_sort_key(code: str) -> tuple[int, int | str]:
     stripped = code.strip()
     if stripped.isdigit():
@@ -822,6 +830,24 @@ def list_asset_status_codes() -> list[dict[str, Any]]:
     for row in rows:
         code = _normalize_asset_status_code(row.get("code"))
         description = _normalize_asset_status_description(row.get("description"))
+        if not code:
+            continue
+        results.append(
+            {
+                "code": code,
+                "description": description,
+            }
+        )
+    return sorted(results, key=lambda row: _asset_status_sort_key(row["code"]))
+
+
+def list_condition_status_codes() -> list[dict[str, Any]]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["condition_status_code"])
+    results = []
+    for row in rows:
+        code = _normalize_condition_status_code(row.get("condition_status"))
+        description = _normalize_condition_status_description(row.get("description"))
         if not code:
             continue
         results.append(
@@ -1115,6 +1141,107 @@ def delete_asset_status_code(code: str) -> bool:
     return True
 
 
+def create_condition_status_code(code: str, description: str) -> dict[str, Any]:
+    normalized_code = _normalize_condition_status_code(code)
+    normalized_description = _normalize_condition_status_description(description)
+    if not normalized_code:
+        raise ValueError("condition_status code is required")
+    if not normalized_description:
+        raise ValueError("condition_status description is required")
+
+    with _locked_workbook() as wb:
+        ws = wb["condition_status_code"]
+        rows = _read_rows(ws)
+        existing_codes = {_normalize_condition_status_code(row.get("condition_status")) for row in rows}
+        if normalized_code in existing_codes:
+            raise ValueError("condition_status code already exists")
+
+        rows.append(
+            {
+                "condition_status": normalized_code,
+                "description": normalized_description,
+            }
+        )
+        _write_rows(ws, SHEETS["condition_status_code"], rows)
+        wb.save(DB_PATH)
+    return {"code": normalized_code, "description": normalized_description}
+
+
+def update_condition_status_code(code: str, next_code: str, description: str) -> dict[str, Any]:
+    normalized_code = _normalize_condition_status_code(code)
+    normalized_next_code = _normalize_condition_status_code(next_code)
+    normalized_description = _normalize_condition_status_description(description)
+    if not normalized_code:
+        raise ValueError("condition_status code is required")
+    if not normalized_next_code:
+        raise ValueError("condition_status code is required")
+    if not normalized_description:
+        raise ValueError("condition_status description is required")
+
+    with _locked_workbook() as wb:
+        code_ws = wb["condition_status_code"]
+        inventory_ws = wb["inventory_items"]
+        code_rows = _read_rows(code_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        target_row: dict[str, Any] | None = None
+        for row in code_rows:
+            if _normalize_condition_status_code(row.get("condition_status")) == normalized_code:
+                target_row = row
+                break
+        if target_row is None:
+            raise ValueError("condition_status code not found")
+
+        if normalized_next_code != normalized_code:
+            for row in code_rows:
+                if _normalize_condition_status_code(row.get("condition_status")) == normalized_next_code:
+                    raise ValueError("condition_status code already exists")
+
+        now = _now_str()
+        target_row["condition_status"] = normalized_next_code
+        target_row["description"] = normalized_description
+
+        if normalized_next_code != normalized_code:
+            for row in inventory_rows:
+                if _is_blank(row.get("deleted_at")) and _normalize_condition_status_code(row.get("condition_status")) == normalized_code:
+                    row["condition_status"] = normalized_next_code
+                    row["updated_at"] = now
+                    row["updated_by"] = "system"
+
+        _write_rows(code_ws, SHEETS["condition_status_code"], code_rows)
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        wb.save(DB_PATH)
+    return {"code": normalized_next_code, "description": normalized_description}
+
+
+def delete_condition_status_code(code: str) -> bool:
+    normalized_code = _normalize_condition_status_code(code)
+    if not normalized_code:
+        raise ValueError("condition_status code is required")
+
+    with _locked_workbook() as wb:
+        code_ws = wb["condition_status_code"]
+        inventory_ws = wb["inventory_items"]
+        code_rows = _read_rows(code_ws)
+        inventory_rows = _read_rows(inventory_ws)
+
+        remaining_rows = [row for row in code_rows if _normalize_condition_status_code(row.get("condition_status")) != normalized_code]
+        deleted = len(remaining_rows) != len(code_rows)
+        if not deleted:
+            raise ValueError("condition_status code not found")
+
+        is_in_use = any(
+            _is_blank(row.get("deleted_at")) and _normalize_condition_status_code(row.get("condition_status")) == normalized_code
+            for row in inventory_rows
+        )
+        if is_in_use:
+            raise ValueError("condition_status code is in use")
+
+        _write_rows(code_ws, SHEETS["condition_status_code"], remaining_rows)
+        wb.save(DB_PATH)
+    return True
+
+
 def get_items_count() -> int:
     with _locked_workbook() as wb:
         rows = _read_rows(wb["inventory_items"])
@@ -1282,7 +1409,11 @@ def get_dashboard_snapshot() -> dict[str, Any]:
     }
 
 
-def list_items(*, include_donated: bool = False) -> list[dict[str, Any]]:
+def list_items(*, include_donated: bool = False, deleted_scope: str = "active") -> list[dict[str, Any]]:
+    normalized_deleted_scope = _to_str(deleted_scope).strip().lower() or "active"
+    if normalized_deleted_scope not in {"active", "deleted"}:
+        raise ValueError("invalid deleted_scope")
+
     with _locked_workbook() as wb:
         rows = _read_rows(wb["inventory_items"])
         donation_rows = _read_rows(wb["donation_items"])
@@ -1291,7 +1422,10 @@ def list_items(*, include_donated: bool = False) -> list[dict[str, Any]]:
     donation_map = _donation_map(donation_rows, donation_request_rows)
     results = []
     for row in rows:
-        if not _is_blank(row.get("deleted_at")):
+        is_deleted = not _is_blank(row.get("deleted_at"))
+        if normalized_deleted_scope == "active" and is_deleted:
+            continue
+        if normalized_deleted_scope == "deleted" and not is_deleted:
             continue
         donation_info = donation_map.get(_to_int(row.get("id")))
         if not include_donated and _is_item_donated(row, donation_info=donation_info):
@@ -1466,6 +1600,31 @@ def delete_item(item_id: int) -> bool:
             _write_rows(ws, SHEETS["inventory_items"], rows)
             wb.save(DB_PATH)
         return deleted
+
+
+def restore_item(item_id: int) -> dict[str, str] | None:
+    with _locked_workbook() as wb:
+        ws = wb["inventory_items"]
+        rows = _read_rows(ws)
+        restored_meta: dict[str, str] | None = None
+        for row in rows:
+            if _to_int(row.get("id")) != item_id:
+                continue
+            deleted_at = _to_str(row.get("deleted_at")).strip()
+            deleted_by = _to_str(row.get("deleted_by")).strip()
+            if not deleted_at:
+                return None
+            row["deleted_at"] = ""
+            row["deleted_by"] = ""
+            restored_meta = {
+                "deleted_at": deleted_at,
+                "deleted_by": deleted_by,
+            }
+            break
+        if restored_meta is not None:
+            _write_rows(ws, SHEETS["inventory_items"], rows)
+            wb.save(DB_PATH)
+        return restored_meta
 
 
 def purge_soft_deleted_items() -> int:
