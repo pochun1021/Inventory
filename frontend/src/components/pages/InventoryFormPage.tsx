@@ -8,6 +8,7 @@ import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
 import { fetchAssetCategoryOptions } from './assetCategoryLookup'
 import { fetchAssetStatusOptions } from './assetStatusLookup'
+import { fetchConditionStatusOptions } from './conditionStatusLookup'
 import type { InventoryItem } from './types'
 
 type InventoryFormPageProps = {
@@ -46,11 +47,6 @@ const ASSET_TYPE_OPTIONS = [
   { value: 'A1', label: '物品 (A1)' },
   { value: 'A2', label: '其他 (A2)' },
 ]
-const CONDITION_STATUS_OPTIONS = [
-  { value: '0', label: '0' },
-  { value: '1', label: '1' },
-]
-
 const DEFAULT_FORM_DATA: InventoryFormData = {
   asset_type: 'A2',
   asset_status: '0',
@@ -123,6 +119,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [assetStatusOptions, setAssetStatusOptions] = useState<Array<{ value: string; label: string }>>([])
+  const [conditionStatusOptions, setConditionStatusOptions] = useState<Array<{ value: string; label: string }>>([])
   const [assetCategoryOptions, setAssetCategoryOptions] = useState<
     Array<{ name_code: string; name_code2: string; asset_category_name: string; description: string }>
   >([])
@@ -133,7 +130,11 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
     const loadLookupOptions = async () => {
       try {
-        const [statusOptions, categoryOptions] = await Promise.all([fetchAssetStatusOptions(), fetchAssetCategoryOptions()])
+        const [statusOptions, conditionOptions, categoryOptions] = await Promise.all([
+          fetchAssetStatusOptions(),
+          fetchConditionStatusOptions(),
+          fetchAssetCategoryOptions(),
+        ])
         if (cancelled) {
           return
         }
@@ -143,11 +144,18 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
             label: `${option.description || option.code} (${option.code})`,
           })),
         )
+        setConditionStatusOptions(
+          conditionOptions.map((option) => ({
+            value: option.code,
+            label: `${option.description || option.code} (${option.code})`,
+          })),
+        )
         setAssetCategoryOptions(categoryOptions)
         setAssetCategoryLoadError('')
       } catch {
         if (!cancelled) {
           setAssetStatusOptions([])
+          setConditionStatusOptions([])
           setAssetCategoryOptions([])
           setAssetCategoryLoadError('無法讀取分類主檔，請稍後再試。')
         }
@@ -268,7 +276,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
 
   const hasNameCodeOption = nameCodeOptions.some((option) => option.value === formData.name_code)
   const hasNameCode2Option = nameCode2Options.some((option) => option.value === formData.name_code2)
-  const hasConditionStatusOption = CONDITION_STATUS_OPTIONS.some((option) => option.value === formData.condition_status)
+  const hasConditionStatusOption = conditionStatusOptions.some((option) => option.value === formData.condition_status)
 
   const handleNameCodeChange = (value: string) => {
     setFormData((previousData) => {
@@ -399,7 +407,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
               <div className="grid gap-1.5">
                 <Label>物料狀況</Label>
                 <Select value={formData.condition_status} onChange={(event) => handleInputChange('condition_status', event.target.value)}>
-                  {CONDITION_STATUS_OPTIONS.map((conditionStatusOption) => (
+                  {conditionStatusOptions.map((conditionStatusOption) => (
                     <option key={conditionStatusOption.value} value={conditionStatusOption.value}>
                       {conditionStatusOption.label}
                     </option>

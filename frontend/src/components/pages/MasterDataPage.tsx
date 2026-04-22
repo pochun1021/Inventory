@@ -18,9 +18,23 @@ import {
   fetchAssetStatusOptions,
   updateAssetStatusOption,
 } from './assetStatusLookup'
-import type { AssetCategoryOption, AssetStatusOption } from './types'
+import {
+  createConditionStatusOption,
+  deleteConditionStatusOption,
+  fetchConditionStatusOptions,
+  updateConditionStatusOption,
+} from './conditionStatusLookup'
+import type { AssetCategoryOption, AssetStatusOption, ConditionStatusOption } from './types'
 
 type AssetStatusDialogState = {
+  open: boolean
+  mode: 'create' | 'edit'
+  originalCode: string
+  code: string
+  description: string
+}
+
+type ConditionStatusDialogState = {
   open: boolean
   mode: 'create' | 'edit'
   originalCode: string
@@ -47,6 +61,14 @@ const emptyAssetStatusDialog = (): AssetStatusDialogState => ({
   description: '',
 })
 
+const emptyConditionStatusDialog = (): ConditionStatusDialogState => ({
+  open: false,
+  mode: 'create',
+  originalCode: '',
+  code: '',
+  description: '',
+})
+
 const emptyAssetCategoryDialog = (): AssetCategoryDialogState => ({
   open: false,
   mode: 'create',
@@ -60,30 +82,53 @@ const emptyAssetCategoryDialog = (): AssetCategoryDialogState => ({
 
 export function MasterDataPage() {
   const [assetStatuses, setAssetStatuses] = useState<AssetStatusOption[]>([])
+  const [conditionStatuses, setConditionStatuses] = useState<ConditionStatusOption[]>([])
   const [assetCategories, setAssetCategories] = useState<AssetCategoryOption[]>([])
   const [loadingStatus, setLoadingStatus] = useState(false)
+  const [loadingConditionStatus, setLoadingConditionStatus] = useState(false)
   const [loadingCategory, setLoadingCategory] = useState(false)
   const [statusError, setStatusError] = useState('')
+  const [conditionStatusError, setConditionStatusError] = useState('')
   const [categoryError, setCategoryError] = useState('')
   const [statusActionError, setStatusActionError] = useState('')
+  const [conditionStatusActionError, setConditionStatusActionError] = useState('')
   const [categoryActionError, setCategoryActionError] = useState('')
   const [savingStatus, setSavingStatus] = useState(false)
+  const [savingConditionStatus, setSavingConditionStatus] = useState(false)
   const [savingCategory, setSavingCategory] = useState(false)
   const [deletingStatusCode, setDeletingStatusCode] = useState<string | null>(null)
+  const [deletingConditionStatusCode, setDeletingConditionStatusCode] = useState<string | null>(null)
   const [deletingCategory, setDeletingCategory] = useState<{ name_code: string; name_code2: string } | null>(null)
   const [statusDialog, setStatusDialog] = useState<AssetStatusDialogState>(emptyAssetStatusDialog())
+  const [conditionStatusDialog, setConditionStatusDialog] = useState<ConditionStatusDialogState>(emptyConditionStatusDialog())
   const [categoryDialog, setCategoryDialog] = useState<AssetCategoryDialogState>(emptyAssetCategoryDialog())
+
+  const sortByCode = <T extends { code: string }>(rows: T[]) =>
+    rows.sort((left, right) => left.code.localeCompare(right.code, 'zh-TW', { numeric: true, sensitivity: 'base' }))
 
   const loadAssetStatuses = async () => {
     setLoadingStatus(true)
     setStatusError('')
     try {
       const rows = await fetchAssetStatusOptions()
-      setAssetStatuses(rows.sort((left, right) => left.code.localeCompare(right.code, 'zh-TW', { numeric: true, sensitivity: 'base' })))
+      setAssetStatuses(sortByCode(rows))
     } catch (error) {
       setStatusError(error instanceof Error ? error.message : '無法讀取資產狀態主檔。')
     } finally {
       setLoadingStatus(false)
+    }
+  }
+
+  const loadConditionStatuses = async () => {
+    setLoadingConditionStatus(true)
+    setConditionStatusError('')
+    try {
+      const rows = await fetchConditionStatusOptions()
+      setConditionStatuses(sortByCode(rows))
+    } catch (error) {
+      setConditionStatusError(error instanceof Error ? error.message : '無法讀取物品狀況主檔。')
+    } finally {
+      setLoadingConditionStatus(false)
     }
   }
 
@@ -108,6 +153,7 @@ export function MasterDataPage() {
 
   useEffect(() => {
     void loadAssetStatuses()
+    void loadConditionStatuses()
     void loadAssetCategories()
   }, [])
 
@@ -185,6 +231,83 @@ export function MasterDataPage() {
       setStatusActionError(error instanceof Error ? error.message : '刪除資產狀態失敗。')
     } finally {
       setSavingStatus(false)
+    }
+  }
+
+  const openCreateConditionStatusDialog = () => {
+    setConditionStatusActionError('')
+    setConditionStatusDialog({
+      open: true,
+      mode: 'create',
+      originalCode: '',
+      code: '',
+      description: '',
+    })
+  }
+
+  const openEditConditionStatusDialog = (row: ConditionStatusOption) => {
+    setConditionStatusActionError('')
+    setConditionStatusDialog({
+      open: true,
+      mode: 'edit',
+      originalCode: row.code,
+      code: row.code,
+      description: row.description || '',
+    })
+  }
+
+  const closeConditionStatusDialog = () => {
+    if (savingConditionStatus) {
+      return
+    }
+    setConditionStatusDialog(emptyConditionStatusDialog())
+  }
+
+  const submitConditionStatusDialog = async () => {
+    const code = conditionStatusDialog.code.trim()
+    const description = conditionStatusDialog.description.trim()
+
+    if (!code) {
+      setConditionStatusActionError('狀況碼為必填。')
+      return
+    }
+
+    setSavingConditionStatus(true)
+    setConditionStatusActionError('')
+    try {
+      if (conditionStatusDialog.mode === 'create') {
+        await createConditionStatusOption({ code, description })
+      } else {
+        await updateConditionStatusOption(conditionStatusDialog.originalCode, { code, description })
+      }
+      setConditionStatusDialog(emptyConditionStatusDialog())
+      await loadConditionStatuses()
+    } catch (error) {
+      setConditionStatusActionError(error instanceof Error ? error.message : '儲存物品狀況失敗。')
+    } finally {
+      setSavingConditionStatus(false)
+    }
+  }
+
+  const confirmDeleteConditionStatus = (code: string) => {
+    setConditionStatusActionError('')
+    setDeletingConditionStatusCode(code)
+  }
+
+  const deleteConditionStatus = async () => {
+    if (!deletingConditionStatusCode) {
+      return
+    }
+    setSavingConditionStatus(true)
+    setConditionStatusActionError('')
+    try {
+      await deleteConditionStatusOption(deletingConditionStatusCode)
+      setDeletingConditionStatusCode(null)
+      await loadConditionStatuses()
+    } catch (error) {
+      setConditionStatusActionError(error instanceof Error ? error.message : '刪除物品狀況失敗。')
+    } finally {
+      setSavingConditionStatus(false)
     }
   }
 
@@ -288,6 +411,7 @@ export function MasterDataPage() {
       <Tabs defaultValue="asset-status">
         <TabsList>
           <TabsTrigger value="asset-status">資產狀態碼</TabsTrigger>
+          <TabsTrigger value="condition-status">物品狀況碼</TabsTrigger>
           <TabsTrigger value="asset-category">資產分類</TabsTrigger>
         </TabsList>
 
@@ -325,6 +449,62 @@ export function MasterDataPage() {
                               編輯
                             </Button>
                             <Button type="button" variant="destructive" size="sm" onClick={() => confirmDeleteStatus(row.code)}>
+                              刪除
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : null}
+          </SectionCard>
+        </TabsContent>
+
+        <TabsContent value="condition-status">
+          <SectionCard title="物品狀況碼主檔" description="維護物品狀況下拉選單（新增、編輯、刪除）。">
+            <div className="mb-3 flex justify-end">
+              <Button type="button" onClick={openCreateConditionStatusDialog}>
+                新增狀況碼
+              </Button>
+            </div>
+            {conditionStatusActionError ? (
+              <p className="mt-0 mb-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{conditionStatusActionError}</p>
+            ) : null}
+            {conditionStatusError ? <p className="m-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{conditionStatusError}</p> : null}
+            {!conditionStatusError && loadingConditionStatus ? (
+              <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">資料載入中...</p>
+            ) : null}
+            {!conditionStatusError && !loadingConditionStatus && conditionStatuses.length === 0 ? (
+              <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">目前沒有物品狀況資料。</p>
+            ) : null}
+            {!conditionStatusError && !loadingConditionStatus && conditionStatuses.length > 0 ? (
+              <div className="overflow-x-auto rounded-md border border-[hsl(var(--border))]">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>狀況碼</TableHead>
+                      <TableHead>說明</TableHead>
+                      <TableHead className="w-[180px]">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {conditionStatuses.map((row) => (
+                      <TableRow key={row.code}>
+                        <TableCell className="font-semibold">{row.code}</TableCell>
+                        <TableCell>{row.description || '--'}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button type="button" variant="secondary" size="sm" onClick={() => openEditConditionStatusDialog(row)}>
+                              編輯
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => confirmDeleteConditionStatus(row.code)}
+                            >
                               刪除
                             </Button>
                           </div>
@@ -439,6 +619,65 @@ export function MasterDataPage() {
             </Button>
             <Button type="button" variant="destructive" onClick={() => void deleteStatus()} disabled={savingStatus}>
               {savingStatus ? '刪除中...' : '確認刪除'}
+            </Button>
+          </>
+        }
+      />
+
+      <Dialog
+        open={conditionStatusDialog.open}
+        onClose={closeConditionStatusDialog}
+        title={conditionStatusDialog.mode === 'create' ? '新增物品狀況碼' : '編輯物品狀況碼'}
+        actions={
+          <>
+            <Button type="button" variant="secondary" onClick={closeConditionStatusDialog} disabled={savingConditionStatus}>
+              取消
+            </Button>
+            <Button type="button" onClick={() => void submitConditionStatusDialog()} disabled={savingConditionStatus}>
+              {savingConditionStatus ? '儲存中...' : '儲存'}
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="condition-status-code">狀況碼</Label>
+            <Input
+              id="condition-status-code"
+              value={conditionStatusDialog.code}
+              onChange={(event) => setConditionStatusDialog((prev) => ({ ...prev, code: event.target.value }))}
+              disabled={savingConditionStatus}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="condition-status-description">說明</Label>
+            <Input
+              id="condition-status-description"
+              value={conditionStatusDialog.description}
+              onChange={(event) => setConditionStatusDialog((prev) => ({ ...prev, description: event.target.value }))}
+              disabled={savingConditionStatus}
+            />
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={deletingConditionStatusCode !== null}
+        onClose={() => (savingConditionStatus ? null : setDeletingConditionStatusCode(null))}
+        title="刪除物品狀況碼"
+        description={`確定要刪除狀況碼 ${deletingConditionStatusCode ?? ''} 嗎？此操作無法復原。`}
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setDeletingConditionStatusCode(null)}
+              disabled={savingConditionStatus}
+            >
+              取消
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void deleteConditionStatus()} disabled={savingConditionStatus}>
+              {savingConditionStatus ? '刪除中...' : '確認刪除'}
             </Button>
           </>
         }

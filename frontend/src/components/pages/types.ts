@@ -69,6 +69,11 @@ export type AssetStatusOption = {
   description: string
 }
 
+export type ConditionStatusOption = {
+  code: string
+  description: string
+}
+
 export type AssetCategoryOption = {
   name_code: string
   asset_category_name: string
