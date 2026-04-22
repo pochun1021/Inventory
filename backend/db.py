@@ -604,6 +604,8 @@ def _seed_condition_status_codes(ws) -> bool:
 
 def _seed_asset_category_name(ws) -> bool:
     existing_rows = _read_rows(ws)
+    if existing_rows:
+        return False
     existing_pairs = {
         (
             _normalize_name_code_value(row.get("name_code")),
