@@ -80,6 +80,9 @@ function readInitialState() {
   return {
     keyword: params.get('keyword') ?? '',
     selectedAssetType: params.get('asset_type') ?? 'all',
+    selectedAssetStatus: params.get('asset_status') ?? 'all',
+    selectedLocation: params.get('location') ?? 'all',
+    selectedKeeper: params.get('keeper') ?? 'all',
     selectedCorrectionStatus: correctionStatus as 'all' | 'needs_fix',
     showDonated: parseBoolean(params.get('include_donated'), false),
     sortBy: parseInventorySortKey(params.get('sort_by'), 'id'),
@@ -93,12 +96,17 @@ export function InventoryListPage() {
   const initialState = readInitialState()
   const [items, setItems] = useState<InventoryItem[]>([])
   const [assetTypeOptions, setAssetTypeOptions] = useState<string[]>(['all'])
+  const [locationOptions, setLocationOptions] = useState<string[]>(['all'])
+  const [keeperOptions, setKeeperOptions] = useState<string[]>(['all'])
   const [assetStatusLabelMap, setAssetStatusLabelMap] = useState<Record<string, string>>({})
   const [loadError, setLoadError] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState(initialState.keyword)
   const [selectedAssetType, setSelectedAssetType] = useState(initialState.selectedAssetType)
+  const [selectedAssetStatus, setSelectedAssetStatus] = useState(initialState.selectedAssetStatus)
+  const [selectedLocation, setSelectedLocation] = useState(initialState.selectedLocation)
+  const [selectedKeeper, setSelectedKeeper] = useState(initialState.selectedKeeper)
   const [selectedCorrectionStatus, setSelectedCorrectionStatus] = useState<'all' | 'needs_fix'>(initialState.selectedCorrectionStatus)
   const [showDonated, setShowDonated] = useState(initialState.showDonated)
   const [sortBy, setSortBy] = useState<InventorySortKey>(initialState.sortBy)
@@ -124,6 +132,15 @@ export function InventoryListPage() {
     if (selectedAssetType !== 'all') {
       params.set('asset_type', selectedAssetType)
     }
+    if (selectedAssetStatus !== 'all') {
+      params.set('asset_status', selectedAssetStatus)
+    }
+    if (selectedLocation !== 'all') {
+      params.set('location', selectedLocation)
+    }
+    if (selectedKeeper !== 'all') {
+      params.set('keeper', selectedKeeper)
+    }
     if (selectedCorrectionStatus !== 'all') {
       params.set('correction_status', selectedCorrectionStatus)
     }
@@ -145,7 +162,7 @@ export function InventoryListPage() {
     const queryString = params.toString()
     const url = queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname
     window.history.replaceState(null, '', url)
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize])
+  }, [keyword, selectedAssetType, selectedAssetStatus, selectedLocation, selectedKeeper, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize])
 
   useEffect(() => {
     const requestSeq = ++listRequestSeqRef.current
@@ -156,8 +173,8 @@ export function InventoryListPage() {
       setLoadError('')
       try {
         const params = new URLSearchParams({
-          page: String(page),
-          page_size: String(pageSize),
+          page: '1',
+          page_size: '100000',
           include_donated: String(showDonated),
           correction_status: selectedCorrectionStatus,
           sort_by: sortBy,
@@ -179,9 +196,41 @@ export function InventoryListPage() {
         if (listRequestSeqRef.current !== requestSeq) {
           return
         }
-        setItems(payload.items)
-        setTotal(payload.total)
-        setTotalPages(payload.total_pages)
+        const rows = payload.items
+        const toUniqueSortedOptions = (values: string[]) => {
+          const uniqueValues = Array.from(new Set(values.filter((value) => value.trim())))
+          uniqueValues.sort((left, right) => left.localeCompare(right, 'zh-TW', { sensitivity: 'base', numeric: true }))
+          return ['all', ...uniqueValues]
+        }
+
+        setLocationOptions(toUniqueSortedOptions(rows.map((item) => item.location || '')))
+        setKeeperOptions(toUniqueSortedOptions(rows.map((item) => item.keeper || '')))
+
+        const filteredRows = rows.filter((item) => {
+          if (selectedAssetStatus !== 'all' && item.asset_status !== selectedAssetStatus) {
+            return false
+          }
+          if (selectedLocation !== 'all' && (item.location || '') !== selectedLocation) {
+            return false
+          }
+          if (selectedKeeper !== 'all' && (item.keeper || '') !== selectedKeeper) {
+            return false
+          }
+          return true
+        })
+
+        const filteredTotal = filteredRows.length
+        const filteredTotalPages = filteredTotal > 0 ? Math.ceil(filteredTotal / pageSize) : 1
+        const normalizedPage = Math.min(page, filteredTotalPages)
+        if (normalizedPage !== page) {
+          setPage(normalizedPage)
+        }
+        const startIndex = (normalizedPage - 1) * pageSize
+        const pagedRows = filteredRows.slice(startIndex, startIndex + pageSize)
+
+        setItems(pagedRows)
+        setTotal(filteredTotal)
+        setTotalPages(filteredTotalPages)
       } catch {
         if (controller.signal.aborted || listRequestSeqRef.current !== requestSeq) {
           return
@@ -198,7 +247,7 @@ export function InventoryListPage() {
     return () => {
       controller.abort()
     }
-  }, [keyword, selectedAssetType, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize, reloadKey])
+  }, [keyword, selectedAssetType, selectedAssetStatus, selectedLocation, selectedKeeper, selectedCorrectionStatus, showDonated, sortBy, sortDir, page, pageSize, reloadKey])
 
   useEffect(() => {
     const loadAssetTypes = async () => {
@@ -427,6 +476,69 @@ export function InventoryListPage() {
               <option value="all">全部資料</option>
               <option value="needs_fix">僅顯示待修正資料</option>
             </Select>
+          </div>
+
+          <div className="grid gap-2 xl:col-span-4">
+            <Label>進階篩選</Label>
+            <div className="grid gap-2 md:grid-cols-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="asset-status-filter">資產狀態</Label>
+                <Select
+                  id="asset-status-filter"
+                  value={selectedAssetStatus}
+                  onChange={(event) => {
+                    setSelectedAssetStatus(event.target.value)
+                    setPage(1)
+                  }}
+                >
+                  <option value="all">全部狀態</option>
+                  {Object.entries(assetStatusLabelMap).map(([statusCode, statusLabel]) => (
+                    <option key={statusCode} value={statusCode}>
+                      {statusLabel}
+                    </option>
+                  ))}
+                  {selectedAssetStatus !== 'all' && !(selectedAssetStatus in assetStatusLabelMap) ? (
+                    <option value={selectedAssetStatus}>{selectedAssetStatus}</option>
+                  ) : null}
+                </Select>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="location-filter">放置地點</Label>
+                <Select
+                  id="location-filter"
+                  value={selectedLocation}
+                  onChange={(event) => {
+                    setSelectedLocation(event.target.value)
+                    setPage(1)
+                  }}
+                >
+                  {locationOptions.map((locationOption) => (
+                    <option key={locationOption} value={locationOption}>
+                      {locationOption === 'all' ? '全部地點' : locationOption}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="keeper-filter">保管人</Label>
+                <Select
+                  id="keeper-filter"
+                  value={selectedKeeper}
+                  onChange={(event) => {
+                    setSelectedKeeper(event.target.value)
+                    setPage(1)
+                  }}
+                >
+                  {keeperOptions.map((keeperOption) => (
+                    <option key={keeperOption} value={keeperOption}>
+                      {keeperOption === 'all' ? '全部保管人' : keeperOption}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 xl:col-span-4">

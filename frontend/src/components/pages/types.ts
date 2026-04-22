@@ -32,6 +32,7 @@ export type InventoryItem = {
   id: number
   asset_type: string
   asset_status: string
+  condition_status: string
   key: string
   n_property_sn: string
   property_sn: string
@@ -51,6 +52,8 @@ export type InventoryItem = {
   memo: string
   memo2: string
   keeper: string
+  borrower: string
+  start_date: string | null
   created_at: string | null
   created_by: string
   updated_at: string | null
@@ -63,6 +66,13 @@ export type InventoryItem = {
 
 export type AssetStatusOption = {
   code: string
+  description: string
+}
+
+export type AssetCategoryOption = {
+  name_code: string
+  asset_category_name: string
+  name_code2: string
   description: string
 }
 
