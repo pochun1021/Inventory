@@ -444,7 +444,7 @@ export function MasterDataPage() {
                         <TableCell className="font-semibold">{row.code}</TableCell>
                         <TableCell>{row.description || '--'}</TableCell>
                         <TableCell>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Button type="button" variant="secondary" size="sm" onClick={() => openEditStatusDialog(row)}>
                               編輯
                             </Button>
@@ -495,7 +495,7 @@ export function MasterDataPage() {
                         <TableCell className="font-semibold">{row.code}</TableCell>
                         <TableCell>{row.description || '--'}</TableCell>
                         <TableCell>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Button type="button" variant="secondary" size="sm" onClick={() => openEditConditionStatusDialog(row)}>
                               編輯
                             </Button>
@@ -551,7 +551,7 @@ export function MasterDataPage() {
                         <TableCell>{row.name_code2}</TableCell>
                         <TableCell>{row.description || '--'}</TableCell>
                         <TableCell>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Button type="button" variant="secondary" size="sm" onClick={() => openEditCategoryDialog(row)}>
                               編輯
                             </Button>

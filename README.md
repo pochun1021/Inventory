@@ -104,6 +104,7 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 - `POST /api/items`
 - `PUT /api/items/{item_id}`
 - `DELETE /api/items/{item_id}`
+- `POST /api/items/{item_id}/detach`
 
 ### 領用
 
@@ -148,6 +149,8 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
 - 借用預約天數上限為 30 天（`due_date - borrow_date <= 30`）
 - 建立或更新捐贈單時 `recipient` 必填
 - 交易會檢查品項可用性，不可重複占用或占用不可用資產
+- 母件（`key` 以 `-000000` 結尾）若仍有 active 子件，禁止刪除
+- 拆卸子件 key 規則：`{母件前綴}-{name_code(2)}{name_code2(2)}{seq(2)}`，且全表不可重複
 
 ## Excel 匯入欄位
 
@@ -164,6 +167,7 @@ xlsx 必須包含以下欄位：
 - `保管人（單位）`
 
 說明：`類別` 不從檔案欄位讀取，而是由上傳時 `asset_type` 決定。
+另：`財產編號` 會寫入 `key`（財產編號）並同步寫入 `n_property_sn`（相容欄位）。
 
 ## Google Sheets 同步（選配）
 

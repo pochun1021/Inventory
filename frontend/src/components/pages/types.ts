@@ -62,6 +62,9 @@ export type InventoryItem = {
   deleted_by: string
   donated_at?: string | null
   donation_request_id?: number | null
+  is_parent_item?: boolean
+  has_detached_children?: boolean
+  parent_item_id?: number | null
 }
 
 export type AssetStatusOption = {

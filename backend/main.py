@@ -16,6 +16,7 @@ from db import (
     create_asset_status_code,
     create_item,
     create_items_bulk,
+    detach_item,
     create_issue_request,
     create_borrow_request,
     create_donation_request,
@@ -90,14 +91,14 @@ class InventoryItemCreate(BaseModel):
     asset_type: str = ""
     asset_status: str = ""
     condition_status: str = ""
-    key: str = ""
-    n_property_sn: str = ""
-    property_sn: str = ""
-    n_item_sn: str = ""
-    item_sn: str = ""
+    key: str = Field(default="", description="系統統一識別碼；讀取時依序採用 key、n_property_sn、property_sn、n_item_sn、item_sn。")
+    n_property_sn: str = Field(default="", description="財產序號（相容舊資料欄位，property 類）。")
+    property_sn: str = Field(default="", description="財產條碼（相容舊資料欄位，property 類）。")
+    n_item_sn: str = Field(default="", description="物品序號（相容舊資料欄位，item 類）。")
+    item_sn: str = Field(default="", description="物品條碼（相容舊資料欄位，item 類）。")
     name: str = ""
-    name_code: str = ""
-    name_code2: str = ""
+    name_code: str = Field(default="", description="主分類代碼（顯示名稱由 asset_category_name 對照）。")
+    name_code2: str = Field(default="", description="次分類代碼（需搭配 name_code；顯示名稱由對照表決定）。")
     model: str = ""
     specification: str = ""
     unit: str = ""
@@ -127,6 +128,26 @@ class InventoryItem(InventoryItemCreate):
     deleted_by: str = ""
     donated_at: datetime | None = None
     donation_request_id: int | None = None
+    is_parent_item: bool = False
+    has_detached_children: bool = False
+    parent_item_id: int | None = None
+
+
+class InventoryItemDetachCreate(BaseModel):
+    name_code: str = ""
+    name_code2: str = ""
+    seq: str = "00"
+    name: str | None = None
+    model: str | None = None
+    specification: str | None = None
+    unit: str | None = None
+    purchase_date: date | None = None
+    location: str | None = None
+    memo: str | None = None
+    memo2: str | None = None
+    keeper: str | None = None
+    asset_status: str | None = None
+    condition_status: str | None = None
 
 
 class AssetStatusCode(BaseModel):
@@ -232,10 +253,10 @@ class BorrowPickupRequest(BaseModel):
 
 class BorrowPickupCandidateItem(BaseModel):
     id: int
-    n_property_sn: str = ""
-    property_sn: str = ""
-    n_item_sn: str = ""
-    item_sn: str = ""
+    n_property_sn: str = Field(default="", description="財產序號（相容舊資料欄位，property 類）。")
+    property_sn: str = Field(default="", description="財產條碼（相容舊資料欄位，property 類）。")
+    n_item_sn: str = Field(default="", description="物品序號（相容舊資料欄位，item 類）。")
+    item_sn: str = Field(default="", description="物品條碼（相容舊資料欄位，item 類）。")
 
 
 class BorrowPickupCandidateLine(BaseModel):
@@ -574,8 +595,8 @@ def _sort_records[T](
     return sorted(rows, key=sort_key_map[resolved_sort_by], reverse=sort_dir == "desc")
 
 
-def _serial_sort_key(item: InventoryItem) -> str:
-    return (item.n_property_sn or item.property_sn or item.n_item_sn or item.item_sn or "").strip().lower()
+def _inventory_number_sort_key(item: InventoryItem) -> str:
+    return (item.key or item.n_property_sn or item.property_sn or item.n_item_sn or item.item_sn or "").strip().lower()
 
 
 def _request_items_sort_key(items: list[Any]) -> tuple[str, int, int]:
@@ -628,18 +649,32 @@ def row_to_item(row) -> InventoryItem:
         donation_request_id = int(donation_request_id_raw) if donation_request_id_raw not in (None, "") else None
     except (TypeError, ValueError):
         donation_request_id = None
+    parent_item_id_raw = row.get("parent_item_id")
+    try:
+        parent_item_id = int(parent_item_id_raw) if parent_item_id_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        parent_item_id = None
     try:
         count = int(row.get("count") or 0)
     except (TypeError, ValueError):
         count = 1
     if count <= 0:
         count = 1
+    row_key = _coerce_str(row.get("key")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("n_property_sn")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("property_sn")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("n_item_sn")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("item_sn")).strip()
     return InventoryItem(
         id=row["id"],
         asset_type=_coerce_str(row.get("asset_type")),
         asset_status=_coerce_str(row.get("asset_status")),
         condition_status=_coerce_str(row.get("condition_status")),
-        key=_coerce_str(row.get("key")),
+        key=row_key,
         n_property_sn=_coerce_str(row.get("n_property_sn")),
         property_sn=_coerce_str(row.get("property_sn")),
         n_item_sn=_coerce_str(row.get("n_item_sn")),
@@ -672,6 +707,9 @@ def row_to_item(row) -> InventoryItem:
         deleted_by=_coerce_str(row.get("deleted_by")),
         donated_at=_parse_datetime(donated_at_value),
         donation_request_id=donation_request_id,
+        is_parent_item=bool(row.get("is_parent_item")),
+        has_detached_children=bool(row.get("has_detached_children")),
+        parent_item_id=parent_item_id,
     )
 
 
@@ -1072,6 +1110,7 @@ def get_inventory_items(
 
         if normalized_keyword:
             search_fields = [
+                row.key,
                 row.n_property_sn,
                 row.property_sn,
                 row.n_item_sn,
@@ -1094,7 +1133,8 @@ def get_inventory_items(
         sort_key_map={
             "id": lambda row: row.id,
             "asset_type": lambda row: (_coerce_str(row.asset_type).lower(), row.id),
-            "serial": lambda row: (_serial_sort_key(row), row.id),
+            "key": lambda row: (_inventory_number_sort_key(row), row.id),
+            "serial": lambda row: (_inventory_number_sort_key(row), row.id),
             "name": lambda row: (_coerce_str(row.name).lower(), _coerce_str(row.model).lower(), row.id),
             "specification": lambda row: (_coerce_str(row.specification).lower(), row.id),
             "location": lambda row: (_coerce_str(row.location).lower(), row.id),
@@ -1179,7 +1219,18 @@ def delete_inventory_item_api(item_id: int):
             detail={"deleted_count": purged_count, "policy": "soft-deleted over 6 months"},
         )
 
-    deleted = delete_item(item_id)
+    try:
+        deleted = delete_item(item_id)
+    except ValueError as exc:
+        message = str(exc)
+        log_inventory_action(
+            action="soft_delete",
+            entity="inventory_item",
+            entity_id=item_id,
+            status="failed",
+            detail={"reason": message},
+        )
+        raise HTTPException(status_code=409, detail=message) from exc
     if not deleted:
         log_inventory_action(
             action="soft_delete",
@@ -1192,6 +1243,58 @@ def delete_inventory_item_api(item_id: int):
 
     log_inventory_action(action="soft_delete", entity="inventory_item", entity_id=item_id)
     return {"success": True}
+
+
+@app.post("/api/items/{item_id}/detach", response_model=InventoryItem, response_model_by_alias=False)
+def detach_inventory_item_api(item_id: int, payload: InventoryItemDetachCreate):
+    detach_payload = {
+        "name_code": payload.name_code,
+        "name_code2": payload.name_code2,
+        "seq": payload.seq,
+        "name": payload.name,
+        "model": payload.model,
+        "specification": payload.specification,
+        "unit": payload.unit,
+        "purchase_date": _format_date(payload.purchase_date),
+        "location": payload.location,
+        "memo": payload.memo,
+        "memo2": payload.memo2,
+        "keeper": payload.keeper,
+        "asset_status": payload.asset_status,
+        "condition_status": payload.condition_status,
+    }
+    try:
+        child_item_id = detach_item(item_id, detach_payload)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "parent item not found":
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "already exists" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    row = get_item_by_id(child_item_id)
+    if row is None:
+        log_inventory_action(
+            action="detach",
+            entity="inventory_item",
+            entity_id=child_item_id,
+            status="failed",
+            detail={"reason": "Child item created but cannot be loaded", "parent_item_id": item_id},
+        )
+        raise HTTPException(status_code=500, detail="Child item created but cannot be loaded")
+
+    log_inventory_action(
+        action="detach",
+        entity="inventory_item",
+        entity_id=child_item_id,
+        detail={
+            "parent_item_id": item_id,
+            "child_item_id": child_item_id,
+            "child_key": _coerce_str(row.get("key")),
+        },
+    )
+    return row_to_item(row)
 
 
 @app.post("/api/items/{item_id}/restore")

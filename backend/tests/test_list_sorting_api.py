@@ -27,11 +27,21 @@ class ListSortingApiTests(unittest.TestCase):
         db.LOG_ARCHIVE_DIR = self._original_log_archive_dir
         self._tmpdir.cleanup()
 
-    def _create_item(self, *, name: str, asset_type: str = "A1", asset_status: str = "0") -> int:
+    def _create_item(
+        self,
+        *,
+        name: str,
+        asset_type: str = "A1",
+        asset_status: str = "0",
+        key: str = "",
+        n_property_sn: str = "",
+    ) -> int:
         return db.create_item(
             {
                 "asset_type": asset_type,
                 "asset_status": asset_status,
+                "key": key,
+                "n_property_sn": n_property_sn,
                 "name": name,
                 "model": "M1",
                 "count": 1,
@@ -46,6 +56,32 @@ class ListSortingApiTests(unittest.TestCase):
         self.assertGreaterEqual(len(response.items), 2)
         self.assertEqual(response.items[0].name, "Alpha")
         self.assertEqual(response.items[1].name, "Zulu")
+
+    def test_inventory_list_supports_sort_by_key_and_serial_alias(self) -> None:
+        self._create_item(name="Item-Z", key="INV-200")
+        self._create_item(name="Item-A", key="INV-100")
+
+        by_key = app_main.get_inventory_items(sort_by="key", sort_dir="asc", page=1, page_size=10)
+        self.assertGreaterEqual(len(by_key.items), 2)
+        self.assertEqual(by_key.items[0].key, "INV-100")
+        self.assertEqual(by_key.items[1].key, "INV-200")
+
+        by_serial_alias = app_main.get_inventory_items(sort_by="serial", sort_dir="asc", page=1, page_size=10)
+        self.assertGreaterEqual(len(by_serial_alias.items), 2)
+        self.assertEqual(by_serial_alias.items[0].key, "INV-100")
+        self.assertEqual(by_serial_alias.items[1].key, "INV-200")
+
+    def test_inventory_keyword_matches_key_and_legacy_serial_fields(self) -> None:
+        self._create_item(name="Keyboard", key="INV-KEY-001")
+        self._create_item(name="Mouse", key="", n_property_sn="LEGACY-SN-001")
+
+        by_key = app_main.get_inventory_items(keyword="INV-KEY-001", page=1, page_size=10)
+        self.assertEqual(len(by_key.items), 1)
+        self.assertEqual(by_key.items[0].name, "Keyboard")
+
+        by_legacy_serial = app_main.get_inventory_items(keyword="LEGACY-SN-001", page=1, page_size=10)
+        self.assertEqual(len(by_legacy_serial.items), 1)
+        self.assertEqual(by_legacy_serial.items[0].name, "Mouse")
 
     def test_issue_list_supports_sort_by_items(self) -> None:
         apple_item_id = self._create_item(name="Apple")

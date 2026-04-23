@@ -16,7 +16,7 @@ export function PageHeader({ title, description, actions, className }: PageHeade
         <h2 className="m-0 text-xl font-semibold tracking-tight text-[hsl(var(--foreground))]">{title}</h2>
         <p className="mt-1 mb-0 text-sm text-[hsl(var(--muted-foreground))]">{description}</p>
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div> : null}
     </header>
   )
 }
