@@ -16,6 +16,7 @@ from db import (
     create_asset_status_code,
     create_item,
     create_items_bulk,
+    detach_item,
     create_issue_request,
     create_borrow_request,
     create_donation_request,
@@ -127,6 +128,26 @@ class InventoryItem(InventoryItemCreate):
     deleted_by: str = ""
     donated_at: datetime | None = None
     donation_request_id: int | None = None
+    is_parent_item: bool = False
+    has_detached_children: bool = False
+    parent_item_id: int | None = None
+
+
+class InventoryItemDetachCreate(BaseModel):
+    name_code: str = ""
+    name_code2: str = ""
+    seq: str = "00"
+    name: str | None = None
+    model: str | None = None
+    specification: str | None = None
+    unit: str | None = None
+    purchase_date: date | None = None
+    location: str | None = None
+    memo: str | None = None
+    memo2: str | None = None
+    keeper: str | None = None
+    asset_status: str | None = None
+    condition_status: str | None = None
 
 
 class AssetStatusCode(BaseModel):
@@ -628,6 +649,11 @@ def row_to_item(row) -> InventoryItem:
         donation_request_id = int(donation_request_id_raw) if donation_request_id_raw not in (None, "") else None
     except (TypeError, ValueError):
         donation_request_id = None
+    parent_item_id_raw = row.get("parent_item_id")
+    try:
+        parent_item_id = int(parent_item_id_raw) if parent_item_id_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        parent_item_id = None
     try:
         count = int(row.get("count") or 0)
     except (TypeError, ValueError):
@@ -672,6 +698,9 @@ def row_to_item(row) -> InventoryItem:
         deleted_by=_coerce_str(row.get("deleted_by")),
         donated_at=_parse_datetime(donated_at_value),
         donation_request_id=donation_request_id,
+        is_parent_item=bool(row.get("is_parent_item")),
+        has_detached_children=bool(row.get("has_detached_children")),
+        parent_item_id=parent_item_id,
     )
 
 
@@ -1179,7 +1208,18 @@ def delete_inventory_item_api(item_id: int):
             detail={"deleted_count": purged_count, "policy": "soft-deleted over 6 months"},
         )
 
-    deleted = delete_item(item_id)
+    try:
+        deleted = delete_item(item_id)
+    except ValueError as exc:
+        message = str(exc)
+        log_inventory_action(
+            action="soft_delete",
+            entity="inventory_item",
+            entity_id=item_id,
+            status="failed",
+            detail={"reason": message},
+        )
+        raise HTTPException(status_code=409, detail=message) from exc
     if not deleted:
         log_inventory_action(
             action="soft_delete",
@@ -1192,6 +1232,58 @@ def delete_inventory_item_api(item_id: int):
 
     log_inventory_action(action="soft_delete", entity="inventory_item", entity_id=item_id)
     return {"success": True}
+
+
+@app.post("/api/items/{item_id}/detach", response_model=InventoryItem, response_model_by_alias=False)
+def detach_inventory_item_api(item_id: int, payload: InventoryItemDetachCreate):
+    detach_payload = {
+        "name_code": payload.name_code,
+        "name_code2": payload.name_code2,
+        "seq": payload.seq,
+        "name": payload.name,
+        "model": payload.model,
+        "specification": payload.specification,
+        "unit": payload.unit,
+        "purchase_date": _format_date(payload.purchase_date),
+        "location": payload.location,
+        "memo": payload.memo,
+        "memo2": payload.memo2,
+        "keeper": payload.keeper,
+        "asset_status": payload.asset_status,
+        "condition_status": payload.condition_status,
+    }
+    try:
+        child_item_id = detach_item(item_id, detach_payload)
+    except ValueError as exc:
+        message = str(exc)
+        if message == "parent item not found":
+            raise HTTPException(status_code=404, detail=message) from exc
+        if "already exists" in message:
+            raise HTTPException(status_code=409, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+    row = get_item_by_id(child_item_id)
+    if row is None:
+        log_inventory_action(
+            action="detach",
+            entity="inventory_item",
+            entity_id=child_item_id,
+            status="failed",
+            detail={"reason": "Child item created but cannot be loaded", "parent_item_id": item_id},
+        )
+        raise HTTPException(status_code=500, detail="Child item created but cannot be loaded")
+
+    log_inventory_action(
+        action="detach",
+        entity="inventory_item",
+        entity_id=child_item_id,
+        detail={
+            "parent_item_id": item_id,
+            "child_item_id": child_item_id,
+            "child_key": _coerce_str(row.get("key")),
+        },
+    )
+    return row_to_item(row)
 
 
 @app.post("/api/items/{item_id}/restore")

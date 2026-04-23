@@ -12,6 +12,7 @@ import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
+import { fetchAssetCategoryOptions } from './assetCategoryLookup'
 import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
 import type { InventoryItem, PaginatedResponse } from './types'
 
@@ -41,6 +42,11 @@ type ScanBuffer = {
 type InventorySortKey = 'id' | 'asset_type' | 'serial' | 'name' | 'specification' | 'location' | 'keeper' | 'asset_status'
 type SortDirection = 'asc' | 'desc'
 type DeletedScope = 'active' | 'deleted'
+type DetachFormData = {
+  name_code: string
+  name_code2: string
+  seq: string
+}
 
 function parsePositiveInt(value: string | null, fallback: number): number {
   if (!value) {
@@ -74,6 +80,22 @@ function parseInventorySortKey(value: string | null, fallback: InventorySortKey)
 
 function parseDeletedScope(value: string | null, fallback: DeletedScope): DeletedScope {
   return value === 'deleted' || value === 'active' ? value : fallback
+}
+
+function toApiErrorMessage(payload: unknown, fallback: string): string {
+  if (payload && typeof payload === 'object') {
+    const detail = (payload as { detail?: unknown }).detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail
+    }
+    if (detail && typeof detail === 'object') {
+      const nestedMessage = (detail as { message?: unknown }).message
+      if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
+        return nestedMessage
+      }
+    }
+  }
+  return fallback
 }
 
 function readInitialState() {
@@ -123,6 +145,13 @@ export function InventoryListPage() {
   const [totalPages, setTotalPages] = useState(1)
   const [deletingItemId, setDeletingItemId] = useState<number | null>(null)
   const [confirmDeleteItem, setConfirmDeleteItem] = useState<InventoryItem | null>(null)
+  const [detachTargetItem, setDetachTargetItem] = useState<InventoryItem | null>(null)
+  const [detachSubmitting, setDetachSubmitting] = useState(false)
+  const [detachErrorMessage, setDetachErrorMessage] = useState('')
+  const [detachFormData, setDetachFormData] = useState<DetachFormData>({ name_code: '', name_code2: '', seq: '00' })
+  const [assetCategoryOptions, setAssetCategoryOptions] = useState<
+    Array<{ name_code: string; name_code2: string; asset_category_name: string; description: string }>
+  >([])
   const [reloadKey, setReloadKey] = useState(0)
   const listRequestSeqRef = useRef(0)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
@@ -307,6 +336,26 @@ export function InventoryListPage() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    const loadAssetCategories = async () => {
+      try {
+        const options = await fetchAssetCategoryOptions()
+        if (!cancelled) {
+          setAssetCategoryOptions(options)
+        }
+      } catch {
+        if (!cancelled) {
+          setAssetCategoryOptions([])
+        }
+      }
+    }
+    void loadAssetCategories()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     searchInputRef.current?.focus()
   }, [])
 
@@ -357,6 +406,65 @@ export function InventoryListPage() {
 
   const confirmDeleteLabel =
     confirmDeleteItem ? confirmDeleteItem.name || getPrimarySerial(confirmDeleteItem) || String(confirmDeleteItem.id) : ''
+
+  const detachNameCodeOptions = useMemo(() => {
+    const labelMap = new Map<string, string>()
+    for (const option of assetCategoryOptions) {
+      if (!labelMap.has(option.name_code)) {
+        const categoryName = option.asset_category_name?.trim()
+        labelMap.set(option.name_code, categoryName ? `${option.name_code} (${categoryName})` : option.name_code)
+      }
+    }
+    return Array.from(labelMap.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((left, right) => left.label.localeCompare(right.label, 'zh-TW', { numeric: true, sensitivity: 'base' }))
+  }, [assetCategoryOptions])
+
+  const detachNameCode2Options = useMemo(
+    () =>
+      assetCategoryOptions
+        .filter((option) => option.name_code === detachFormData.name_code)
+        .map((option) => ({
+          value: option.name_code2,
+          label: option.description?.trim() ? `${option.name_code2} (${option.description})` : option.name_code2,
+        }))
+        .sort((left, right) => left.label.localeCompare(right.label, 'zh-TW', { numeric: true, sensitivity: 'base' })),
+    [assetCategoryOptions, detachFormData.name_code],
+  )
+
+  const detachKeyPreview = useMemo(() => {
+    const parentKey = detachTargetItem?.key?.trim() ?? ''
+    if (!parentKey.endsWith('-000000')) {
+      return '--'
+    }
+    const segments = parentKey.split('-')
+    if (segments.length < 2) {
+      return '--'
+    }
+    const basePrefix = segments.slice(0, -1).join('-')
+    const code1 = (detachFormData.name_code || '00').padStart(2, '0')
+    const code2 = (detachFormData.name_code2 || '00').padStart(2, '0')
+    const seq = (detachFormData.seq || '00').padStart(2, '0')
+    return `${basePrefix}-${code1}${code2}${seq}`
+  }, [detachTargetItem, detachFormData])
+
+  const openDetachDialog = (item: InventoryItem) => {
+    setDetachTargetItem(item)
+    setDetachErrorMessage('')
+    setDetachFormData({
+      name_code: item.name_code || '',
+      name_code2: item.name_code2 || '',
+      seq: '00',
+    })
+  }
+
+  const closeDetachDialog = () => {
+    if (detachSubmitting) {
+      return
+    }
+    setDetachTargetItem(null)
+    setDetachErrorMessage('')
+  }
 
   const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     const now = Date.now()
@@ -437,6 +545,35 @@ export function InventoryListPage() {
       setLoadError('還原財產資料失敗，請稍後再試。')
     } finally {
       setDeletingItemId(null)
+    }
+  }
+
+  const handleDetachSubmit = async () => {
+    if (!detachTargetItem?.id) {
+      return
+    }
+    setDetachErrorMessage('')
+    setActionMessage('')
+    setDetachSubmitting(true)
+    try {
+      const response = await fetch(apiUrl(`/api/items/${detachTargetItem.id}/detach`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(detachFormData),
+      })
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null)
+        throw new Error(toApiErrorMessage(payload, '拆卸零件失敗'))
+      }
+      setDetachTargetItem(null)
+      setActionMessage('拆卸零件成功。')
+      setReloadKey((previous) => previous + 1)
+    } catch (error) {
+      setDetachErrorMessage(error instanceof Error ? error.message : '拆卸零件失敗')
+    } finally {
+      setDetachSubmitting(false)
     }
   }
 
@@ -679,9 +816,18 @@ export function InventoryListPage() {
                               <Link to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
                                 <Button size="sm" variant="secondary">編輯</Button>
                               </Link>
-                              <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
-                                刪除
-                              </Button>
+                              {item.is_parent_item ? (
+                                <Button size="sm" variant="secondary" onClick={() => openDetachDialog(item)}>
+                                  拆卸
+                                </Button>
+                              ) : null}
+                              {item.has_detached_children ? (
+                                <span className="text-xs text-amber-700">含子件不可刪除</span>
+                              ) : (
+                                <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
+                                  刪除
+                                </Button>
+                              )}
                             </div>
                           )}
                         </TableCell>
@@ -726,9 +872,18 @@ export function InventoryListPage() {
                           <Link className="flex-1" to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
                             <Button className="w-full" size="sm" variant="secondary">編輯</Button>
                           </Link>
-                          <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
-                            刪除
-                          </Button>
+                          {item.is_parent_item ? (
+                            <Button size="sm" variant="secondary" onClick={() => openDetachDialog(item)}>
+                              拆卸
+                            </Button>
+                          ) : null}
+                          {item.has_detached_children ? (
+                            <span className="flex items-center text-xs text-amber-700">含子件不可刪除</span>
+                          ) : (
+                            <Button size="sm" variant="destructive" onClick={() => setConfirmDeleteItem(item)}>
+                              刪除
+                            </Button>
+                          )}
                         </>
                       )}
                     </div>
@@ -776,6 +931,98 @@ export function InventoryListPage() {
           </>
         }
       />
+
+      <Dialog
+        open={Boolean(detachTargetItem)}
+        onClose={closeDetachDialog}
+        title="零件拆卸"
+        description={detachTargetItem ? `母件 KEY：${detachTargetItem.key || '--'}` : undefined}
+        actions={
+          <>
+            <Button type="button" variant="secondary" onClick={closeDetachDialog} disabled={detachSubmitting}>
+              取消
+            </Button>
+            <Button type="button" onClick={() => void handleDetachSubmit()} disabled={detachSubmitting}>
+              {detachSubmitting ? '拆卸中...' : '拆卸並建檔'}
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="detach-name-code">主分類</Label>
+            <Select
+              id="detach-name-code"
+              value={detachFormData.name_code}
+              onChange={(event) => {
+                const nextNameCode = event.target.value
+                const hasCurrentNameCode2 = assetCategoryOptions.some(
+                  (option) => option.name_code === nextNameCode && option.name_code2 === detachFormData.name_code2,
+                )
+                setDetachFormData((previous) => ({
+                  ...previous,
+                  name_code: nextNameCode,
+                  name_code2: hasCurrentNameCode2 ? previous.name_code2 : '',
+                }))
+              }}
+            >
+              <option value="">請選擇主分類</option>
+              {detachNameCodeOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="detach-name-code2">次分類</Label>
+            <Select
+              id="detach-name-code2"
+              value={detachFormData.name_code2}
+              onChange={(event) => {
+                setDetachFormData((previous) => ({
+                  ...previous,
+                  name_code2: event.target.value,
+                }))
+              }}
+              disabled={!detachFormData.name_code}
+            >
+              <option value="">{detachFormData.name_code ? '請選擇次分類' : '請先選擇主分類'}</option>
+              {detachNameCode2Options.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="detach-seq">零件序號</Label>
+            <Select
+              id="detach-seq"
+              value={detachFormData.seq}
+              onChange={(event) => {
+                setDetachFormData((previous) => ({
+                  ...previous,
+                  seq: event.target.value,
+                }))
+              }}
+            >
+              {Array.from({ length: 100 }, (_, index) => {
+                const value = String(index).padStart(2, '0')
+                return (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                )
+              })}
+            </Select>
+          </div>
+          <div className="rounded-md bg-[hsl(var(--card-soft))] px-3 py-2 text-sm">
+            預計子件 KEY：<span className="font-semibold">{detachKeyPreview}</span>
+          </div>
+          {detachErrorMessage ? <p className="m-0 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{detachErrorMessage}</p> : null}
+        </div>
+      </Dialog>
     </>
   )
 }

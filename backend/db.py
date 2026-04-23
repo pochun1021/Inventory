@@ -427,6 +427,82 @@ def _inventory_key(row: dict[str, Any], property_number: str) -> str:
     return f"item-{item_id}" if item_id > 0 else ""
 
 
+def _is_parent_item_key(key: Any) -> bool:
+    return _to_str(key).strip().endswith("-000000")
+
+
+def _parent_key_from_child_key(key: Any) -> str:
+    normalized = _to_str(key).strip()
+    if not normalized or _is_parent_item_key(normalized):
+        return ""
+    if "-" not in normalized:
+        return ""
+    prefix, suffix = normalized.rsplit("-", 1)
+    if len(suffix) != 6 or not suffix.isdigit():
+        return ""
+    return f"{prefix}-000000"
+
+
+def _build_detach_relationship_maps(rows: list[dict[str, Any]]) -> tuple[set[int], dict[int, int]]:
+    active_rows = [row for row in rows if _is_blank(row.get("deleted_at"))]
+    active_key_to_row = {
+        _to_str(row.get("key")).strip(): row
+        for row in active_rows
+        if _to_str(row.get("key")).strip()
+    }
+    parent_ids_with_children: set[int] = set()
+    child_parent_id_map: dict[int, int] = {}
+
+    for child_row in active_rows:
+        child_id = _to_int(child_row.get("id"))
+        if child_id <= 0:
+            continue
+        parent_key = _parent_key_from_child_key(child_row.get("key"))
+        if not parent_key:
+            continue
+        parent_row = active_key_to_row.get(parent_key)
+        if parent_row is None:
+            continue
+        parent_id = _to_int(parent_row.get("id"))
+        if parent_id <= 0 or parent_id == child_id:
+            continue
+        parent_ids_with_children.add(parent_id)
+        child_parent_id_map[child_id] = parent_id
+
+    return parent_ids_with_children, child_parent_id_map
+
+
+def _normalize_detach_code_segment(value: Any, field_name: str) -> str:
+    normalized = _normalize_name_code_value(value)
+    if not normalized:
+        raise ValueError(f"{field_name} is required")
+    if len(normalized) != 2:
+        raise ValueError(f"{field_name} must be a 2-character code")
+    if not normalized.isalnum():
+        raise ValueError(f"{field_name} must be alphanumeric")
+    return normalized
+
+
+def _normalize_detach_seq(value: Any) -> str:
+    raw = _to_str(value).strip()
+    if not raw:
+        raise ValueError("seq is required")
+    if not raw.isdigit():
+        raise ValueError("seq must be a 2-digit number")
+    number = int(raw)
+    if number < 0 or number > 99:
+        raise ValueError("seq must be between 00 and 99")
+    return f"{number:02d}"
+
+
+def _build_detach_child_key(parent_key: str, name_code: str, name_code2: str, seq: str) -> str:
+    normalized_parent_key = _to_str(parent_key).strip()
+    if not _is_parent_item_key(normalized_parent_key):
+        raise ValueError("target item is not a detachable parent")
+    prefix, _ = normalized_parent_key.rsplit("-", 1)
+    return f"{prefix}-{name_code}{name_code2}{seq}"
+
+
 def _to_inventory_create_row(new_id: int, item_data: dict[str, Any], property_number: str) -> dict[str, Any]:
     asset_type = _normalize_asset_type_input(item_data.get("asset_type"))
     n_property_sn = _to_str(item_data.get("n_property_sn")).strip()
@@ -494,11 +570,14 @@ def _to_inventory_api_row(
     row: dict[str, Any],
     *,
     donation_map: dict[int, dict[str, Any]] | None = None,
+    parent_ids_with_children: set[int] | None = None,
+    child_parent_id_map: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     item_id = _to_int(row.get("id"))
     donation_info = donation_map.get(item_id, {}) if donation_map else {}
     donated_at = _to_str(donation_info.get("donated_at"))
     donation_request_id = _to_int(donation_info.get("donation_request_id"))
+    normalized_key = _to_str(row.get("key")).strip()
     if not donated_at and _to_str(row.get("asset_status")) == "3":
         donated_at = _to_str(row.get("updated_at")) or _to_str(row.get("created_at"))
     return {
@@ -539,6 +618,9 @@ def _to_inventory_api_row(
         "deleted_by": _to_str(row.get("deleted_by")),
         "donated_at": donated_at,
         "donation_request_id": donation_request_id if donation_request_id > 0 else "",
+        "is_parent_item": _is_parent_item_key(normalized_key),
+        "has_detached_children": item_id in (parent_ids_with_children or set()),
+        "parent_item_id": (child_parent_id_map or {}).get(item_id, ""),
     }
 
 
@@ -1420,6 +1502,7 @@ def list_items(*, include_donated: bool = False, deleted_scope: str = "active") 
         donation_request_rows = _read_rows(wb["donation_requests"])
 
     donation_map = _donation_map(donation_rows, donation_request_rows)
+    parent_ids_with_children, child_parent_id_map = _build_detach_relationship_maps(rows)
     results = []
     for row in rows:
         is_deleted = not _is_blank(row.get("deleted_at"))
@@ -1430,7 +1513,14 @@ def list_items(*, include_donated: bool = False, deleted_scope: str = "active") 
         donation_info = donation_map.get(_to_int(row.get("id")))
         if not include_donated and _is_item_donated(row, donation_info=donation_info):
             continue
-        results.append(_to_inventory_api_row(row, donation_map=donation_map))
+        results.append(
+            _to_inventory_api_row(
+                row,
+                donation_map=donation_map,
+                parent_ids_with_children=parent_ids_with_children,
+                child_parent_id_map=child_parent_id_map,
+            )
+        )
     return sorted(results, key=lambda row: _to_int(row.get("id")), reverse=True)
 
 
@@ -1440,9 +1530,15 @@ def get_item_by_id(item_id: int) -> dict[str, Any] | None:
         donation_rows = _read_rows(wb["donation_items"])
         donation_request_rows = _read_rows(wb["donation_requests"])
     donation_map = _donation_map(donation_rows, donation_request_rows)
+    parent_ids_with_children, child_parent_id_map = _build_detach_relationship_maps(rows)
     for row in rows:
         if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
-            return _to_inventory_api_row(row, donation_map=donation_map)
+            return _to_inventory_api_row(
+                row,
+                donation_map=donation_map,
+                parent_ids_with_children=parent_ids_with_children,
+                child_parent_id_map=child_parent_id_map,
+            )
     return None
 
 
@@ -1467,6 +1563,89 @@ def create_item(item_data: dict[str, Any]) -> int:
         _write_rows(ws, SHEETS["inventory_items"], rows)
         wb.save(DB_PATH)
         return new_id
+
+
+def detach_item(parent_item_id: int, detach_data: dict[str, Any]) -> int:
+    with _locked_workbook() as wb:
+        inventory_ws = wb["inventory_items"]
+        movement_ws = wb["movement_ledger"]
+        inventory_rows = _read_rows(inventory_ws)
+        movement_rows = _read_rows(movement_ws)
+
+        parent_row = None
+        for row in inventory_rows:
+            if _to_int(row.get("id")) == parent_item_id and _is_blank(row.get("deleted_at")):
+                parent_row = row
+                break
+        if parent_row is None:
+            raise ValueError("parent item not found")
+
+        parent_key = _to_str(parent_row.get("key")).strip()
+        if not _is_parent_item_key(parent_key):
+            raise ValueError("target item is not a detachable parent")
+        if _to_str(parent_row.get("asset_status")).strip() != "0":
+            raise ValueError("parent item is unavailable")
+
+        name_code = _normalize_detach_code_segment(detach_data.get("name_code"), "name_code")
+        name_code2 = _normalize_detach_code_segment(detach_data.get("name_code2"), "name_code2")
+        name_code, name_code2 = _normalize_name_codes(name_code, name_code2)
+        seq = _normalize_detach_seq(detach_data.get("seq"))
+        child_key = _build_detach_child_key(parent_key, name_code, name_code2, seq)
+
+        for row in inventory_rows:
+            if _to_str(row.get("key")).strip() == child_key:
+                raise ValueError("detach key already exists")
+
+        next_id = _next_id(inventory_rows)
+        next_asset_status = _to_str(detach_data.get("asset_status")).strip() or "0"
+        next_condition_status = _to_str(detach_data.get("condition_status")).strip()
+        if not next_condition_status:
+            next_condition_status = _to_str(parent_row.get("condition_status")).strip() or "0"
+        def pick_parent_default(field_name: str) -> Any:
+            value = detach_data.get(field_name)
+            return parent_row.get(field_name) if value is None else value
+
+        payload = {
+            "asset_type": _to_str(parent_row.get("asset_type")).strip(),
+            "asset_status": next_asset_status,
+            "condition_status": next_condition_status,
+            "key": child_key,
+            "n_property_sn": "",
+            "property_sn": "",
+            "n_item_sn": "",
+            "item_sn": "",
+            "name": _to_str(pick_parent_default("name")),
+            "name_code": name_code,
+            "name_code2": name_code2,
+            "model": _to_str(pick_parent_default("model")),
+            "specification": _to_str(pick_parent_default("specification")),
+            "unit": _to_str(pick_parent_default("unit")),
+            "purchase_date": _to_str(pick_parent_default("purchase_date")),
+            "due_date": "",
+            "return_date": "",
+            "location": _to_str(pick_parent_default("location")),
+            "memo": _to_str(pick_parent_default("memo")),
+            "memo2": _to_str(pick_parent_default("memo2")),
+            "keeper": _to_str(pick_parent_default("keeper")),
+            "borrower": "",
+            "start_date": "",
+        }
+        new_row = _to_inventory_create_row(next_id, payload, "")
+        inventory_rows.append(new_row)
+        _append_movement_ledger_entry(
+            movement_rows,
+            item_id=next_id,
+            from_status="",
+            to_status=_to_str(new_row.get("asset_status")).strip(),
+            action="detach",
+            entity="inventory_item",
+            entity_id=parent_item_id,
+        )
+
+        _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
+        _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
+        wb.save(DB_PATH)
+        return next_id
 
 
 def create_items_bulk(items: list[dict[str, Any]]) -> int:
@@ -1589,9 +1768,12 @@ def delete_item(item_id: int) -> bool:
     with _locked_workbook() as wb:
         ws = wb["inventory_items"]
         rows = _read_rows(ws)
+        parent_ids_with_children, _ = _build_detach_relationship_maps(rows)
         deleted = False
         for row in rows:
             if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
+                if item_id in parent_ids_with_children:
+                    raise ValueError("cannot delete parent item with active detached children")
                 row["deleted_at"] = _now_str()
                 row["deleted_by"] = "system"
                 deleted = True
