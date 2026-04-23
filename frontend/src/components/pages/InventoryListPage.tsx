@@ -812,7 +812,7 @@ export function InventoryListPage() {
                               {deletingItemId === item.id ? '還原中...' : '還原'}
                             </Button>
                           ) : (
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                               <Link to="/inventory/edit/$itemId" params={{ itemId: String(item.id) }}>
                                 <Button size="sm" variant="secondary">編輯</Button>
                               </Link>

@@ -19,7 +19,7 @@ export function TableRow({ className, ...props }: React.ComponentProps<'tr'>) {
 }
 
 export function TableHead({ className, ...props }: React.ComponentProps<'th'>) {
-  return <th className={cn('h-10 px-3 text-left align-middle font-semibold text-[hsl(var(--muted-foreground))]', className)} {...props} />
+  return <th className={cn('h-10 px-3 text-left align-middle whitespace-nowrap font-semibold text-[hsl(var(--muted-foreground))]', className)} {...props} />
 }
 
 export function TableCell({ className, ...props }: React.ComponentProps<'td'>) {

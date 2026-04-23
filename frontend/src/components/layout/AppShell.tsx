@@ -253,7 +253,7 @@ export function AppShell() {
                   <Menu className="size-4" />
                 </button>
                 <div>
-                  <h1 className="m-0 text-lg font-semibold md:text-xl">{pageMeta.title}</h1>
+                  <h1 className="m-0 text-lg font-semibold whitespace-nowrap md:text-xl">{pageMeta.title}</h1>
                   <p className="m-0 text-xs text-[hsl(var(--muted-foreground))] md:text-sm">{pageMeta.description}</p>
                 </div>
               </div>
