@@ -87,6 +87,17 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
   - `file`：`.xlsx`
   - `asset_type`：`11` / `A1` / `A2`
 
+### AI 規格辨識
+
+- `GET /api/ai/spec-recognition/quota`
+  - 回傳 AI 功能是否啟用、provider/model 與 quota 狀態
+  - 未設定 `GEMINI_API_KEY` 時，`enabled=false` 並附帶 `message`
+- `POST /api/ai/spec-recognition`
+  - `multipart/form-data` 上傳欄位：`file`
+  - 支援 `image/jpeg`、`image/png`、`image/webp`，大小上限 5MB
+  - 成功回傳 `recognized_fields.name/model/specification`、`warnings`、`raw_text_excerpt`、`quota`
+  - 常見錯誤碼（`detail.code`）：`feature_disabled`、`invalid_image`、`ocr_failed`、`upstream_error`、`ai_parse_failed`
+
 ## 規則與資料行為
 
 - 領用/借用/捐贈為單件模式：`quantity` 必須是 `1`
@@ -146,3 +157,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `GOOGLE_SHEETS_SPREADSHEET_TITLE`
 - `GOOGLE_SHEETS_ISSUE_SHEET_NAME`
 - `GOOGLE_SHEETS_BORROW_SHEET_NAME`
+- `GEMINI_API_KEY`（啟用 AI 規格辨識）
+- `GEMINI_MODEL`（可選，預設 `gemini-2.0-flash`）
+- `TESSERACT_CMD`（可選，指定 tesseract 執行檔路徑）
+- `TESSERACT_LANG`（可選，預設 `eng`）

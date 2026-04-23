@@ -69,6 +69,7 @@ from db import (
 )
 from xlsx_import import import_inventory_items_from_xlsx_content
 from google_sheets import ensure_google_oauth, is_google_sheets_configured, sync_requests_to_google_sheets
+from ai_recognition import AIRecognitionError, get_quota_status, recognize_spec_from_image
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -443,6 +444,35 @@ class ImportResponse(BaseModel):
     created: int
     failed: int
     errors: list[ImportErrorDetail]
+
+
+class AiQuota(BaseModel):
+    status: str = "unknown"
+    limit: int | None = None
+    remaining: int | None = None
+    reset_at: str | None = None
+    source: str | None = None
+
+
+class AiRecognitionQuotaResponse(BaseModel):
+    enabled: bool
+    provider: str = ""
+    model: str = ""
+    quota: AiQuota = Field(default_factory=AiQuota)
+    message: str | None = None
+
+
+class AiRecognizedFields(BaseModel):
+    name: str = ""
+    model: str = ""
+    specification: str = ""
+
+
+class AiSpecRecognitionResponse(BaseModel):
+    recognized_fields: AiRecognizedFields = Field(default_factory=AiRecognizedFields)
+    raw_text_excerpt: str = ""
+    quota: AiQuota = Field(default_factory=AiQuota)
+    warnings: list[str] = Field(default_factory=list)
 
 
 def _parse_purchase_date(value: str) -> date:
@@ -2017,6 +2047,52 @@ async def import_inventory_items_from_xlsx(
         status="success" if result["failed"] == 0 else "partial_success",
     )
     return ImportResponse(**result)
+
+
+@app.get("/api/ai/spec-recognition/quota", response_model=AiRecognitionQuotaResponse)
+def get_ai_spec_recognition_quota_api():
+    payload = get_quota_status()
+    return AiRecognitionQuotaResponse(**payload)
+
+
+@app.post("/api/ai/spec-recognition", response_model=AiSpecRecognitionResponse)
+async def recognize_item_spec_api(file: UploadFile = File(...)):
+    try:
+        file_content = await file.read()
+        result = recognize_spec_from_image(
+            file_content=file_content,
+            content_type=file.content_type or "",
+            filename=file.filename or "",
+        )
+        log_inventory_action(
+            action="recognize_spec",
+            entity="inventory_item",
+            status="success",
+            detail={
+                "filename": file.filename or "",
+                "content_type": file.content_type or "",
+                "recognized_fields": [key for key, value in result.recognized_fields.items() if value.strip()],
+                "warning_count": len(result.warnings),
+            },
+        )
+        return AiSpecRecognitionResponse(
+            recognized_fields=AiRecognizedFields(**result.recognized_fields),
+            raw_text_excerpt=result.raw_text_excerpt,
+            quota=AiQuota(**result.quota),
+            warnings=result.warnings,
+        )
+    except AIRecognitionError as exc:
+        log_inventory_action(
+            action="recognize_spec",
+            entity="inventory_item",
+            status="failed",
+            detail={
+                "filename": file.filename or "",
+                "content_type": file.content_type or "",
+                "error_code": exc.code,
+            },
+        )
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
 
 
 @app.get("/{full_path:path}")

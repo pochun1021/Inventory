@@ -231,3 +231,37 @@ export type OperationLogEntry = {
   detail: Record<string, unknown>
   created_at: string
 }
+
+export type AiQuota = {
+  status: string
+  limit: number | null
+  remaining: number | null
+  reset_at: string | null
+  source: string | null
+}
+
+export type AiRecognitionQuotaResponse = {
+  enabled: boolean
+  provider: string
+  model: string
+  quota: AiQuota
+  message: string | null
+}
+
+export type AiRecognizedFields = {
+  name: string
+  model: string
+  specification: string
+}
+
+export type AiSpecRecognitionResponse = {
+  recognized_fields: AiRecognizedFields
+  raw_text_excerpt: string
+  quota: AiQuota
+  warnings: string[]
+}
+
+export type ApiErrorDetail = {
+  code?: string
+  message?: string
+}

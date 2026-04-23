@@ -7,9 +7,10 @@ import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
 import { fetchAssetCategoryOptions } from './assetCategoryLookup'
+import { fetchAiSpecRecognitionQuota, recognizeItemSpecFromImage } from './aiSpecRecognition'
 import { fetchAssetStatusOptions } from './assetStatusLookup'
 import { fetchConditionStatusOptions } from './conditionStatusLookup'
-import type { InventoryItem } from './types'
+import type { AiRecognitionQuotaResponse, InventoryItem } from './types'
 
 type InventoryFormPageProps = {
   itemId?: number
@@ -124,6 +125,15 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     Array<{ name_code: string; name_code2: string; asset_category_name: string; description: string }>
   >([])
   const [assetCategoryLoadError, setAssetCategoryLoadError] = useState('')
+  const [aiQuotaPayload, setAiQuotaPayload] = useState<AiRecognitionQuotaResponse | null>(null)
+  const [aiQuotaLoadError, setAiQuotaLoadError] = useState('')
+  const [aiFile, setAiFile] = useState<File | null>(null)
+  const [aiPending, setAiPending] = useState(false)
+  const [aiMessage, setAiMessage] = useState('')
+  const [aiWarnings, setAiWarnings] = useState<string[]>([])
+  const [aiRawTextExcerpt, setAiRawTextExcerpt] = useState('')
+  const [aiErrorMessage, setAiErrorMessage] = useState('')
+  const [recognizedSnapshot, setRecognizedSnapshot] = useState<Pick<InventoryFormData, 'name' | 'model' | 'specification'> | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -163,6 +173,29 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     }
 
     void loadLookupOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadAiQuota = async () => {
+      try {
+        const payload = await fetchAiSpecRecognitionQuota()
+        if (cancelled) {
+          return
+        }
+        setAiQuotaPayload(payload)
+        setAiQuotaLoadError('')
+      } catch (error) {
+        if (!cancelled) {
+          setAiQuotaPayload(null)
+          setAiQuotaLoadError(error instanceof Error ? error.message : '無法讀取 AI 功能狀態，請稍後再試。')
+        }
+      }
+    }
+    void loadAiQuota()
     return () => {
       cancelled = true
     }
@@ -277,6 +310,10 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   const hasNameCodeOption = nameCodeOptions.some((option) => option.value === formData.name_code)
   const hasNameCode2Option = nameCode2Options.some((option) => option.value === formData.name_code2)
   const hasConditionStatusOption = conditionStatusOptions.some((option) => option.value === formData.condition_status)
+  const aiEnabled = Boolean(aiQuotaPayload?.enabled)
+  const aiQuotaRemainingLabel =
+    aiQuotaPayload?.quota.remaining === null || aiQuotaPayload?.quota.remaining === undefined ? '未知' : String(aiQuotaPayload.quota.remaining)
+  const canRunAiRecognition = aiEnabled && aiFile !== null && !aiPending
 
   const handleNameCodeChange = (value: string) => {
     setFormData((previousData) => {
@@ -292,6 +329,77 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
         name_code2: hasNextNameCode2 ? previousData.name_code2 : '',
       }
     })
+  }
+
+  const handleAiFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] || null
+    setAiFile(file)
+    setAiErrorMessage('')
+    setAiMessage('')
+    setAiWarnings([])
+    setAiRawTextExcerpt('')
+  }
+
+  const handleRecognizeSpec = async () => {
+    if (!canRunAiRecognition || !aiFile) {
+      return
+    }
+    setAiPending(true)
+    setAiErrorMessage('')
+    setAiMessage('')
+    setAiWarnings([])
+    setAiRawTextExcerpt('')
+
+    try {
+      const response = await recognizeItemSpecFromImage(aiFile)
+      setRecognizedSnapshot({
+        name: formData.name,
+        model: formData.model,
+        specification: formData.specification,
+      })
+      setFormData((previousData) => ({
+        ...previousData,
+        name: response.recognized_fields.name,
+        model: response.recognized_fields.model,
+        specification: response.recognized_fields.specification,
+      }))
+      setAiWarnings(response.warnings)
+      setAiRawTextExcerpt(response.raw_text_excerpt)
+      setAiMessage('辨識完成，已覆寫品名、型號與規格欄位。')
+      setAiQuotaPayload((previousPayload) => {
+        if (!previousPayload) {
+          return {
+            enabled: true,
+            provider: '',
+            model: '',
+            quota: response.quota,
+            message: null,
+          }
+        }
+        return {
+          ...previousPayload,
+          quota: response.quota,
+        }
+      })
+    } catch (error) {
+      setAiErrorMessage(error instanceof Error ? error.message : 'AI 辨識失敗，請稍後再試。')
+    } finally {
+      setAiPending(false)
+    }
+  }
+
+  const handleRestoreRecognizedFields = () => {
+    if (!recognizedSnapshot) {
+      return
+    }
+    setFormData((previousData) => ({
+      ...previousData,
+      name: recognizedSnapshot.name,
+      model: recognizedSnapshot.model,
+      specification: recognizedSnapshot.specification,
+    }))
+    setRecognizedSnapshot(null)
+    setAiMessage('已還原辨識前的欄位內容。')
   }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -430,17 +538,71 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
           <SectionCard>
             <h2 className="m-0 text-base font-semibold">基本資料</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <div className="grid gap-1.5">
-                <Label>品名</Label>
-                <Input value={formData.name} onChange={(event) => handleInputChange('name', event.target.value)} />
+              <div className="grid gap-2 rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] p-3 md:col-span-2 xl:col-span-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="m-0 text-sm font-semibold">AI/OCR 規格辨識</p>
+                  <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+                    {`Provider: ${aiQuotaPayload?.provider || '--'} ｜ Model: ${aiQuotaPayload?.model || '--'} ｜ Remaining: ${aiQuotaRemainingLabel}`}
+                  </p>
+                </div>
+                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
+                  <div className="grid gap-1">
+                    <Label htmlFor="ai-spec-image-file">辨識圖片</Label>
+                    <Input
+                      id="ai-spec-image-file"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handleAiFileChange}
+                      disabled={!aiEnabled || aiPending}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="md:self-end"
+                    disabled={!canRunAiRecognition}
+                    onClick={() => void handleRecognizeSpec()}
+                  >
+                    {aiPending ? '辨識中...' : '執行 AI 辨識'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="md:self-end"
+                    disabled={!recognizedSnapshot || aiPending}
+                    onClick={handleRestoreRecognizedFields}
+                  >
+                    還原辨識前內容
+                  </Button>
+                </div>
+                {aiQuotaLoadError ? <p className="m-0 text-xs text-red-700">{aiQuotaLoadError}</p> : null}
+                {!aiEnabled && !aiQuotaLoadError ? (
+                  <p className="m-0 text-xs text-amber-700">{aiQuotaPayload?.message || 'AI 功能尚未啟用，請改用手動填寫。'}</p>
+                ) : null}
+                {aiMessage ? <p className="m-0 text-xs text-emerald-700">{aiMessage}</p> : null}
+                {aiErrorMessage ? <p className="m-0 text-xs text-red-700">{aiErrorMessage}</p> : null}
+                {aiWarnings.length > 0 ? (
+                  <p className="m-0 text-xs text-amber-700">{`提醒：${aiWarnings.join('；')}`}</p>
+                ) : null}
+                {aiRawTextExcerpt ? (
+                  <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">{`OCR 摘要：${aiRawTextExcerpt}`}</p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
-                <Label>型號</Label>
-                <Input value={formData.model} onChange={(event) => handleInputChange('model', event.target.value)} />
+                <Label htmlFor="inventory-name">品名</Label>
+                <Input id="inventory-name" value={formData.name} onChange={(event) => handleInputChange('name', event.target.value)} />
               </div>
               <div className="grid gap-1.5">
-                <Label>規格</Label>
-                <Input value={formData.specification} onChange={(event) => handleInputChange('specification', event.target.value)} />
+                <Label htmlFor="inventory-model">型號</Label>
+                <Input id="inventory-model" value={formData.model} onChange={(event) => handleInputChange('model', event.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="inventory-specification">規格</Label>
+                <Input
+                  id="inventory-specification"
+                  value={formData.specification}
+                  onChange={(event) => handleInputChange('specification', event.target.value)}
+                />
               </div>
               <div className="grid gap-1.5">
                 <Label>單位</Label>
