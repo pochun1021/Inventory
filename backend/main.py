@@ -91,14 +91,14 @@ class InventoryItemCreate(BaseModel):
     asset_type: str = ""
     asset_status: str = ""
     condition_status: str = ""
-    key: str = ""
-    n_property_sn: str = ""
-    property_sn: str = ""
-    n_item_sn: str = ""
-    item_sn: str = ""
+    key: str = Field(default="", description="系統統一識別碼；讀取時依序採用 key、n_property_sn、property_sn、n_item_sn、item_sn。")
+    n_property_sn: str = Field(default="", description="財產序號（相容舊資料欄位，property 類）。")
+    property_sn: str = Field(default="", description="財產條碼（相容舊資料欄位，property 類）。")
+    n_item_sn: str = Field(default="", description="物品序號（相容舊資料欄位，item 類）。")
+    item_sn: str = Field(default="", description="物品條碼（相容舊資料欄位，item 類）。")
     name: str = ""
-    name_code: str = ""
-    name_code2: str = ""
+    name_code: str = Field(default="", description="主分類代碼（顯示名稱由 asset_category_name 對照）。")
+    name_code2: str = Field(default="", description="次分類代碼（需搭配 name_code；顯示名稱由對照表決定）。")
     model: str = ""
     specification: str = ""
     unit: str = ""
@@ -253,10 +253,10 @@ class BorrowPickupRequest(BaseModel):
 
 class BorrowPickupCandidateItem(BaseModel):
     id: int
-    n_property_sn: str = ""
-    property_sn: str = ""
-    n_item_sn: str = ""
-    item_sn: str = ""
+    n_property_sn: str = Field(default="", description="財產序號（相容舊資料欄位，property 類）。")
+    property_sn: str = Field(default="", description="財產條碼（相容舊資料欄位，property 類）。")
+    n_item_sn: str = Field(default="", description="物品序號（相容舊資料欄位，item 類）。")
+    item_sn: str = Field(default="", description="物品條碼（相容舊資料欄位，item 類）。")
 
 
 class BorrowPickupCandidateLine(BaseModel):
@@ -595,8 +595,8 @@ def _sort_records[T](
     return sorted(rows, key=sort_key_map[resolved_sort_by], reverse=sort_dir == "desc")
 
 
-def _serial_sort_key(item: InventoryItem) -> str:
-    return (item.n_property_sn or item.property_sn or item.n_item_sn or item.item_sn or "").strip().lower()
+def _inventory_number_sort_key(item: InventoryItem) -> str:
+    return (item.key or item.n_property_sn or item.property_sn or item.n_item_sn or item.item_sn or "").strip().lower()
 
 
 def _request_items_sort_key(items: list[Any]) -> tuple[str, int, int]:
@@ -660,12 +660,21 @@ def row_to_item(row) -> InventoryItem:
         count = 1
     if count <= 0:
         count = 1
+    row_key = _coerce_str(row.get("key")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("n_property_sn")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("property_sn")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("n_item_sn")).strip()
+    if not row_key:
+        row_key = _coerce_str(row.get("item_sn")).strip()
     return InventoryItem(
         id=row["id"],
         asset_type=_coerce_str(row.get("asset_type")),
         asset_status=_coerce_str(row.get("asset_status")),
         condition_status=_coerce_str(row.get("condition_status")),
-        key=_coerce_str(row.get("key")),
+        key=row_key,
         n_property_sn=_coerce_str(row.get("n_property_sn")),
         property_sn=_coerce_str(row.get("property_sn")),
         n_item_sn=_coerce_str(row.get("n_item_sn")),
@@ -1101,6 +1110,7 @@ def get_inventory_items(
 
         if normalized_keyword:
             search_fields = [
+                row.key,
                 row.n_property_sn,
                 row.property_sn,
                 row.n_item_sn,
@@ -1123,7 +1133,8 @@ def get_inventory_items(
         sort_key_map={
             "id": lambda row: row.id,
             "asset_type": lambda row: (_coerce_str(row.asset_type).lower(), row.id),
-            "serial": lambda row: (_serial_sort_key(row), row.id),
+            "key": lambda row: (_inventory_number_sort_key(row), row.id),
+            "serial": lambda row: (_inventory_number_sort_key(row), row.id),
             "name": lambda row: (_coerce_str(row.name).lower(), _coerce_str(row.model).lower(), row.id),
             "specification": lambda row: (_coerce_str(row.specification).lower(), row.id),
             "location": lambda row: (_coerce_str(row.location).lower(), row.id),

@@ -39,7 +39,7 @@ type ScanBuffer = {
   lastTs: number
 }
 
-type InventorySortKey = 'id' | 'asset_type' | 'serial' | 'name' | 'specification' | 'location' | 'keeper' | 'asset_status'
+type InventorySortKey = 'id' | 'asset_type' | 'key' | 'serial' | 'name' | 'specification' | 'location' | 'keeper' | 'asset_status'
 type SortDirection = 'asc' | 'desc'
 type DeletedScope = 'active' | 'deleted'
 type DetachFormData = {
@@ -74,7 +74,7 @@ function parseSortDirection(value: string | null, fallback: SortDirection): Sort
 }
 
 function parseInventorySortKey(value: string | null, fallback: InventorySortKey): InventorySortKey {
-  const allowed: InventorySortKey[] = ['id', 'asset_type', 'serial', 'name', 'specification', 'location', 'keeper', 'asset_status']
+  const allowed: InventorySortKey[] = ['id', 'asset_type', 'key', 'serial', 'name', 'specification', 'location', 'keeper', 'asset_status']
   return value && allowed.includes(value as InventorySortKey) ? (value as InventorySortKey) : fallback
 }
 
@@ -379,14 +379,18 @@ export function InventoryListPage() {
     return ASSET_TYPE_LABEL_MAP[assetType] ?? assetType
   }
 
-  const getPrimarySerial = (item: InventoryItem) => {
+  const getLegacySerial = (item: InventoryItem) => {
     return item.n_property_sn || item.property_sn || item.n_item_sn || item.item_sn || ''
+  }
+
+  const getInventoryNumber = (item: InventoryItem) => {
+    return item.key || getLegacySerial(item)
   }
 
   const sortableHeaders: Array<{ key: InventorySortKey; label: string }> = [
     { key: 'id', label: '#' },
     { key: 'asset_type', label: '資產類型' },
-    { key: 'serial', label: '財產序號' },
+    { key: 'key', label: '財產編號' },
     { key: 'name', label: '品名' },
     { key: 'specification', label: '型號' },
     { key: 'location', label: '放置地點' },
@@ -405,7 +409,7 @@ export function InventoryListPage() {
   }
 
   const confirmDeleteLabel =
-    confirmDeleteItem ? confirmDeleteItem.name || getPrimarySerial(confirmDeleteItem) || String(confirmDeleteItem.id) : ''
+    confirmDeleteItem ? confirmDeleteItem.name || getInventoryNumber(confirmDeleteItem) || String(confirmDeleteItem.id) : ''
 
   const detachNameCodeOptions = useMemo(() => {
     const labelMap = new Map<string, string>()
@@ -582,7 +586,7 @@ export function InventoryListPage() {
       return null
     }
     const count = items.filter((item) => {
-      const serial = getPrimarySerial(item).trim()
+      const serial = getLegacySerial(item).trim()
       return serial.length === 0 || CHINESE_CHARACTER_REGEX.test(serial)
     }).length
     return count
@@ -790,7 +794,7 @@ export function InventoryListPage() {
                           )}
                         </TableCell>
                         <TableCell>{toAssetTypeLabel(item.asset_type)}</TableCell>
-                        <TableCell>{getPrimarySerial(item) || '--'}</TableCell>
+                        <TableCell>{getInventoryNumber(item) || '--'}</TableCell>
                         <TableCell>
                           <div className="font-semibold">{item.name || '--'}</div>
                           <div className="text-xs text-[hsl(var(--muted-foreground))]">{item.model || '--'}</div>
@@ -850,7 +854,7 @@ export function InventoryListPage() {
                       <p className="m-0 text-sm font-semibold">{item.name || '--'}</p>
                       <span className="text-xs text-[hsl(var(--muted-foreground))]">#{item.id}</span>
                     </div>
-                    <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{getPrimarySerial(item) || '--'}</p>
+                    <p className="mt-1 mb-0 text-xs text-[hsl(var(--muted-foreground))]">{getInventoryNumber(item) || '--'}</p>
                     <p className="mt-2 mb-0 text-sm">類型：{toAssetTypeLabel(item.asset_type)}</p>
                     <p className="mt-1 mb-0 text-sm">地點：{item.location || '--'}</p>
                     <p className="mt-1 mb-0 text-sm">狀態：{toAssetStatusLabel(item.asset_status, assetStatusLabelMap)}</p>

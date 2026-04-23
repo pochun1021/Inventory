@@ -316,7 +316,7 @@ INVENTORY_ITEM_SCHEMA_DESCRIPTION_BY_FIELD: dict[str, str] = {
     "asset_status": "資產狀態",
     "condition_status": "物料狀況",
     "key": "資產編號",
-    "n_property_sn": "財產序號",
+    "n_property_sn": "財產序號（相容欄位）",
     "property_sn": "財產條碼",
     "n_item_sn": "物品序號",
     "item_sn": "物品條碼",

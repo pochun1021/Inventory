@@ -96,6 +96,26 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - API 會驗證 item 可用性，避免重複占用
 - 刪除採軟刪除，超過 6 個月自動清除
 - `GET /api/items` 可用 `deleted_scope=active|deleted` 篩選是否查詢已軟刪除資料（預設 `active`）
+- `GET /api/items` 的 `keyword` 會同時比對 `key` 與四個相容序號欄位（`n_property_sn`、`property_sn`、`n_item_sn`、`item_sn`）
+
+## Key 與序號欄位整合
+
+- `property`（財產）欄位：`n_property_sn`、`property_sn`
+- `item`（物品）欄位：`n_item_sn`、`item_sn`
+- 以上四個欄位可由舊資料沿用，屬相容欄位
+- 系統統一識別欄位為 `key`，讀取時優先順序為：
+  - `key`
+  - `n_property_sn`
+  - `property_sn`
+  - `n_item_sn`
+  - `item_sn`
+
+## POS 複刻指南第 6 點對照（6.1~6.4）
+
+- `6.1 Key 格式規範`：本 backend 接受 POS 既有 key 格式（含母件 `-000000` 與子件拆卸 key）；明細規格以整體系統文件為準。
+- `6.2 資產型態判定`：POS 規格提到可由 key 判定 PROPERTY/ITEM/OTHER；本 backend 目前仍保留既有 `asset_type` 欄位流程，不在此 README 宣告為強制切換規則。
+- `6.3 translateForeignKeys`：此為前端顯示層翻譯行為；backend 提供 lookup 與分類資料來源，不在 API 回傳中直接覆寫代碼值。
+- `6.4 name_code/name_code2 連動`：連動屬前端表單行為；backend 端維持代碼欄位，並以 `asset_category_name` 對照資料做合法性驗證。
 
 ## Excel 欄位需求
 
@@ -112,6 +132,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `保管人（單位）`
 
 `類別` 由 `asset_type` 決定，不讀取 Excel 欄位。
+`財產編號` 會寫入 `key`（財產編號）並同步寫入 `n_property_sn`（相容欄位）。
 
 ## Google Sheets 同步（選配）
 

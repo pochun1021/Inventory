@@ -62,9 +62,11 @@ def import_inventory_items_from_xlsx_content(
 
         total += 1
         try:
+            inventory_number = str(row_data.get("財產編號") or "").strip()
             payload = {
                 "asset_type": selected_asset_type,
-                "n_property_sn": str(row_data.get("財產編號") or "").strip(),
+                "key": inventory_number,
+                "n_property_sn": inventory_number,
                 "name": str(row_data.get("品名") or "").strip(),
                 "model": str(row_data.get("型號") or "").strip(),
                 "specification": str(row_data.get("規格(大小/容量)") or "").strip(),
