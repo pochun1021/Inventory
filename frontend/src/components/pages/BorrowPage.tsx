@@ -329,6 +329,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     maxDueDate.setDate(maxDueDate.getDate() + MAX_BORROW_RESERVATION_DAYS)
     return formatIsoDate(maxDueDate)
   }, [borrowDate])
+  const todayIsoDate = useMemo(() => formatIsoDate(new Date()), [])
 
   const refreshCurrentRequest = async () => {
     if (!requestId) {
@@ -751,11 +752,25 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </div>
           <div className="grid gap-1.5">
             <Label>領用日</Label>
-            <DatePicker value={borrowDate} onChange={setBorrowDate} required disabled={!canEditReservation || submitting} />
+            <DatePicker
+              value={borrowDate}
+              onChange={setBorrowDate}
+              required
+              min={todayIsoDate}
+              max={dueDate || undefined}
+              disabled={!canEditReservation || submitting}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label>預計歸還</Label>
-            <DatePicker value={dueDate} onChange={setDueDate} required min={borrowDate || undefined} max={dueDateMax} disabled={!canEditReservation || submitting} />
+            <DatePicker
+              value={dueDate}
+              onChange={setDueDate}
+              required
+              min={borrowDate || todayIsoDate}
+              max={dueDateMax}
+              disabled={!canEditReservation || submitting}
+            />
           </div>
           <div className="grid gap-1.5">
             <Label>狀態</Label>
