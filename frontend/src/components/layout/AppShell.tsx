@@ -1,6 +1,6 @@
 import { type ReactNode, useMemo, useState } from 'react'
 import { Link, Outlet, useLocation } from '@tanstack/react-router'
-import { Boxes, ChevronDown, ClipboardList, FilePlus2, HandCoins, Handshake, LayoutDashboard, Logs, Menu, Settings2, Upload, X } from 'lucide-react'
+import { Boxes, ChevronDown, ClipboardList, FilePlus2, HandCoins, Handshake, KeyRound, LayoutDashboard, Logs, Menu, Settings2, Upload, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 type NavigationLink = {
@@ -76,7 +76,10 @@ const NAVIGATION_SECTIONS: NavigationSection[] = [
   },
   {
     title: '系統設定',
-    links: [{ to: '/features/master-data', label: '代碼設定', icon: <Settings2 className="size-4" />, exact: true }],
+    links: [
+      { to: '/features/master-data', label: '代碼設定', icon: <Settings2 className="size-4" />, exact: true },
+      { to: '/features/ai-settings', label: 'AI 設定', icon: <KeyRound className="size-4" />, exact: true },
+    ],
   },
 ]
 
@@ -133,6 +136,9 @@ function resolvePageMeta(pathname: string): PageMeta {
   }
   if (pathname === '/features/master-data') {
     return { title: '代碼設定', description: '維護資產狀態與分類代碼設定' }
+  }
+  if (pathname === '/features/ai-settings') {
+    return { title: 'AI 設定', description: '管理 Gemini token 綁定與啟用狀態' }
   }
 
   return { title: '頁面', description: '系統頁面' }

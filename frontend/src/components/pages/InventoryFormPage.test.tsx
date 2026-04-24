@@ -53,7 +53,7 @@ describe('InventoryFormPage AI recognition', () => {
           provider: 'gemini',
           model: 'gemini-2.0-flash',
           quota: { status: 'unknown' },
-          message: 'Gemini API key not configured',
+          message: 'Gemini token not configured',
         })
       }
       throw new Error(`Unhandled URL: ${url}`)
@@ -61,7 +61,7 @@ describe('InventoryFormPage AI recognition', () => {
 
     render(<InventoryFormPage />)
 
-    await screen.findByText('Gemini API key not configured')
+    await screen.findByText('Gemini token not configured')
 
     const runButton = screen.getByRole('button', { name: '執行 AI 辨識' })
     const fileInput = screen.getByLabelText('辨識圖片')

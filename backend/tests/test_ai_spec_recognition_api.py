@@ -66,13 +66,13 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
                 'provider': 'gemini',
                 'model': 'gemini-2.0-flash',
                 'quota': {'status': 'unknown'},
-                'message': 'Gemini API key not configured',
+                'message': 'Gemini token not configured',
             },
         ):
             response = app_main.get_ai_spec_recognition_quota_api()
 
         self.assertFalse(response.enabled)
-        self.assertEqual(response.message, 'Gemini API key not configured')
+        self.assertEqual(response.message, 'Gemini token not configured')
 
     def test_recognize_spec_success_response(self) -> None:
         mock_result = SimpleNamespace(

@@ -109,6 +109,11 @@ SHEETS: dict[str, list[str]] = {
         "operator",
         "created_at",
     ],
+    "system_settings": [
+        "key",
+        "value",
+        "updated_at",
+    ],
     "issue_requests": [
         "id",
         "requester",
@@ -247,6 +252,7 @@ STRING_FIELDS: dict[str, list[str]] = {
     "inventory_items_schema": ["field", "description"],
     "transaction_log": ["timestamp", "key_value", "log_action", "log_content", "user_email", "mode"],
     "movement_ledger": ["from_status", "to_status", "action", "entity", "operator", "created_at"],
+    "system_settings": ["key", "value", "updated_at"],
 }
 
 REMOVED_SHEETS = {
@@ -347,6 +353,8 @@ INVENTORY_ITEM_SCHEMA_DESCRIPTION_BY_FIELD: dict[str, str] = {
     "deleted_at": "刪除時間",
     "deleted_by": "刪除人員",
 }
+GEMINI_API_TOKEN_SETTING_KEY = "gemini_api_token"
+GEMINI_MODEL_SETTING_KEY = "gemini_model"
 ASSET_TYPE_TO_KIND = {value: key for key, value in KIND_TO_ASSET_TYPE.items()}
 VALID_NAME_CODE_PAIRS: set[tuple[str, str]] = set()
 ASSET_CATEGORY_MAPPING_LOADED = False
@@ -876,6 +884,102 @@ def init_db() -> None:
         if _ensure_workbook(wb):
             wb.save(DB_PATH)
         _refresh_valid_name_code_pairs(wb)
+
+
+def _normalize_system_setting_key(value: Any) -> str:
+    return _to_str(value).strip()
+
+
+def _normalize_system_setting_value(value: Any) -> str:
+    return _to_str(value).strip()
+
+
+def get_system_setting(key: str) -> dict[str, Any] | None:
+    normalized_key = _normalize_system_setting_key(key)
+    if not normalized_key:
+        return None
+
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["system_settings"])
+    for row in rows:
+        row_key = _normalize_system_setting_key(row.get("key"))
+        if row_key != normalized_key:
+            continue
+        return {
+            "key": row_key,
+            "value": _normalize_system_setting_value(row.get("value")),
+            "updated_at": _to_str(row.get("updated_at")).strip(),
+        }
+    return None
+
+
+def upsert_system_setting(key: str, value: str) -> dict[str, Any]:
+    normalized_key = _normalize_system_setting_key(key)
+    normalized_value = _normalize_system_setting_value(value)
+    if not normalized_key:
+        raise ValueError("system setting key is required")
+    if not normalized_value:
+        raise ValueError("system setting value is required")
+
+    updated_at = _now_str()
+    with _locked_workbook() as wb:
+        ws = wb["system_settings"]
+        rows = _read_rows(ws)
+        target_row: dict[str, Any] | None = None
+        for row in rows:
+            if _normalize_system_setting_key(row.get("key")) == normalized_key:
+                target_row = row
+                break
+        if target_row is None:
+            rows.append(
+                {
+                    "key": normalized_key,
+                    "value": normalized_value,
+                    "updated_at": updated_at,
+                }
+            )
+        else:
+            target_row["value"] = normalized_value
+            target_row["updated_at"] = updated_at
+        _write_rows(ws, SHEETS["system_settings"], rows)
+        wb.save(DB_PATH)
+    return {"key": normalized_key, "value": normalized_value, "updated_at": updated_at}
+
+
+def delete_system_setting(key: str) -> bool:
+    normalized_key = _normalize_system_setting_key(key)
+    if not normalized_key:
+        raise ValueError("system setting key is required")
+
+    with _locked_workbook() as wb:
+        ws = wb["system_settings"]
+        rows = _read_rows(ws)
+        remaining_rows = [row for row in rows if _normalize_system_setting_key(row.get("key")) != normalized_key]
+        deleted = len(remaining_rows) != len(rows)
+        if deleted:
+            _write_rows(ws, SHEETS["system_settings"], remaining_rows)
+            wb.save(DB_PATH)
+    return deleted
+
+
+def get_gemini_api_token_setting() -> dict[str, Any] | None:
+    return get_system_setting(GEMINI_API_TOKEN_SETTING_KEY)
+
+
+def set_gemini_api_token(token: str) -> dict[str, Any]:
+    return upsert_system_setting(GEMINI_API_TOKEN_SETTING_KEY, token)
+
+
+def delete_gemini_api_token() -> bool:
+    return delete_system_setting(GEMINI_API_TOKEN_SETTING_KEY)
+
+
+def get_gemini_model_setting() -> dict[str, Any] | None:
+    return get_system_setting(GEMINI_MODEL_SETTING_KEY)
+
+
+def set_gemini_model(model: str) -> dict[str, Any]:
+    return upsert_system_setting(GEMINI_MODEL_SETTING_KEY, model)
 
 
 def _normalize_asset_status_code(value: Any) -> str:

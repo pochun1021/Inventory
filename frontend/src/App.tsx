@@ -1,5 +1,6 @@
 import { RouterProvider, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { AppShell } from './components/layout/AppShell'
+import { AiSettingsPage } from './components/pages/AiSettingsPage'
 import { BorrowListPage } from './components/pages/BorrowListPage'
 import { BorrowPage } from './components/pages/BorrowPage'
 import { DashboardPage } from './components/pages/DashboardPage'
@@ -182,6 +183,12 @@ const masterDataRoute = createRoute({
   component: MasterDataPage,
 })
 
+const aiSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/features/ai-settings',
+  component: AiSettingsPage,
+})
+
 const routeTree = rootRoute.addChildren([
   dashboardRoute,
   inventoryRoute,
@@ -199,6 +206,7 @@ const routeTree = rootRoute.addChildren([
   uploadRoute,
   logsRoute,
   masterDataRoute,
+  aiSettingsRoute,
 ])
 
 const router = createRouter({ routeTree, defaultPreload: 'intent' })

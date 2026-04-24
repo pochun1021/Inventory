@@ -261,6 +261,20 @@ export type AiSpecRecognitionResponse = {
   warnings: string[]
 }
 
+export type GeminiTokenSettingsResponse = {
+  bound: boolean
+  masked_token: string | null
+  provider: string
+  model: string
+  available_models: string[]
+  updated_at: string | null
+}
+
+export type GeminiTokenUpsertPayload = {
+  token: string
+  model?: string
+}
+
 export type ApiErrorDetail = {
   code?: string
   message?: string

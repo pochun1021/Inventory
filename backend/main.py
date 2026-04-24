@@ -31,6 +31,8 @@ from db import (
     get_issue_request,
     get_borrow_request,
     get_donation_request,
+    get_gemini_api_token_setting,
+    get_gemini_model_setting,
     get_dashboard_snapshot,
     init_db,
     list_asset_categories,
@@ -56,6 +58,8 @@ from db import (
     pickup_borrow_request,
     purge_soft_deleted_items,
     restore_item,
+    set_gemini_api_token,
+    set_gemini_model,
     resolve_borrow_pickup_scan,
     return_borrow_request,
     update_asset_status_code,
@@ -66,10 +70,18 @@ from db import (
     update_borrow_request,
     update_donation_request,
     validate_item_ids_available,
+    delete_gemini_api_token,
 )
 from xlsx_import import import_inventory_items_from_xlsx_content
 from google_sheets import ensure_google_oauth, is_google_sheets_configured, sync_requests_to_google_sheets
-from ai_recognition import AIRecognitionError, get_quota_status, recognize_spec_from_image
+from ai_recognition import (
+    AIRecognitionError,
+    get_quota_status,
+    get_supported_models,
+    is_supported_model,
+    recognize_spec_from_image,
+    validate_gemini_token,
+)
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -462,6 +474,20 @@ class AiRecognitionQuotaResponse(BaseModel):
     message: str | None = None
 
 
+class GeminiTokenSettingsResponse(BaseModel):
+    bound: bool
+    masked_token: str | None = None
+    provider: str = "gemini"
+    model: str = ""
+    available_models: list[str] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class GeminiTokenUpsertRequest(BaseModel):
+    token: str = ""
+    model: str | None = None
+
+
 class AiRecognizedFields(BaseModel):
     name: str = ""
     model: str = ""
@@ -583,6 +609,31 @@ def _coerce_str(value) -> str:
 
 def _contains_cjk(value: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+
+def _mask_token(raw_token: str) -> str:
+    normalized = (raw_token or "").strip()
+    if len(normalized) <= 8:
+        return "*" * len(normalized)
+    return f"{normalized[:4]}{'*' * (len(normalized) - 8)}{normalized[-4:]}"
+
+
+def _build_gemini_token_settings_response() -> GeminiTokenSettingsResponse:
+    token_setting = get_gemini_api_token_setting()
+    model_setting = get_gemini_model_setting()
+    token = _coerce_str(token_setting.get("value")) if token_setting else ""
+    normalized = token.strip()
+    quota_status = get_quota_status()
+    token_updated_at = _coerce_str(token_setting.get("updated_at")) if token_setting else ""
+    model_updated_at = _coerce_str(model_setting.get("updated_at")) if model_setting else ""
+    updated_at = max(token_updated_at, model_updated_at) or None
+    return GeminiTokenSettingsResponse(
+        bound=bool(normalized),
+        masked_token=_mask_token(normalized) if normalized else None,
+        model=_coerce_str(quota_status.get("model")),
+        available_models=get_supported_models(),
+        updated_at=updated_at,
+    )
 
 
 def _normalize_pagination(page: int, page_size: int) -> tuple[int, int]:
@@ -2047,6 +2098,56 @@ async def import_inventory_items_from_xlsx(
         status="success" if result["failed"] == 0 else "partial_success",
     )
     return ImportResponse(**result)
+
+
+@app.get("/api/settings/ai/gemini-token", response_model=GeminiTokenSettingsResponse)
+def get_gemini_token_settings_api():
+    return _build_gemini_token_settings_response()
+
+
+@app.put("/api/settings/ai/gemini-token", response_model=GeminiTokenSettingsResponse)
+def upsert_gemini_token_settings_api(payload: GeminiTokenUpsertRequest):
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail={"code": "invalid_token", "message": "Gemini token 不可為空。"})
+    selected_model = (payload.model or "").strip()
+    if not selected_model:
+        selected_model = _coerce_str(get_quota_status().get("model")).strip()
+    if not selected_model:
+        selected_model = get_supported_models()[0]
+    if not is_supported_model(selected_model):
+        raise HTTPException(status_code=400, detail={"code": "invalid_model", "message": "Gemini model 不在可用清單。"})
+    try:
+        validate_gemini_token(token, model=selected_model)
+        set_gemini_api_token(token)
+        set_gemini_model(selected_model)
+        log_inventory_action(
+            action="bind",
+            entity="system_setting",
+            status="success",
+            detail={"target": "gemini_api_token", "model": selected_model},
+        )
+        return _build_gemini_token_settings_response()
+    except AIRecognitionError as exc:
+        log_inventory_action(
+            action="bind",
+            entity="system_setting",
+            status="failed",
+            detail={"target": "gemini_api_token", "error_code": exc.code},
+        )
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.delete("/api/settings/ai/gemini-token")
+def delete_gemini_token_settings_api():
+    deleted = delete_gemini_api_token()
+    log_inventory_action(
+        action="unbind",
+        entity="system_setting",
+        status="success",
+        detail={"target": "gemini_api_token", "deleted": deleted},
+    )
+    return {"deleted": deleted}
 
 
 @app.get("/api/ai/spec-recognition/quota", response_model=AiRecognitionQuotaResponse)

@@ -11,11 +11,17 @@ from urllib import request as urllib_request
 
 import pytesseract
 from PIL import Image
+from db import get_gemini_api_token_setting, get_gemini_model_setting
 
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 SUPPORTED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+SUPPORTED_GEMINI_MODELS = (
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+)
 GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 FIELD_NAMES = ("name", "model", "specification")
 
@@ -42,12 +48,27 @@ def get_provider_name() -> str:
     return "gemini"
 
 
+def get_supported_models() -> list[str]:
+    return list(SUPPORTED_GEMINI_MODELS)
+
+
+def is_supported_model(model: str) -> bool:
+    return model in SUPPORTED_GEMINI_MODELS
+
+
 def get_model_name() -> str:
-    return os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
+    setting = get_gemini_model_setting()
+    configured_model = (str(setting.get("value", "")).strip() if setting else "")
+    if configured_model and is_supported_model(configured_model):
+        return configured_model
+    return DEFAULT_GEMINI_MODEL
 
 
 def get_api_key() -> str:
-    return os.getenv("GEMINI_API_KEY", "").strip()
+    setting = get_gemini_api_token_setting()
+    if not setting:
+        return ""
+    return str(setting.get("value", "")).strip()
 
 
 def is_feature_enabled() -> bool:
@@ -63,8 +84,23 @@ def get_quota_status() -> dict[str, Any]:
         "quota": _last_quota_snapshot.copy(),
     }
     if not enabled:
-        payload["message"] = "Gemini API key not configured"
+        payload["message"] = "Gemini token not configured"
     return payload
+
+
+def validate_gemini_token(token: str, *, model: str | None = None) -> dict[str, Any]:
+    normalized_token = (token or "").strip()
+    if not normalized_token:
+        raise AIRecognitionError(code="invalid_token", message="Gemini token 不可為空。", status_code=400)
+    normalized_model = (model or "").strip()
+    if normalized_model and not is_supported_model(normalized_model):
+        raise AIRecognitionError(code="invalid_model", message="Gemini model 不在可用清單。", status_code=400)
+    _, quota = _call_gemini(
+        ocr_text="token validation",
+        api_key_override=normalized_token,
+        model_override=normalized_model or None,
+    )
+    return quota
 
 
 def recognize_spec_from_image(*, file_content: bytes, content_type: str, filename: str) -> AIRecognitionResult:
@@ -134,9 +170,14 @@ def extract_fields_with_gemini(ocr_text: str) -> tuple[dict[str, str], dict[str,
     return normalized, quota
 
 
-def _call_gemini(ocr_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    api_key = get_api_key()
-    model = get_model_name()
+def _call_gemini(
+    ocr_text: str,
+    *,
+    api_key_override: str | None = None,
+    model_override: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    api_key = (api_key_override or "").strip() or get_api_key()
+    model = (model_override or "").strip() or get_model_name()
     prompt = (
         "You are extracting inventory item fields from OCR text.\n"
         "Return JSON only with keys: name, model, specification.\n"
@@ -165,9 +206,19 @@ def _call_gemini(ocr_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
             return payload, quota
     except urllib_error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
+        if exc.code == 429:
+            raise AIRecognitionError(
+                code="quota_exceeded",
+                message="Gemini 配額不足，請先確認方案與 billing 後再綁定。",
+                status_code=429,
+            ) from exc
+        upstream_message = _extract_upstream_error_message(detail)
+        message = f"Gemini 呼叫失敗（HTTP {exc.code}）。"
+        if upstream_message:
+            message = f"{message}{upstream_message}"
         raise AIRecognitionError(
             code="upstream_error",
-            message=f"Gemini 呼叫失敗（HTTP {exc.code}）。{detail[:180]}",
+            message=message,
             status_code=502,
         ) from exc
     except urllib_error.URLError as exc:
@@ -222,3 +273,22 @@ def _to_int(raw_value: str | None) -> int | None:
         return int(str(raw_value).strip())
     except ValueError:
         return None
+
+
+def _extract_upstream_error_message(raw_detail: str) -> str:
+    try:
+        parsed = json.loads(raw_detail)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    error_payload = parsed.get("error")
+    if not isinstance(error_payload, dict):
+        return ""
+    message = error_payload.get("message")
+    if not isinstance(message, str):
+        return ""
+    normalized = message.strip()
+    if not normalized:
+        return ""
+    return normalized[:180]
