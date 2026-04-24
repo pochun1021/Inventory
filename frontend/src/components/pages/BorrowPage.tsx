@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
+import { formatIsoDate, parseIsoDate } from '../../lib/date'
 import { Button } from '../ui/button'
+import { DatePicker } from '../ui/date-picker'
 import { Dialog } from '../ui/dialog'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -100,24 +102,6 @@ function parseShortages(detail: unknown): ShortageRow[] {
     .filter((row): row is ShortageRow => row !== null)
 }
 
-function parseDateInput(value: string): Date | null {
-  if (!value) {
-    return null
-  }
-  const [year, month, day] = value.split('-').map((part) => Number(part))
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
-    return null
-  }
-  return new Date(Date.UTC(year, month - 1, day))
-}
-
-function formatDateInput(date: Date): string {
-  const year = date.getUTCFullYear()
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(date.getUTCDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
 export function BorrowPage({ requestId }: BorrowPageProps) {
   const [reservationOptions, setReservationOptions] = useState<BorrowReservationOption[]>([])
   const [loadError, setLoadError] = useState('')
@@ -165,7 +149,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     return Array.from(names).sort((a, b) => a.localeCompare(b))
   }, [reservationOptions])
 
-  const refreshReservationOptions = async () => {
+  const refreshReservationOptions = useCallback(async () => {
     const searchParams = new URLSearchParams()
     if (isEditing && requestId) {
       searchParams.set('request_id', String(requestId))
@@ -177,7 +161,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     }
     const payload = (await response.json()) as BorrowReservationOption[]
     setReservationOptions(payload)
-  }
+  }, [isEditing, requestId])
 
   useEffect(() => {
     const loadOptions = async () => {
@@ -188,7 +172,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       }
     }
     void loadOptions()
-  }, [isEditing, requestId])
+  }, [refreshReservationOptions])
 
   useEffect(() => {
     if (!isEditing || !requestId) {
@@ -324,8 +308,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     if (borrowDate && dueDate && borrowDate > dueDate) {
       return '預計歸還日期不可早於領用日期。'
     }
-    const borrowDateValue = parseDateInput(borrowDate)
-    const dueDateValue = parseDateInput(dueDate)
+    const borrowDateValue = parseIsoDate(borrowDate)
+    const dueDateValue = parseIsoDate(dueDate)
     if (!borrowDateValue || !dueDateValue) {
       return '日期格式錯誤，請重新選擇。'
     }
@@ -337,13 +321,13 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   }
 
   const dueDateMax = useMemo(() => {
-    const borrowDateValue = parseDateInput(borrowDate)
+    const borrowDateValue = parseIsoDate(borrowDate)
     if (!borrowDateValue) {
       return undefined
     }
     const maxDueDate = new Date(borrowDateValue)
-    maxDueDate.setUTCDate(maxDueDate.getUTCDate() + MAX_BORROW_RESERVATION_DAYS)
-    return formatDateInput(maxDueDate)
+    maxDueDate.setDate(maxDueDate.getDate() + MAX_BORROW_RESERVATION_DAYS)
+    return formatIsoDate(maxDueDate)
   }, [borrowDate])
 
   const refreshCurrentRequest = async () => {
@@ -767,19 +751,11 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </div>
           <div className="grid gap-1.5">
             <Label>領用日</Label>
-            <Input type="date" value={borrowDate} required onChange={(event) => setBorrowDate(event.target.value)} disabled={!canEditReservation || submitting} />
+            <DatePicker value={borrowDate} onChange={setBorrowDate} required disabled={!canEditReservation || submitting} />
           </div>
           <div className="grid gap-1.5">
             <Label>預計歸還</Label>
-            <Input
-              type="date"
-              value={dueDate}
-              required
-              min={borrowDate || undefined}
-              max={dueDateMax}
-              onChange={(event) => setDueDate(event.target.value)}
-              disabled={!canEditReservation || submitting}
-            />
+            <DatePicker value={dueDate} onChange={setDueDate} required min={borrowDate || undefined} max={dueDateMax} disabled={!canEditReservation || submitting} />
           </div>
           <div className="grid gap-1.5">
             <Label>狀態</Label>
@@ -787,7 +763,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </div>
           <div className="grid gap-1.5">
             <Label>實際歸還</Label>
-            <Input type="date" value={returnDate} disabled />
+            <DatePicker value={returnDate} onChange={setReturnDate} disabled />
           </div>
           <div className="grid gap-1.5 md:col-span-2">
             <Label>備註</Label>

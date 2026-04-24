@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
 import { DataPagination } from '../ui/data-pagination'
 import { Button } from '../ui/button'
+import { DatePicker } from '../ui/date-picker'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -378,12 +379,11 @@ export function LogsPage() {
       <div className="mb-4 grid gap-3 rounded-xl border border-[hsl(var(--border))] bg-[hsl(var(--card-soft))] p-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="grid gap-1.5">
           <Label htmlFor="logs-start-at">開始日期</Label>
-          <Input
+          <DatePicker
             id="logs-start-at"
-            type="date"
             value={startAt}
-            onChange={(event) => {
-              setStartAt(event.target.value)
+            onChange={(value) => {
+              setStartAt(value)
               setPage(1)
             }}
           />
@@ -391,12 +391,11 @@ export function LogsPage() {
 
         <div className="grid gap-1.5">
           <Label htmlFor="logs-end-at">結束日期</Label>
-          <Input
+          <DatePicker
             id="logs-end-at"
-            type="date"
             value={endAt}
-            onChange={(event) => {
-              setEndAt(event.target.value)
+            onChange={(value) => {
+              setEndAt(value)
               setPage(1)
             }}
           />

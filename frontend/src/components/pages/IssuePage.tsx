@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
+import { DatePicker } from '../ui/date-picker'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
@@ -410,7 +411,7 @@ export function IssuePage({ requestId }: IssuePageProps) {
             </div>
             <div className="grid gap-1.5">
               <Label>領用日期</Label>
-              <Input type="date" value={requestDate} onChange={(event) => setRequestDate(event.target.value)} />
+              <DatePicker value={requestDate} onChange={setRequestDate} />
             </div>
             <div className="grid gap-1.5">
               <Label>備註</Label>

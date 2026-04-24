@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
+import { DatePicker } from '../ui/date-picker'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
@@ -610,7 +611,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
               </div>
               <div className="grid gap-1.5">
                 <Label>購置日期</Label>
-                <Input type="date" value={formData.purchase_date} onChange={(event) => handleInputChange('purchase_date', event.target.value)} />
+                <DatePicker value={formData.purchase_date} onChange={(value) => handleInputChange('purchase_date', value)} />
               </div>
               <div className="grid gap-1.5">
                 <Label>name_code</Label>
@@ -687,15 +688,15 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                 </div>
                 <div className="grid gap-1.5">
                   <Label>起始日期</Label>
-                  <Input type="text" value={formData.start_date || '--'} readOnly disabled />
+                  <DatePicker value={formData.start_date} onChange={() => undefined} disabled placeholder="--" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>到期日</Label>
-                  <Input type="text" value={formData.due_date || '--'} readOnly disabled />
+                  <DatePicker value={formData.due_date} onChange={() => undefined} disabled placeholder="--" />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>歸還日</Label>
-                  <Input type="text" value={formData.return_date || '--'} readOnly disabled />
+                  <DatePicker value={formData.return_date} onChange={() => undefined} disabled placeholder="--" />
                 </div>
               </div>
             </SectionCard>
