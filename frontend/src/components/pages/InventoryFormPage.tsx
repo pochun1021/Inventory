@@ -614,7 +614,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                 <DatePicker value={formData.purchase_date} onChange={(value) => handleInputChange('purchase_date', value)} />
               </div>
               <div className="grid gap-1.5">
-                <Label>name_code</Label>
+                <Label>主分類代碼</Label>
                 <Select
                   value={formData.name_code}
                   onChange={(event) => handleNameCodeChange(event.target.value)}
@@ -632,7 +632,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                 </Select>
               </div>
               <div className="grid gap-1.5">
-                <Label>name_code2</Label>
+                <Label>次分類代碼</Label>
                 <Select
                   value={formData.name_code2}
                   onChange={(event) => handleInputChange('name_code2', event.target.value)}

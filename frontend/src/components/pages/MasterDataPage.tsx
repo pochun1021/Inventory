@@ -353,7 +353,7 @@ export function MasterDataPage() {
     const description = categoryDialog.description.trim()
 
     if (!nameCode || !nameCode2 || !categoryName) {
-      setCategoryActionError('大類代碼、小類代碼、分類名稱皆為必填。')
+      setCategoryActionError('主分類代碼、次分類代碼、分類名稱皆為必填。')
       return
     }
 
@@ -536,9 +536,9 @@ export function MasterDataPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>大類代碼</TableHead>
+                      <TableHead>主分類代碼</TableHead>
                       <TableHead>分類名稱</TableHead>
-                      <TableHead>小類代碼</TableHead>
+                      <TableHead>次分類代碼</TableHead>
                       <TableHead>小類說明</TableHead>
                       <TableHead className="w-[180px]">操作</TableHead>
                     </TableRow>
@@ -701,7 +701,7 @@ export function MasterDataPage() {
       >
         <div className="grid gap-3 md:grid-cols-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="asset-category-name-code">大類代碼</Label>
+            <Label htmlFor="asset-category-name-code">主分類代碼</Label>
             <Input
               id="asset-category-name-code"
               value={categoryDialog.name_code}
@@ -710,7 +710,7 @@ export function MasterDataPage() {
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="asset-category-name-code2">小類代碼</Label>
+            <Label htmlFor="asset-category-name-code2">次分類代碼</Label>
             <Input
               id="asset-category-name-code2"
               value={categoryDialog.name_code2}

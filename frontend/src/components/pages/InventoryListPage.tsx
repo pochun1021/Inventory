@@ -954,7 +954,7 @@ export function InventoryListPage() {
       >
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="detach-name-code">主分類</Label>
+            <Label htmlFor="detach-name-code">主分類代碼</Label>
             <Select
               id="detach-name-code"
               value={detachFormData.name_code}
@@ -979,7 +979,7 @@ export function InventoryListPage() {
             </Select>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="detach-name-code2">次分類</Label>
+            <Label htmlFor="detach-name-code2">次分類代碼</Label>
             <Select
               id="detach-name-code2"
               value={detachFormData.name_code2}
