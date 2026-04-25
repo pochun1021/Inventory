@@ -30,7 +30,7 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.90.0
 
       - name: Validate required secrets
         run: |
@@ -40,6 +40,11 @@ jobs:
 
       - name: Link cloud project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Verify remote DB auth (dry-run)
+        run: |
+          set -euo pipefail
+          supabase db push --linked --dry-run --include-all --password "$SUPABASE_DB_PASSWORD" --debug
 
       - name: Lint migrations
         run: |
