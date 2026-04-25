@@ -998,6 +998,16 @@ def _normalize_condition_status_description(value: Any) -> str:
     return _to_str(value).strip()
 
 
+def _assert_condition_status_code_exists(code: str, code_rows: list[dict[str, Any]]) -> None:
+    normalized_code = _normalize_condition_status_code(code)
+    existing_codes = {
+        _normalize_condition_status_code(row.get("condition_status"))
+        for row in code_rows
+    }
+    if normalized_code not in existing_codes:
+        raise ValueError("condition_status code not found")
+
+
 def _asset_status_sort_key(code: str) -> tuple[int, int | str]:
     stripped = code.strip()
     if stripped.isdigit():
@@ -1661,7 +1671,11 @@ def create_item(item_data: dict[str, Any]) -> int:
 
     with _locked_workbook() as wb:
         ws = wb["inventory_items"]
+        condition_status_ws = wb["condition_status_code"]
         rows = _read_rows(ws)
+        condition_status_rows = _read_rows(condition_status_ws)
+        next_condition_status = _to_str(item_data.get("condition_status")).strip() or "0"
+        _assert_condition_status_code_exists(next_condition_status, condition_status_rows)
         new_id = _next_id(rows)
         rows.append(_to_inventory_create_row(new_id, item_data, property_number))
         _write_rows(ws, SHEETS["inventory_items"], rows)
@@ -1673,8 +1687,10 @@ def detach_item(parent_item_id: int, detach_data: dict[str, Any]) -> int:
     with _locked_workbook() as wb:
         inventory_ws = wb["inventory_items"]
         movement_ws = wb["movement_ledger"]
+        condition_status_ws = wb["condition_status_code"]
         inventory_rows = _read_rows(inventory_ws)
         movement_rows = _read_rows(movement_ws)
+        condition_status_rows = _read_rows(condition_status_ws)
 
         parent_row = None
         for row in inventory_rows:
@@ -1705,6 +1721,7 @@ def detach_item(parent_item_id: int, detach_data: dict[str, Any]) -> int:
         next_condition_status = _to_str(detach_data.get("condition_status")).strip()
         if not next_condition_status:
             next_condition_status = _to_str(parent_row.get("condition_status")).strip() or "0"
+        _assert_condition_status_code_exists(next_condition_status, condition_status_rows)
         def pick_parent_default(field_name: str) -> Any:
             value = detach_data.get(field_name)
             return parent_row.get(field_name) if value is None else value
@@ -1759,8 +1776,10 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
     with _locked_workbook() as wb:
         inventory_ws = wb["inventory_items"]
         order_ws = wb["order_sn"]
+        condition_status_ws = wb["condition_status_code"]
         inventory_rows = _read_rows(inventory_ws)
         order_rows = _read_rows(order_ws)
+        condition_status_rows = _read_rows(condition_status_ws)
 
         order_map = {
             str(row.get("name", "")).strip(): row
@@ -1774,20 +1793,26 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
         created = 0
 
         for item_data in items:
+            next_condition_status = _to_str(item_data.get("condition_status")).strip() or "0"
+            _assert_condition_status_code_exists(next_condition_status, condition_status_rows)
+
+            item_payload = dict(item_data)
+            item_payload["condition_status"] = next_condition_status
+
             property_number = (
-                _to_str(item_data.get("n_property_sn")).strip()
-                or _to_str(item_data.get("property_sn")).strip()
-                or _to_str(item_data.get("n_item_sn")).strip()
-                or _to_str(item_data.get("item_sn")).strip()
+                _to_str(item_payload.get("n_property_sn")).strip()
+                or _to_str(item_payload.get("property_sn")).strip()
+                or _to_str(item_payload.get("n_item_sn")).strip()
+                or _to_str(item_payload.get("item_sn")).strip()
             )
             if not property_number:
-                order_sn_name = _asset_type_to_order_sn_name(item_data.get("asset_type"))
+                order_sn_name = _asset_type_to_order_sn_name(item_payload.get("asset_type"))
                 order_row = order_map.get(order_sn_name)
                 current_value = _to_int(order_row.get("current_value")) + 1
                 order_row["current_value"] = current_value
                 property_number = f"tmp-{_date_sn()}-{current_value:04d}"
 
-            inventory_rows.append(_to_inventory_create_row(next_id, item_data, property_number))
+            inventory_rows.append(_to_inventory_create_row(next_id, item_payload, property_number))
             next_id += 1
             created += 1
 
@@ -1800,7 +1825,9 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
 def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
     with _locked_workbook() as wb:
         ws = wb["inventory_items"]
+        condition_status_ws = wb["condition_status_code"]
         rows = _read_rows(ws)
+        condition_status_rows = _read_rows(condition_status_ws)
         updated = False
         for row in rows:
             if _to_int(row.get("id")) == item_id and _is_blank(row.get("deleted_at")):
@@ -1816,6 +1843,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                 next_key = _to_str(item_data.get("key")).strip()
                 next_condition_status = _to_str(item_data.get("condition_status", row.get("condition_status"))).strip()
                 next_condition_status = next_condition_status or _to_str(row.get("condition_status")).strip() or "0"
+                _assert_condition_status_code_exists(next_condition_status, condition_status_rows)
                 next_borrower = _to_str(item_data.get("borrower", row.get("borrower")))
                 next_start_date = _to_str(item_data.get("start_date", row.get("start_date")))
                 if not next_key:

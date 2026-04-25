@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { InventoryFormPage } from './InventoryFormPage'
@@ -203,5 +203,123 @@ describe('InventoryFormPage AI recognition', () => {
     expect(screen.getByLabelText('品名')).toHaveValue('手動品名')
     expect(screen.getByLabelText('型號')).toHaveValue('手動型號')
     expect(screen.getByLabelText('規格')).toHaveValue('手動規格')
+  })
+})
+
+describe('InventoryFormPage condition status consistency', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('blocks submit for legacy condition_status not in lookup until re-selected', async () => {
+    const fetchMock = setupFetchMock((url, init) => {
+      if (url.endsWith('/api/lookups/asset-status')) {
+        return jsonResponse([{ code: '0', description: '在庫' }])
+      }
+      if (url.endsWith('/api/lookups/condition-status')) {
+        return jsonResponse([{ code: '0', description: '良好' }])
+      }
+      if (url.endsWith('/api/lookups/asset-category')) {
+        return jsonResponse([{ name_code: '01', name_code2: '01', asset_category_name: '筆電', description: '一般' }])
+      }
+      if (url.endsWith('/api/ai/spec-recognition/quota')) {
+        return jsonResponse({
+          enabled: false,
+          provider: 'gemini',
+          model: 'gemini-2.0-flash',
+          quota: { status: 'unknown' },
+          message: 'Gemini token 尚未設定，AI 規格辨識功能未啟用。',
+        })
+      }
+      if (url.endsWith('/api/items/1') && !init?.method) {
+        return jsonResponse({
+          id: 1,
+          asset_type: 'A1',
+          asset_status: '0',
+          condition_status: '9',
+          key: 'A1-0001',
+          n_property_sn: '',
+          property_sn: '',
+          n_item_sn: '',
+          item_sn: '',
+          name: '測試品項',
+          name_code: '01',
+          name_code2: '01',
+          model: 'M1',
+          specification: '',
+          unit: '',
+          count: 1,
+          purchase_date: '',
+          due_date: '',
+          return_date: '',
+          location: '',
+          memo: '',
+          memo2: '',
+          keeper: '',
+          borrower: '',
+          start_date: '',
+        })
+      }
+      if (url.endsWith('/api/items/1') && init?.method === 'PUT') {
+        return jsonResponse({
+          id: 1,
+          asset_type: 'A1',
+          asset_status: '0',
+          condition_status: '0',
+          key: 'A1-0001',
+          n_property_sn: '',
+          property_sn: '',
+          n_item_sn: '',
+          item_sn: '',
+          name: '測試品項',
+          name_code: '01',
+          name_code2: '01',
+          model: 'M1',
+          specification: '',
+          unit: '',
+          count: 1,
+          purchase_date: '',
+          due_date: '',
+          return_date: '',
+          location: '',
+          memo: '',
+          memo2: '',
+          keeper: '',
+          borrower: '',
+          start_date: '',
+        })
+      }
+      throw new Error(`Unhandled URL: ${url}`)
+    })
+
+    render(<InventoryFormPage itemId={1} />)
+
+    await screen.findByText('目前資料的物料狀況代碼已不存在於設定，請重新選擇可用狀況碼。')
+
+    fireEvent.click(screen.getByRole('button', { name: '儲存修改' }))
+    await screen.findAllByText('目前資料的物料狀況代碼已不存在於設定，請重新選擇可用狀況碼。')
+
+    const putCallsBeforeReselect = fetchMock.mock.calls.filter(([input, init]) => {
+      const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return requestUrl.endsWith('/api/items/1') && init?.method === 'PUT'
+    })
+    expect(putCallsBeforeReselect).toHaveLength(0)
+
+    const statusSection = screen.getByText('狀態資料').closest('section')
+    expect(statusSection).not.toBeNull()
+    const statusSelects = within(statusSection as HTMLElement).getAllByRole('combobox')
+    fireEvent.change(statusSelects[2], { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: '儲存修改' }))
+
+    await screen.findByText('財產資料已更新。')
+    const putCalls = fetchMock.mock.calls.filter(([input, init]) => {
+      const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return requestUrl.endsWith('/api/items/1') && init?.method === 'PUT'
+    })
+    expect(putCalls).toHaveLength(1)
   })
 })
