@@ -1776,8 +1776,10 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
     with _locked_workbook() as wb:
         inventory_ws = wb["inventory_items"]
         order_ws = wb["order_sn"]
+        condition_status_ws = wb["condition_status_code"]
         inventory_rows = _read_rows(inventory_ws)
         order_rows = _read_rows(order_ws)
+        condition_status_rows = _read_rows(condition_status_ws)
 
         order_map = {
             str(row.get("name", "")).strip(): row
@@ -1791,20 +1793,26 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
         created = 0
 
         for item_data in items:
+            next_condition_status = _to_str(item_data.get("condition_status")).strip() or "0"
+            _assert_condition_status_code_exists(next_condition_status, condition_status_rows)
+
+            item_payload = dict(item_data)
+            item_payload["condition_status"] = next_condition_status
+
             property_number = (
-                _to_str(item_data.get("n_property_sn")).strip()
-                or _to_str(item_data.get("property_sn")).strip()
-                or _to_str(item_data.get("n_item_sn")).strip()
-                or _to_str(item_data.get("item_sn")).strip()
+                _to_str(item_payload.get("n_property_sn")).strip()
+                or _to_str(item_payload.get("property_sn")).strip()
+                or _to_str(item_payload.get("n_item_sn")).strip()
+                or _to_str(item_payload.get("item_sn")).strip()
             )
             if not property_number:
-                order_sn_name = _asset_type_to_order_sn_name(item_data.get("asset_type"))
+                order_sn_name = _asset_type_to_order_sn_name(item_payload.get("asset_type"))
                 order_row = order_map.get(order_sn_name)
                 current_value = _to_int(order_row.get("current_value")) + 1
                 order_row["current_value"] = current_value
                 property_number = f"tmp-{_date_sn()}-{current_value:04d}"
 
-            inventory_rows.append(_to_inventory_create_row(next_id, item_data, property_number))
+            inventory_rows.append(_to_inventory_create_row(next_id, item_payload, property_number))
             next_id += 1
             created += 1
 

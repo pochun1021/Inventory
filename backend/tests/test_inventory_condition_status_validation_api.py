@@ -118,6 +118,38 @@ class InventoryConditionStatusValidationApiTests(unittest.TestCase):
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(exc.exception.detail, "condition_status code not found")
 
+    def test_bulk_create_rejects_unknown_condition_status(self) -> None:
+        valid_item = app_main.to_db_payload(
+            app_main.InventoryItemCreate(
+                asset_type="A1",
+                asset_status="0",
+                condition_status="0",
+                name="合法品項",
+                model="M1",
+                name_code="01",
+                name_code2="01",
+                count=1,
+            )
+        )
+        invalid_item = app_main.to_db_payload(
+            app_main.InventoryItemCreate(
+                asset_type="A1",
+                asset_status="0",
+                condition_status="9",
+                name="非法品項",
+                model="M2",
+                name_code="01",
+                name_code2="01",
+                count=1,
+            )
+        )
+
+        with self.assertRaises(ValueError) as exc:
+            db.create_items_bulk([valid_item, invalid_item])
+
+        self.assertEqual(str(exc.exception), "condition_status code not found")
+        self.assertEqual(len(db.list_items()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
