@@ -1,11 +1,6 @@
 # Frontend（React + Vite）
 
-本目錄為 Inventory 系統前端，提供：
-
-- Dashboard 與快速操作入口
-- 財產清單與新增/編輯
-- 領用、借用、捐贈流程（清單/新增/編輯）
-- xlsx 批次上傳
+本目錄為 Inventory 系統前端，涵蓋 Dashboard、資產管理、交易流程、日誌查詢與系統設定頁面。
 
 ## 技術棧
 
@@ -53,6 +48,7 @@ npm run dev      # 開發模式
 npm run build    # 生產建置
 npm run preview  # 本機預覽建置結果
 npm run lint     # ESLint 檢查
+npm run test     # Vitest 測試
 ```
 
 ## 路由頁面
@@ -67,10 +63,13 @@ npm run lint     # ESLint 檢查
 - `/borrows`：借用清單
 - `/borrows/new`：新增借用
 - `/borrows/:requestId`：編輯借用單
-- `/upload`：Excel 匯入
 - `/donations`：捐贈清單
 - `/donations/new`：新增捐贈
 - `/donations/:requestId`：編輯捐贈單
+- `/upload`：批次上傳
+- `/logs`：日誌查詢
+- `/features/master-data`：代碼設定
+- `/features/ai-settings`：AI 設定
 
 ## 側邊導覽分類
 
@@ -79,15 +78,19 @@ npm run lint     # ESLint 檢查
 - 借用：借用清單、新增借用
 - 捐贈：捐贈清單、新增捐贈
 - 資產：財產清單、新增庫存、批次上傳
+- 稽核：日誌查詢
+- 系統設定：代碼設定、AI 設定
 
 ## 畫面與資料行為
 
-- Dashboard 會同時讀取 `/api/data`、`/api/items`、`/api/issues`、`/api/borrows`、`/api/donations`。
-- 財產頁使用 `/api/items` 系列 API（查詢/新增/更新/刪除）。
-- 領用、借用、捐贈頁分別使用 `/api/issues`、`/api/borrows`、`/api/donations`。
-- 匯入頁使用 `POST /api/items/import` 上傳 `.xlsx`。
-- Lookup 管理使用 `/api/lookups/asset-status`。
-- 交易表單目前為單件模式，`quantity` 需為 `1`（由後端驗證）。
+- Dashboard 讀取 `/api/data`、`/api/items`、`/api/issues`、`/api/borrows`、`/api/donations`
+- 財產頁使用 `/api/items` 系列 API（含 restore/detach 相關操作）
+- 領用、借用、捐贈頁分別使用 `/api/issues`、`/api/borrows`、`/api/donations`
+- 借用頁面含 pickup/return 流程，對應 borrow pickup API
+- 匯入頁使用 `POST /api/items/import` 上傳 `.xlsx`
+- 日誌頁使用 `/api/logs/movements`、`/api/logs/operations`
+- 代碼設定頁使用 lookup API（asset status / condition status / asset category）
+- AI 設定頁使用 `/api/settings/ai/gemini-token`，規格辨識對應 `/api/ai/spec-recognition` 系列
 
 ## 建置輸出
 
@@ -95,6 +98,4 @@ npm run lint     # ESLint 檢查
 npm run build
 ```
 
-輸出目錄：`frontend/dist`
-
-後端若偵測到此資料夾，會優先提供其靜態內容。
+輸出目錄：`frontend/dist`。後端若偵測到此資料夾，會優先提供其靜態內容。
