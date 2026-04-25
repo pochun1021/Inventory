@@ -79,6 +79,10 @@ EOF
 
 完成後以 `uv run --env-file .env ...` 啟動後端。
 
+### 遷移到 Supabase Cloud
+
+若要把本地資料搬到 Supabase Cloud（含 Cloud 端必要設定、環境變數與 dry-run/正式遷移步驟），請依 `backend/supabase_sql/README.md` 操作。
+
 ## API 一覽
 
 ### Dashboard

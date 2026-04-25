@@ -56,6 +56,7 @@ uv run --env-file .env uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - OpenAPI：`http://localhost:8000/openapi.json`
 
 如需啟用 Supabase local，請先建立 `backend/.env`（`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`USE_SUPABASE` 等），詳細步驟請見 `backend/README.md` 的「Supabase local（已啟用時）」。
+如需遷移到 Supabase Cloud，請參考 `backend/supabase_sql/README.md` 的 Local -> Cloud 流程與雲端設定清單。
 
 ### 2) 啟動前端
 
