@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
+import { CameraScannerDialog } from '../ui/camera-scanner-dialog'
 import { DatePicker } from '../ui/date-picker'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -56,6 +57,7 @@ export function DonationPage({ requestId }: DonationPageProps) {
   const [donationDate, setDonationDate] = useState('')
   const [memo, setMemo] = useState('')
   const [scanCode, setScanCode] = useState('')
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
   const [lines, setLines] = useState<DonationLine[]>([emptyLine()])
   const [submitting, setSubmitting] = useState(false)
   const isEditing = Number.isInteger(requestId)
@@ -291,13 +293,11 @@ export function DonationPage({ requestId }: DonationPageProps) {
     return isConfirmed && typeof value === 'number' ? value : null
   }
 
-  const handleApplyScanCode = async () => {
-    const rawCode = scanCode.trim()
+  const applyScanCode = async (rawCode: string) => {
     if (!rawCode) {
       return
     }
     const matchedItems = getScanMatchedItems(rawCode)
-    setScanCode('')
 
     if (matchedItems.length === 0) {
       void toast.fire({ icon: 'error', title: `查無條碼：${rawCode}` })
@@ -322,6 +322,12 @@ export function DonationPage({ requestId }: DonationPageProps) {
 
     assignScannedItem(targetItemId)
     void toast.fire({ icon: 'success', title: `已透過條碼加入品項（${rawCode}）。` })
+  }
+
+  const handleApplyScanCode = async () => {
+    const rawCode = scanCode.trim()
+    setScanCode('')
+    await applyScanCode(rawCode)
   }
 
   const validateLines = () => {
@@ -436,18 +442,23 @@ export function DonationPage({ requestId }: DonationPageProps) {
         <SectionCard title="捐贈品項">
           <div className="mb-3 grid gap-1.5">
             <Label htmlFor="donation-scan-code">掃碼加入品項</Label>
-            <Input
-              id="donation-scan-code"
-              value={scanCode}
-              placeholder="請掃描或輸入條碼後按 Enter"
-              onChange={(event) => setScanCode(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void handleApplyScanCode()
-                }
-              }}
-            />
+            <div className="flex gap-2">
+              <Input
+                id="donation-scan-code"
+                value={scanCode}
+                placeholder="請掃描或輸入條碼後按 Enter"
+                onChange={(event) => setScanCode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void handleApplyScanCode()
+                  }
+                }}
+              />
+              <Button type="button" variant="secondary" onClick={() => setCameraScannerOpen(true)} disabled={submitting}>
+                相機掃描
+              </Button>
+            </div>
           </div>
           <div className="grid gap-3">
             {lines.map((line, index) => {
@@ -542,6 +553,16 @@ export function DonationPage({ requestId }: DonationPageProps) {
           </div>
           {loadError ? <p className="mt-3 mb-0 text-sm text-red-600">{loadError}</p> : null}
         </SectionCard>
-      </div>
+      <CameraScannerDialog
+        open={cameraScannerOpen}
+        onClose={() => setCameraScannerOpen(false)}
+        onDetected={(code) => {
+          setCameraScannerOpen(false)
+          void applyScanCode(code)
+        }}
+        title="捐贈條碼相機掃描"
+        description="掃到條碼後，會直接套用到捐贈品項。"
+      />
+    </div>
   )
 }

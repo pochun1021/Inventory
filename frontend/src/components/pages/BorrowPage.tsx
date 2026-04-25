@@ -3,6 +3,7 @@ import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { formatIsoDate, parseIsoDate } from '../../lib/date'
 import { Button } from '../ui/button'
+import { CameraScannerDialog } from '../ui/camera-scanner-dialog'
 import { DatePicker } from '../ui/date-picker'
 import { Dialog } from '../ui/dialog'
 import { Input } from '../ui/input'
@@ -117,6 +118,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const [pickupSelections, setPickupSelections] = useState<Record<number, number[]>>({})
   const [scanInputValue, setScanInputValue] = useState('')
   const [scanFeedback, setScanFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
 
   const [borrower, setBorrower] = useState('')
   const [department, setDepartment] = useState('')
@@ -483,6 +485,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       setScanInputValue('')
       setScanFeedback(null)
       scanBufferRef.current = { value: '', lastTs: 0 }
+      setCameraScannerOpen(false)
       setPickupDialogOpen(true)
       await loadPickupLineCandidates(payload[0].line_id, '', 1)
     } catch (error) {
@@ -581,6 +584,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     setScanInputValue('')
     setScanFeedback(null)
     scanBufferRef.current = { value: '', lastTs: 0 }
+    setCameraScannerOpen(false)
   }
 
   const handleSubmit = async () => {
@@ -977,6 +981,9 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                 <Button type="button" variant="secondary" onClick={() => void applyScanCode(scanInputValue)} disabled={submitting || !scanInputValue.trim()}>
                   加入
                 </Button>
+                <Button type="button" variant="secondary" onClick={() => setCameraScannerOpen(true)} disabled={submitting}>
+                  相機掃描
+                </Button>
               </div>
               {scanFeedback ? (
                 <p className={`mt-2 mb-0 text-xs ${scanFeedback.type === 'success' ? 'text-green-700' : scanFeedback.type === 'error' ? 'text-red-700' : 'text-[hsl(var(--muted-foreground))]'}`}>
@@ -1090,6 +1097,16 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </div>
         </div>
       </Dialog>
+      <CameraScannerDialog
+        open={cameraScannerOpen}
+        onClose={() => setCameraScannerOpen(false)}
+        onDetected={(code) => {
+          setCameraScannerOpen(false)
+          void applyScanCode(code)
+        }}
+        title="借用條碼相機掃描"
+        description="掃到條碼後，會直接套用到借用領取清單。"
+      />
     </div>
   )
 }
