@@ -552,7 +552,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                     <Input
                       id="ai-spec-image-file"
                       type="file"
-                      accept="image/jpeg,image/png,image/webp"
+                      accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                       onChange={handleAiFileChange}
                       disabled={!aiEnabled || aiPending}
                     />
@@ -568,7 +568,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                   </Button>
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="secondary"
                     className="md:self-end"
                     disabled={!recognizedSnapshot || aiPending}
                     onClick={handleRestoreRecognizedFields}
@@ -576,6 +576,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                     還原辨識前內容
                   </Button>
                 </div>
+                <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">支援 JPEG、PNG、WEBP、HEIC、HEIF（上限 5MB）。</p>
                 {aiQuotaLoadError ? <p className="m-0 text-xs text-red-700">{aiQuotaLoadError}</p> : null}
                 {!aiEnabled && !aiQuotaLoadError ? (
                   <p className="m-0 text-xs text-amber-700">{aiQuotaPayload?.message || 'AI 功能尚未啟用，請改用手動填寫。'}</p>
