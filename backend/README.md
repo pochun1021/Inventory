@@ -32,11 +32,22 @@ backend/
 ```bash
 cd backend
 uv sync
-uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uv run --env-file .env uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger：`http://localhost:8000/docs`
 - OpenAPI：`http://localhost:8000/openapi.json`
+
+### Supabase local（已啟用時）
+
+請在 `backend/` 目錄操作 Supabase CLI，避免 project context 錯置：
+
+```bash
+cd backend
+supabase status
+```
+
+後端 Supabase 連線參數建議放在 `backend/.env`，並以 `uv run --env-file .env ...` 啟動。
 
 ## API 一覽
 
