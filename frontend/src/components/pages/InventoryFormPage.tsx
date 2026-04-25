@@ -321,6 +321,10 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   const hasNameCodeOption = nameCodeOptions.some((option) => option.value === formData.name_code)
   const hasNameCode2Option = nameCode2Options.some((option) => option.value === formData.name_code2)
   const hasConditionStatusOption = conditionStatusOptions.some((option) => option.value === formData.condition_status)
+  const conditionStatusMismatchError =
+    conditionStatusOptions.length > 0 && formData.condition_status && !hasConditionStatusOption
+      ? '目前資料的物料狀況代碼已不存在於設定，請重新選擇可用狀況碼。'
+      : ''
   const aiEnabled = Boolean(aiQuotaPayload?.enabled)
   const aiQuotaRemainingLabel =
     aiQuotaPayload?.quota.remaining === null || aiQuotaPayload?.quota.remaining === undefined ? '未知' : String(aiQuotaPayload.quota.remaining)
@@ -457,6 +461,10 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
       setErrorMessage('主分類與次分類不是合法組合，請重新選擇。')
       return
     }
+    if (conditionStatusMismatchError) {
+      setErrorMessage(conditionStatusMismatchError)
+      return
+    }
 
     setSubmitting(true)
 
@@ -558,10 +566,10 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                       {conditionStatusOption.label}
                     </option>
                   ))}
-                  {!hasConditionStatusOption && formData.condition_status ? (
-                    <option value={formData.condition_status}>{formData.condition_status}</option>
-                  ) : null}
                 </Select>
+                {conditionStatusMismatchError ? (
+                  <p className="m-0 text-xs text-red-700">{conditionStatusMismatchError}</p>
+                ) : null}
               </div>
               <div className="grid gap-1.5">
                 <Label>數量</Label>
