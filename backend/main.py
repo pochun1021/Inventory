@@ -80,7 +80,9 @@ from ai_recognition import (
     get_quota_status,
     get_supported_models,
     is_supported_model,
+    MAX_BATCH_IMAGE_FILES,
     recognize_spec_from_image,
+    recognize_spec_from_images_batch,
     validate_gemini_token,
 )
 
@@ -499,6 +501,51 @@ class AiRecognizedFields(BaseModel):
 class AiSpecRecognitionResponse(BaseModel):
     recognized_fields: AiRecognizedFields = Field(default_factory=AiRecognizedFields)
     raw_text_excerpt: str = ""
+    quota: AiQuota = Field(default_factory=AiQuota)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AiFieldConfidence(BaseModel):
+    name: float = 0
+    model: float = 0
+    specification: float = 0
+
+
+class AiSpecRecognitionFieldSource(BaseModel):
+    index: int
+    filename: str = ""
+    confidence: float = 0
+
+
+class AiSpecRecognitionBatchFileResult(BaseModel):
+    index: int
+    filename: str = ""
+    recognized_fields: AiRecognizedFields = Field(default_factory=AiRecognizedFields)
+    field_confidence: AiFieldConfidence = Field(default_factory=AiFieldConfidence)
+    raw_text_excerpt: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    retry_used: bool = False
+
+
+class AiSpecRecognitionFailedFile(BaseModel):
+    index: int
+    filename: str = ""
+    code: str = ""
+    message: str = ""
+
+
+class AiSpecRecognitionBatchSummary(BaseModel):
+    total: int = 0
+    succeeded: int = 0
+    failed: int = 0
+
+
+class AiSpecRecognitionBatchResponse(BaseModel):
+    merged_fields: AiRecognizedFields = Field(default_factory=AiRecognizedFields)
+    field_sources: dict[str, AiSpecRecognitionFieldSource | None] = Field(default_factory=dict)
+    results: list[AiSpecRecognitionBatchFileResult] = Field(default_factory=list)
+    failed_files: list[AiSpecRecognitionFailedFile] = Field(default_factory=list)
+    summary: AiSpecRecognitionBatchSummary = Field(default_factory=AiSpecRecognitionBatchSummary)
     quota: AiQuota = Field(default_factory=AiQuota)
     warnings: list[str] = Field(default_factory=list)
 
@@ -2210,6 +2257,88 @@ async def recognize_item_spec_api(file: UploadFile = File(...)):
             },
         )
         raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@app.post("/api/ai/spec-recognition/batch", response_model=AiSpecRecognitionBatchResponse)
+async def recognize_item_spec_batch_api(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail={"code": "invalid_image", "message": "至少需要上傳 1 張圖片。"})
+    if len(files) > MAX_BATCH_IMAGE_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_image", "message": f"單次最多可上傳 {MAX_BATCH_IMAGE_FILES} 張圖片。"},
+        )
+
+    file_payloads: list[dict[str, Any]] = []
+    for file in files:
+        file_payloads.append(
+            {
+                "filename": file.filename or "",
+                "content_type": file.content_type or "",
+                "file_content": await file.read(),
+            }
+        )
+
+    result = recognize_spec_from_images_batch(files=file_payloads)
+    if result.summary["succeeded"] <= 0:
+        first_failed = result.failed_files[0] if result.failed_files else {}
+        status_code = int(first_failed.get("status_code") or 422)
+        error_code = _coerce_str(first_failed.get("code")).strip() or "ocr_failed"
+        error_message = _coerce_str(first_failed.get("message")).strip() or "無法從圖片辨識出可用文字。"
+        log_inventory_action(
+            action="recognize_spec_batch",
+            entity="inventory_item",
+            status="failed",
+            detail={
+                "total": result.summary["total"],
+                "succeeded": result.summary["succeeded"],
+                "failed": result.summary["failed"],
+                "error_code": error_code,
+            },
+        )
+        raise HTTPException(status_code=status_code, detail={"code": error_code, "message": error_message})
+
+    log_inventory_action(
+        action="recognize_spec_batch",
+        entity="inventory_item",
+        status="success" if result.summary["failed"] == 0 else "partial_success",
+        detail={
+            "total": result.summary["total"],
+            "succeeded": result.summary["succeeded"],
+            "failed": result.summary["failed"],
+        },
+    )
+    return AiSpecRecognitionBatchResponse(
+        merged_fields=AiRecognizedFields(**result.merged_fields),
+        field_sources={
+            field: (AiSpecRecognitionFieldSource(**source) if isinstance(source, dict) else None)
+            for field, source in result.field_sources.items()
+        },
+        results=[
+            AiSpecRecognitionBatchFileResult(
+                index=int(row.get("index") or 0),
+                filename=_coerce_str(row.get("filename")),
+                recognized_fields=AiRecognizedFields(**(row.get("recognized_fields") or {})),
+                field_confidence=AiFieldConfidence(**(row.get("field_confidence") or {})),
+                raw_text_excerpt=_coerce_str(row.get("raw_text_excerpt")),
+                warnings=[_coerce_str(warning) for warning in (row.get("warnings") or [])],
+                retry_used=bool(row.get("retry_used")),
+            )
+            for row in result.results
+        ],
+        failed_files=[
+            AiSpecRecognitionFailedFile(
+                index=int(row.get("index") or 0),
+                filename=_coerce_str(row.get("filename")),
+                code=_coerce_str(row.get("code")),
+                message=_coerce_str(row.get("message")),
+            )
+            for row in result.failed_files
+        ],
+        summary=AiSpecRecognitionBatchSummary(**result.summary),
+        quota=AiQuota(**result.quota),
+        warnings=result.warnings,
+    )
 
 
 @app.get("/{full_path:path}")

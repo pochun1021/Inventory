@@ -42,6 +42,7 @@ SUPPORTED_GEMINI_MODELS = (
 )
 GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 FIELD_NAMES = ("name", "model", "specification")
+MAX_BATCH_IMAGE_FILES = 5
 
 _last_quota_snapshot: dict[str, Any] = {"status": "unknown"}
 _heif_decoder_checked = False
@@ -59,7 +60,19 @@ class AIRecognitionError(Exception):
 @dataclass
 class AIRecognitionResult:
     recognized_fields: dict[str, str]
+    field_confidence: dict[str, float]
     raw_text_excerpt: str
+    quota: dict[str, Any]
+    warnings: list[str]
+
+
+@dataclass
+class AIRecognitionBatchResult:
+    merged_fields: dict[str, str]
+    field_sources: dict[str, dict[str, Any] | None]
+    results: list[dict[str, Any]]
+    failed_files: list[dict[str, Any]]
+    summary: dict[str, int]
     quota: dict[str, Any]
     warnings: list[str]
 
@@ -132,7 +145,7 @@ def recognize_spec_from_image(*, file_content: bytes, content_type: str, filenam
         content_type=normalized_type,
         filename=filename,
     )
-    fields, raw_text_excerpt, quota = extract_fields_with_gemini(
+    fields, field_confidence, raw_text_excerpt, quota = extract_fields_with_gemini(
         image_mime_type=image_mime_type,
         image_base64=image_base64,
     )
@@ -142,9 +155,146 @@ def recognize_spec_from_image(*, file_content: bytes, content_type: str, filenam
     raw_text_excerpt = re.sub(r"\s+", " ", raw_text_excerpt).strip()[:280]
     return AIRecognitionResult(
         recognized_fields={field: fields.get(field, "").strip() for field in FIELD_NAMES},
+        field_confidence={field: field_confidence.get(field, 0.0) for field in FIELD_NAMES},
         raw_text_excerpt=raw_text_excerpt,
         quota=quota,
         warnings=warnings,
+    )
+
+
+def recognize_spec_from_images_batch(*, files: list[dict[str, Any]]) -> AIRecognitionBatchResult:
+    if not files:
+        raise AIRecognitionError(code="invalid_image", message="至少需要上傳 1 張圖片。", status_code=400)
+    if len(files) > MAX_BATCH_IMAGE_FILES:
+        raise AIRecognitionError(
+            code="invalid_image",
+            message=f"單次最多可上傳 {MAX_BATCH_IMAGE_FILES} 張圖片。",
+            status_code=400,
+        )
+
+    successful_results: list[dict[str, Any]] = []
+    failed_files: list[dict[str, Any]] = []
+    aggregate_warnings: list[str] = []
+    latest_quota: dict[str, Any] = {"status": "unknown"}
+
+    for index, file_entry in enumerate(files):
+        filename = str(file_entry.get("filename") or "").strip()
+        content_type = str(file_entry.get("content_type") or "").strip()
+        file_content = file_entry.get("file_content")
+        if not isinstance(file_content, bytes):
+            failed_files.append(
+                {
+                    "index": index,
+                    "filename": filename,
+                    "code": "invalid_image",
+                    "message": "上傳圖片資料格式錯誤。",
+                    "status_code": 400,
+                }
+            )
+            continue
+        try:
+            result = recognize_spec_from_image(
+                file_content=file_content,
+                content_type=content_type,
+                filename=filename,
+            )
+            retry_used = False
+            normalized_model = _to_field_text(result.recognized_fields.get("model"))
+            if _is_heif_image(content_type=content_type, filename=filename) and not normalized_model:
+                retry_result = _retry_heic_model_extraction(
+                    file_content=file_content,
+                    content_type=content_type,
+                    filename=filename,
+                )
+                if retry_result is not None:
+                    result = retry_result
+                    retry_used = True
+
+            latest_quota = result.quota
+            recognized_fields = {field: result.recognized_fields.get(field, "").strip() for field in FIELD_NAMES}
+            field_confidence = {field: _normalize_confidence(result.field_confidence.get(field)) for field in FIELD_NAMES}
+            completeness = sum(1 for field in FIELD_NAMES if recognized_fields[field])
+            raw_text_excerpt = result.raw_text_excerpt.strip()
+            successful_results.append(
+                {
+                    "index": index,
+                    "filename": filename,
+                    "recognized_fields": recognized_fields,
+                    "field_confidence": field_confidence,
+                    "raw_text_excerpt": raw_text_excerpt,
+                    "warnings": [],
+                    "completeness": completeness,
+                    "retry_used": retry_used,
+                }
+            )
+        except AIRecognitionError as exc:
+            failed_files.append(
+                {
+                    "index": index,
+                    "filename": filename,
+                    "code": exc.code,
+                    "message": exc.message,
+                    "status_code": exc.status_code,
+                }
+            )
+        except Exception:
+            failed_files.append(
+                {
+                    "index": index,
+                    "filename": filename,
+                    "code": "unknown_error",
+                    "message": "圖片辨識發生未預期錯誤。",
+                    "status_code": 500,
+                }
+            )
+
+    if not successful_results:
+        fallback_quota = get_quota_status().get("quota")
+        if isinstance(fallback_quota, dict):
+            latest_quota = fallback_quota
+        return AIRecognitionBatchResult(
+            merged_fields={field: "" for field in FIELD_NAMES},
+            field_sources={field: None for field in FIELD_NAMES},
+            results=[],
+            failed_files=failed_files,
+            summary={"total": len(files), "succeeded": 0, "failed": len(files)},
+            quota=latest_quota,
+            warnings=aggregate_warnings,
+        )
+
+    merged_fields: dict[str, str] = {field: "" for field in FIELD_NAMES}
+    field_sources: dict[str, dict[str, Any] | None] = {field: None for field in FIELD_NAMES}
+    for field in FIELD_NAMES:
+        best_candidate = _select_best_field_candidate(field, successful_results)
+        if best_candidate is None:
+            continue
+        merged_fields[field] = str(best_candidate["value"])
+        field_sources[field] = {
+            "index": int(best_candidate["index"]),
+            "filename": str(best_candidate["filename"]),
+            "confidence": float(best_candidate["confidence"]),
+        }
+
+    returned_results = [
+        {
+            "index": int(row["index"]),
+            "filename": str(row["filename"]),
+            "recognized_fields": row["recognized_fields"],
+            "field_confidence": row["field_confidence"],
+            "raw_text_excerpt": str(row["raw_text_excerpt"]),
+            "warnings": list(row["warnings"]),
+            "retry_used": bool(row.get("retry_used")),
+        }
+        for row in successful_results
+    ]
+    return AIRecognitionBatchResult(
+        merged_fields=merged_fields,
+        field_sources=field_sources,
+        results=returned_results,
+        failed_files=failed_files,
+        summary={"total": len(files), "succeeded": len(successful_results), "failed": len(failed_files)},
+        quota=latest_quota,
+        warnings=aggregate_warnings,
     )
 
 
@@ -166,7 +316,13 @@ def _validate_image_input(*, file_content: bytes, content_type: str, filename: s
     return normalized_type
 
 
-def _prepare_image_for_gemini(*, file_content: bytes, content_type: str, filename: str) -> tuple[str, str]:
+def _prepare_image_for_gemini(
+    *,
+    file_content: bytes,
+    content_type: str,
+    filename: str,
+    jpeg_quality: int = 90,
+) -> tuple[str, str]:
     try:
         if _is_heif_image(content_type=content_type, filename=filename) and not _ensure_heif_decoder_available():
             raise AIRecognitionError(code="invalid_image", message=HEIF_DECODER_UNAVAILABLE_MESSAGE, status_code=400)
@@ -174,7 +330,7 @@ def _prepare_image_for_gemini(*, file_content: bytes, content_type: str, filenam
         if image.mode != "RGB":
             image = image.convert("RGB")
         normalized = BytesIO()
-        image.save(normalized, format="JPEG", quality=90)
+        image.save(normalized, format="JPEG", quality=jpeg_quality)
         encoded = base64.b64encode(normalized.getvalue()).decode("ascii")
         return "image/jpeg", encoded
     except AIRecognitionError:
@@ -230,10 +386,15 @@ def _ensure_heif_decoder_available() -> bool:
     return _heif_decoder_available
 
 
-def extract_fields_with_gemini(*, image_mime_type: str, image_base64: str) -> tuple[dict[str, str], str, dict[str, Any]]:
+def extract_fields_with_gemini(
+    *,
+    image_mime_type: str,
+    image_base64: str,
+) -> tuple[dict[str, str], dict[str, float], str, dict[str, Any]]:
     prompt = (
         "You are extracting inventory item fields from an image.\n"
-        "Return JSON only with keys: name, model, specification, raw_text_excerpt.\n"
+        "Return JSON only with keys: name, model, specification, raw_text_excerpt, confidence.\n"
+        "confidence must be an object with keys name, model, specification and values between 0 and 1.\n"
         "Use empty string when uncertain.\n"
     )
     response_payload, quota = _call_gemini(
@@ -260,9 +421,11 @@ def extract_fields_with_gemini(*, image_mime_type: str, image_base64: str) -> tu
     for field in FIELD_NAMES:
         value = parsed.get(field, "")
         normalized[field] = value.strip() if isinstance(value, str) else ""
+    confidence_payload = parsed.get("confidence", {})
+    confidence = _normalize_confidence_map(confidence_payload if isinstance(confidence_payload, dict) else {})
     raw_text_excerpt = parsed.get("raw_text_excerpt", "")
     normalized_excerpt = raw_text_excerpt.strip() if isinstance(raw_text_excerpt, str) else ""
-    return normalized, normalized_excerpt, quota
+    return normalized, confidence, normalized_excerpt, quota
 
 
 def _call_gemini(
@@ -381,3 +544,83 @@ def _extract_upstream_error_message(raw_detail: str) -> str:
     if not normalized:
         return ""
     return normalized[:180]
+
+
+def _normalize_confidence_map(raw_confidence: dict[str, Any]) -> dict[str, float]:
+    return {field: _normalize_confidence(raw_confidence.get(field)) for field in FIELD_NAMES}
+
+
+def _normalize_confidence(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if parsed < 0:
+        return 0.0
+    if parsed > 1:
+        return 1.0
+    return parsed
+
+
+def _to_field_text(value: Any) -> str:
+    return str(value).strip() if isinstance(value, str) else ""
+
+
+def _retry_heic_model_extraction(*, file_content: bytes, content_type: str, filename: str) -> AIRecognitionResult | None:
+    try:
+        image_mime_type, image_base64 = _prepare_image_for_gemini(
+            file_content=file_content,
+            content_type=content_type,
+            filename=filename,
+            jpeg_quality=98,
+        )
+        fields, field_confidence, raw_text_excerpt, quota = extract_fields_with_gemini(
+            image_mime_type=image_mime_type,
+            image_base64=image_base64,
+        )
+        warnings = [f"{field} not confidently extracted" for field in FIELD_NAMES if not fields.get(field, "").strip()]
+        raw_text_excerpt = re.sub(r"\s+", " ", raw_text_excerpt).strip()[:280]
+        return AIRecognitionResult(
+            recognized_fields={field: fields.get(field, "").strip() for field in FIELD_NAMES},
+            field_confidence={field: field_confidence.get(field, 0.0) for field in FIELD_NAMES},
+            raw_text_excerpt=raw_text_excerpt,
+            quota=quota,
+            warnings=warnings,
+        )
+    except AIRecognitionError:
+        return None
+
+
+def _select_best_field_candidate(field: str, successful_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for row in successful_results:
+        recognized_fields = row.get("recognized_fields", {})
+        value = str(recognized_fields.get(field, "")).strip() if isinstance(recognized_fields, dict) else ""
+        if not value:
+            continue
+        confidence_map = row.get("field_confidence", {})
+        confidence = 0.0
+        if isinstance(confidence_map, dict):
+            confidence = _normalize_confidence(confidence_map.get(field))
+        raw_text_excerpt = str(row.get("raw_text_excerpt") or "").strip()
+        candidates.append(
+            {
+                "index": int(row.get("index", 0)),
+                "filename": str(row.get("filename") or ""),
+                "value": value,
+                "confidence": confidence,
+                "completeness": int(row.get("completeness", 0)),
+                "raw_text_length": len(raw_text_excerpt),
+            }
+        )
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda candidate: (
+            -float(candidate["confidence"]),
+            -int(candidate["completeness"]),
+            -int(candidate["raw_text_length"]),
+            int(candidate["index"]),
+        )
+    )
+    return candidates[0]

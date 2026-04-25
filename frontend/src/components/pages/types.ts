@@ -261,6 +261,55 @@ export type AiSpecRecognitionResponse = {
   warnings: string[]
 }
 
+export type AiFieldConfidence = {
+  name: number
+  model: number
+  specification: number
+}
+
+export type AiSpecRecognitionFieldSource = {
+  index: number
+  filename: string
+  confidence: number
+}
+
+export type AiSpecRecognitionBatchFileResult = {
+  index: number
+  filename: string
+  recognized_fields: AiRecognizedFields
+  field_confidence: AiFieldConfidence
+  raw_text_excerpt: string
+  warnings: string[]
+  retry_used: boolean
+}
+
+export type AiSpecRecognitionFailedFile = {
+  index: number
+  filename: string
+  code: string
+  message: string
+}
+
+export type AiSpecRecognitionBatchSummary = {
+  total: number
+  succeeded: number
+  failed: number
+}
+
+export type AiSpecRecognitionBatchResponse = {
+  merged_fields: AiRecognizedFields
+  field_sources: {
+    name: AiSpecRecognitionFieldSource | null
+    model: AiSpecRecognitionFieldSource | null
+    specification: AiSpecRecognitionFieldSource | null
+  }
+  results: AiSpecRecognitionBatchFileResult[]
+  failed_files: AiSpecRecognitionFailedFile[]
+  summary: AiSpecRecognitionBatchSummary
+  quota: AiQuota
+  warnings: string[]
+}
+
 export type GeminiTokenSettingsResponse = {
   bound: boolean
   masked_token: string | null

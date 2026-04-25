@@ -34,6 +34,9 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
     def _upload_file(self, *, filename: str, content_type: str, payload: bytes = b'fake-image-bytes') -> UploadFile:
         return UploadFile(filename=filename, file=BytesIO(payload), headers=Headers({'content-type': content_type}))
 
+    def _upload_files(self, count: int) -> list[UploadFile]:
+        return [self._upload_file(filename=f'item-{index + 1}.png', content_type='image/png') for index in range(count)]
+
     def test_get_quota_returns_payload(self) -> None:
         with patch.object(
             app_main,
@@ -194,6 +197,71 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
         self.assertEqual(exc.exception.status_code, 422)
         self.assertEqual(exc.exception.detail['code'], 'ocr_failed')
         self.assertEqual(exc.exception.detail['message'], '無法從圖片辨識出可用文字。')
+
+    def test_recognize_spec_batch_success(self) -> None:
+        mock_result = SimpleNamespace(
+            merged_fields={'name': '相機', 'model': 'EOS R6', 'specification': '20MP/4K'},
+            field_sources={
+                'name': {'index': 0, 'filename': 'item-1.png', 'confidence': 0.96},
+                'model': {'index': 1, 'filename': 'item-2.png', 'confidence': 0.92},
+                'specification': {'index': 1, 'filename': 'item-2.png', 'confidence': 0.91},
+            },
+            results=[
+                {
+                    'index': 0,
+                    'filename': 'item-1.png',
+                    'recognized_fields': {'name': '相機', 'model': '', 'specification': ''},
+                    'field_confidence': {'name': 0.96, 'model': 0, 'specification': 0},
+                    'raw_text_excerpt': 'camera',
+                    'warnings': [],
+                    'retry_used': True,
+                }
+            ],
+            failed_files=[],
+            summary={'total': 2, 'succeeded': 2, 'failed': 0},
+            quota={'status': 'available', 'remaining': 1398},
+            warnings=[],
+        )
+        with patch.object(app_main, 'recognize_spec_from_images_batch', return_value=mock_result):
+            response = asyncio.run(app_main.recognize_item_spec_batch_api(files=self._upload_files(2)))
+
+        self.assertEqual(response.summary.total, 2)
+        self.assertEqual(response.summary.succeeded, 2)
+        self.assertEqual(response.merged_fields.name, '相機')
+        self.assertEqual(response.field_sources['model'].filename, 'item-2.png')
+        self.assertEqual(response.warnings, [])
+        self.assertTrue(response.results[0].retry_used)
+
+    def test_recognize_spec_batch_all_failed_returns_first_error(self) -> None:
+        mock_result = SimpleNamespace(
+            merged_fields={'name': '', 'model': '', 'specification': ''},
+            field_sources={'name': None, 'model': None, 'specification': None},
+            results=[],
+            failed_files=[
+                {
+                    'index': 0,
+                    'filename': 'item-1.png',
+                    'code': 'ocr_failed',
+                    'message': '無法從圖片辨識出可用文字。',
+                    'status_code': 422,
+                }
+            ],
+            summary={'total': 1, 'succeeded': 0, 'failed': 1},
+            quota={'status': 'unknown'},
+            warnings=[],
+        )
+        with patch.object(app_main, 'recognize_spec_from_images_batch', return_value=mock_result):
+            with self.assertRaises(HTTPException) as exc:
+                asyncio.run(app_main.recognize_item_spec_batch_api(files=self._upload_files(1)))
+
+        self.assertEqual(exc.exception.status_code, 422)
+        self.assertEqual(exc.exception.detail['code'], 'ocr_failed')
+
+    def test_recognize_spec_batch_rejects_too_many_files(self) -> None:
+        with self.assertRaises(HTTPException) as exc:
+            asyncio.run(app_main.recognize_item_spec_batch_api(files=self._upload_files(6)))
+        self.assertEqual(exc.exception.status_code, 400)
+        self.assertEqual(exc.exception.detail['code'], 'invalid_image')
 
 
 if __name__ == '__main__':

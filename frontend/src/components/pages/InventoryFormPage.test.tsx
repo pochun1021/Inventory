@@ -68,6 +68,7 @@ describe('InventoryFormPage AI recognition', () => {
     expect(runButton).toBeDisabled()
     expect(fileInput).toBeDisabled()
     expect(fileInput).toHaveAttribute('accept', 'image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif')
+    expect(fileInput).toHaveAttribute('multiple')
   })
 
   it('fills and restores fields after recognition', async () => {
@@ -85,16 +86,33 @@ describe('InventoryFormPage AI recognition', () => {
           message: null,
         })
       }
-      if (url.endsWith('/api/ai/spec-recognition') && init?.method === 'POST') {
+      if (url.endsWith('/api/ai/spec-recognition/batch') && init?.method === 'POST') {
         return jsonResponse({
-          recognized_fields: {
+          merged_fields: {
             name: '相機',
             model: 'EOS R6',
             specification: '20MP/4K',
           },
-          raw_text_excerpt: 'Camera spec block',
+          field_sources: {
+            name: { index: 0, filename: 'item.png', confidence: 0.95 },
+            model: { index: 0, filename: 'item.png', confidence: 0.95 },
+            specification: { index: 0, filename: 'item.png', confidence: 0.95 },
+          },
+          results: [
+            {
+              index: 0,
+              filename: 'item.png',
+              recognized_fields: { name: '相機', model: 'EOS R6', specification: '20MP/4K' },
+              field_confidence: { name: 0.95, model: 0.95, specification: 0.95 },
+              raw_text_excerpt: 'Camera spec block',
+              warnings: [],
+              retry_used: true,
+            },
+          ],
+          failed_files: [],
+          summary: { total: 1, succeeded: 1, failed: 0 },
           quota: { status: 'available', remaining: 1498 },
-          warnings: ['model not confidently extracted'],
+          warnings: [],
         })
       }
       throw new Error(`Unhandled URL: ${url}`)
@@ -121,8 +139,9 @@ describe('InventoryFormPage AI recognition', () => {
     })
     expect(screen.getByLabelText('型號')).toHaveValue('EOS R6')
     expect(screen.getByLabelText('規格')).toHaveValue('20MP/4K')
-    expect(screen.getByText('提醒：model not confidently extracted')).toBeInTheDocument()
-    expect(screen.getByText('OCR 摘要：Camera spec block')).toBeInTheDocument()
+    expect(screen.queryByText(/提醒：/)).not.toBeInTheDocument()
+    expect(screen.getByText('辨識完成，部分 HEIC 已自動補救辨識並覆寫品名、型號與規格欄位。')).toBeInTheDocument()
+    expect(screen.getByText('OCR 摘要：item.png=Camera spec block')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '還原辨識前內容' }))
 
@@ -132,7 +151,7 @@ describe('InventoryFormPage AI recognition', () => {
 
     const calledRecognition = fetchMock.mock.calls.some(([input, init]) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      return url.endsWith('/api/ai/spec-recognition') && init?.method === 'POST'
+      return url.endsWith('/api/ai/spec-recognition/batch') && init?.method === 'POST'
     })
     expect(calledRecognition).toBe(true)
   })
@@ -152,7 +171,7 @@ describe('InventoryFormPage AI recognition', () => {
           message: null,
         })
       }
-      if (url.endsWith('/api/ai/spec-recognition') && init?.method === 'POST') {
+      if (url.endsWith('/api/ai/spec-recognition/batch') && init?.method === 'POST') {
         return jsonResponse(
           {
             detail: {

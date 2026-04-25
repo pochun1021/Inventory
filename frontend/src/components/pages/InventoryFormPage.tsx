@@ -8,10 +8,10 @@ import { SectionCard } from '../ui/section-card'
 import { Select } from '../ui/select'
 import { Textarea } from '../ui/textarea'
 import { fetchAssetCategoryOptions } from './assetCategoryLookup'
-import { fetchAiSpecRecognitionQuota, recognizeItemSpecFromImage } from './aiSpecRecognition'
+import { fetchAiSpecRecognitionQuota, recognizeItemSpecFromImages } from './aiSpecRecognition'
 import { fetchAssetStatusOptions } from './assetStatusLookup'
 import { fetchConditionStatusOptions } from './conditionStatusLookup'
-import type { AiRecognitionQuotaResponse, InventoryItem } from './types'
+import type { AiRecognitionQuotaResponse, AiSpecRecognitionFieldSource, InventoryItem } from './types'
 
 type InventoryFormPageProps = {
   itemId?: number
@@ -49,6 +49,7 @@ const ASSET_TYPE_OPTIONS = [
   { value: 'A1', label: '物品 (A1)' },
   { value: 'A2', label: '其他 (A2)' },
 ]
+const MAX_AI_IMAGE_FILES = 5
 const DEFAULT_FORM_DATA: InventoryFormData = {
   asset_type: 'A2',
   asset_status: '0',
@@ -128,11 +129,20 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   const [assetCategoryLoadError, setAssetCategoryLoadError] = useState('')
   const [aiQuotaPayload, setAiQuotaPayload] = useState<AiRecognitionQuotaResponse | null>(null)
   const [aiQuotaLoadError, setAiQuotaLoadError] = useState('')
-  const [aiFile, setAiFile] = useState<File | null>(null)
+  const [aiFiles, setAiFiles] = useState<File[]>([])
   const [aiPending, setAiPending] = useState(false)
   const [aiMessage, setAiMessage] = useState('')
-  const [aiWarnings, setAiWarnings] = useState<string[]>([])
-  const [aiRawTextExcerpt, setAiRawTextExcerpt] = useState('')
+  const [aiRawTextExcerpts, setAiRawTextExcerpts] = useState<Array<{ filename: string; excerpt: string }>>([])
+  const [aiFieldSources, setAiFieldSources] = useState<{
+    name: AiSpecRecognitionFieldSource | null
+    model: AiSpecRecognitionFieldSource | null
+    specification: AiSpecRecognitionFieldSource | null
+  }>({
+    name: null,
+    model: null,
+    specification: null,
+  })
+  const [aiFailedFiles, setAiFailedFiles] = useState<Array<{ filename: string; message: string }>>([])
   const [aiErrorMessage, setAiErrorMessage] = useState('')
   const [recognizedSnapshot, setRecognizedSnapshot] = useState<Pick<InventoryFormData, 'name' | 'model' | 'specification'> | null>(null)
 
@@ -314,7 +324,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   const aiEnabled = Boolean(aiQuotaPayload?.enabled)
   const aiQuotaRemainingLabel =
     aiQuotaPayload?.quota.remaining === null || aiQuotaPayload?.quota.remaining === undefined ? '未知' : String(aiQuotaPayload.quota.remaining)
-  const canRunAiRecognition = aiEnabled && aiFile !== null && !aiPending
+  const canRunAiRecognition = aiEnabled && aiFiles.length > 0 && !aiPending
 
   const handleNameCodeChange = (value: string) => {
     setFormData((previousData) => {
@@ -333,26 +343,33 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   }
 
   const handleAiFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] || null
-    setAiFile(file)
-    setAiErrorMessage('')
+    const selectedFiles = Array.from(event.target.files || [])
+    if (selectedFiles.length > MAX_AI_IMAGE_FILES) {
+      setAiErrorMessage(`單次最多可上傳 ${MAX_AI_IMAGE_FILES} 張圖片。`)
+      setAiFiles(selectedFiles.slice(0, MAX_AI_IMAGE_FILES))
+    } else {
+      setAiErrorMessage('')
+      setAiFiles(selectedFiles)
+    }
     setAiMessage('')
-    setAiWarnings([])
-    setAiRawTextExcerpt('')
+    setAiRawTextExcerpts([])
+    setAiFieldSources({ name: null, model: null, specification: null })
+    setAiFailedFiles([])
   }
 
   const handleRecognizeSpec = async () => {
-    if (!canRunAiRecognition || !aiFile) {
+    if (!canRunAiRecognition || aiFiles.length === 0) {
       return
     }
     setAiPending(true)
     setAiErrorMessage('')
     setAiMessage('')
-    setAiWarnings([])
-    setAiRawTextExcerpt('')
+    setAiRawTextExcerpts([])
+    setAiFieldSources({ name: null, model: null, specification: null })
+    setAiFailedFiles([])
 
     try {
-      const response = await recognizeItemSpecFromImage(aiFile)
+      const response = await recognizeItemSpecFromImages(aiFiles)
       setRecognizedSnapshot({
         name: formData.name,
         model: formData.model,
@@ -360,13 +377,31 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
       })
       setFormData((previousData) => ({
         ...previousData,
-        name: response.recognized_fields.name,
-        model: response.recognized_fields.model,
-        specification: response.recognized_fields.specification,
+        name: response.merged_fields.name,
+        model: response.merged_fields.model,
+        specification: response.merged_fields.specification,
       }))
-      setAiWarnings(response.warnings)
-      setAiRawTextExcerpt(response.raw_text_excerpt)
-      setAiMessage('辨識完成，已覆寫品名、型號與規格欄位。')
+      setAiFieldSources(response.field_sources)
+      setAiFailedFiles(response.failed_files.map((item) => ({ filename: item.filename, message: item.message })))
+      setAiRawTextExcerpts(
+        response.results
+          .map((item) => ({
+            filename: item.filename || `file_${item.index + 1}`,
+            excerpt: item.raw_text_excerpt.trim(),
+          }))
+          .filter((item) => item.excerpt.length > 0),
+      )
+      setAiMessage(
+        (() => {
+          const hasRetry = response.results.some((item) => item.retry_used)
+          if (response.summary.failed > 0) {
+            return hasRetry
+              ? `辨識完成（成功 ${response.summary.succeeded} 張，失敗 ${response.summary.failed} 張）；部分 HEIC 已自動補救辨識，已覆寫品名、型號與規格欄位。`
+              : `辨識完成（成功 ${response.summary.succeeded} 張，失敗 ${response.summary.failed} 張），已覆寫品名、型號與規格欄位。`
+          }
+          return hasRetry ? '辨識完成，部分 HEIC 已自動補救辨識並覆寫品名、型號與規格欄位。' : '辨識完成，已覆寫品名、型號與規格欄位。'
+        })(),
+      )
       setAiQuotaPayload((previousPayload) => {
         if (!previousPayload) {
           return {
@@ -400,6 +435,8 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
       specification: recognizedSnapshot.specification,
     }))
     setRecognizedSnapshot(null)
+    setAiFieldSources({ name: null, model: null, specification: null })
+    setAiFailedFiles([])
     setAiMessage('已還原辨識前的欄位內容。')
   }
 
@@ -552,6 +589,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                     <Input
                       id="ai-spec-image-file"
                       type="file"
+                      multiple
                       accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                       onChange={handleAiFileChange}
                       disabled={!aiEnabled || aiPending}
@@ -577,17 +615,31 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                   </Button>
                 </div>
                 <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">支援 JPEG、PNG、WEBP、HEIC、HEIF（上限 5MB）。</p>
+                {aiFiles.length > 0 ? (
+                  <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+                    {`已選擇 ${aiFiles.length} 張：${aiFiles.map((file) => file.name).join('、')}`}
+                  </p>
+                ) : null}
                 {aiQuotaLoadError ? <p className="m-0 text-xs text-red-700">{aiQuotaLoadError}</p> : null}
                 {!aiEnabled && !aiQuotaLoadError ? (
                   <p className="m-0 text-xs text-amber-700">{aiQuotaPayload?.message || 'AI 功能尚未啟用，請改用手動填寫。'}</p>
                 ) : null}
                 {aiMessage ? <p className="m-0 text-xs text-emerald-700">{aiMessage}</p> : null}
                 {aiErrorMessage ? <p className="m-0 text-xs text-red-700">{aiErrorMessage}</p> : null}
-                {aiWarnings.length > 0 ? (
-                  <p className="m-0 text-xs text-amber-700">{`提醒：${aiWarnings.join('；')}`}</p>
+                {aiFieldSources.name || aiFieldSources.model || aiFieldSources.specification ? (
+                  <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+                    {`來源：品名 ${aiFieldSources.name?.filename || '--'} / 型號 ${aiFieldSources.model?.filename || '--'} / 規格 ${aiFieldSources.specification?.filename || '--'}`}
+                  </p>
                 ) : null}
-                {aiRawTextExcerpt ? (
-                  <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">{`OCR 摘要：${aiRawTextExcerpt}`}</p>
+                {aiRawTextExcerpts.length > 0 ? (
+                  <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+                    {`OCR 摘要：${aiRawTextExcerpts.map((item) => `${item.filename}=${item.excerpt}`).join('；')}`}
+                  </p>
+                ) : null}
+                {aiFailedFiles.length > 0 ? (
+                  <p className="m-0 text-xs text-red-700">
+                    {`失敗檔案：${aiFailedFiles.map((item) => `${item.filename || '--'}（${item.message}）`).join('；')}`}
+                  </p>
                 ) : null}
               </div>
               <div className="grid gap-1.5">

@@ -127,14 +127,20 @@ class AIRecognitionTests(unittest.TestCase):
                 {
                     'content': {
                         'parts': [
-                            {'text': '{"name":"Router","model":"AX6000","specification":"Wi-Fi 6","raw_text_excerpt":"Router AX6000 Wi-Fi 6"}'}
+                            {
+                                'text': (
+                                    '{"name":"Router","model":"AX6000","specification":"Wi-Fi 6",'
+                                    '"raw_text_excerpt":"Router AX6000 Wi-Fi 6",'
+                                    '"confidence":{"name":0.95,"model":0.88,"specification":0.9}}'
+                                )
+                            }
                         ]
                     }
                 }
             ]
         }
         with patch.object(ai_recognition, '_call_gemini', return_value=(payload, {'status': 'unknown'})):
-            fields, raw_text_excerpt, quota = ai_recognition.extract_fields_with_gemini(
+            fields, confidence, raw_text_excerpt, quota = ai_recognition.extract_fields_with_gemini(
                 image_mime_type='image/jpeg',
                 image_base64='ZmFrZS1kYXRh',
             )
@@ -142,8 +148,65 @@ class AIRecognitionTests(unittest.TestCase):
         self.assertEqual(fields['name'], 'Router')
         self.assertEqual(fields['model'], 'AX6000')
         self.assertEqual(fields['specification'], 'Wi-Fi 6')
+        self.assertEqual(confidence['name'], 0.95)
+        self.assertEqual(confidence['model'], 0.88)
+        self.assertEqual(confidence['specification'], 0.9)
         self.assertEqual(raw_text_excerpt, 'Router AX6000 Wi-Fi 6')
         self.assertEqual(quota, {'status': 'unknown'})
+
+    def test_select_best_field_candidate_prefers_confidence_then_completeness_then_order(self) -> None:
+        candidates = [
+            {
+                'index': 1,
+                'filename': 'b.jpg',
+                'recognized_fields': {'name': 'Router', 'model': 'AX6000', 'specification': ''},
+                'field_confidence': {'name': 0.9, 'model': 0.8, 'specification': 0.0},
+                'raw_text_excerpt': 'short',
+                'completeness': 2,
+            },
+            {
+                'index': 0,
+                'filename': 'a.jpg',
+                'recognized_fields': {'name': 'Router Pro', 'model': 'AX6000', 'specification': 'Wi-Fi 6'},
+                'field_confidence': {'name': 0.9, 'model': 0.9, 'specification': 0.9},
+                'raw_text_excerpt': 'long excerpt',
+                'completeness': 3,
+            },
+        ]
+        best_name = ai_recognition._select_best_field_candidate('name', candidates)  # noqa: SLF001
+        self.assertIsNotNone(best_name)
+        self.assertEqual(best_name['filename'], 'a.jpg')
+        self.assertEqual(best_name['value'], 'Router Pro')
+
+    def test_batch_heic_retries_when_model_missing(self) -> None:
+        first = ai_recognition.AIRecognitionResult(
+            recognized_fields={'name': '相機', 'model': '', 'specification': '20MP'},
+            field_confidence={'name': 0.9, 'model': 0.1, 'specification': 0.8},
+            raw_text_excerpt='first pass',
+            quota={'status': 'available'},
+            warnings=['model not confidently extracted'],
+        )
+        second = ai_recognition.AIRecognitionResult(
+            recognized_fields={'name': '相機', 'model': 'EOS R6', 'specification': '20MP'},
+            field_confidence={'name': 0.9, 'model': 0.9, 'specification': 0.8},
+            raw_text_excerpt='second pass',
+            quota={'status': 'available'},
+            warnings=[],
+        )
+        with (
+            patch.object(ai_recognition, 'is_feature_enabled', return_value=True),
+            patch.object(ai_recognition, 'recognize_spec_from_image', return_value=first),
+            patch.object(ai_recognition, '_retry_heic_model_extraction', return_value=second) as retry_mock,
+        ):
+            result = ai_recognition.recognize_spec_from_images_batch(
+                files=[{'filename': 'IMG_4648.HEIC', 'content_type': 'image/heic', 'file_content': b'heic-bytes'}]
+            )
+
+        self.assertEqual(result.merged_fields['model'], 'EOS R6')
+        self.assertEqual(result.summary['succeeded'], 1)
+        self.assertEqual(result.warnings, [])
+        self.assertTrue(result.results[0]['retry_used'])
+        retry_mock.assert_called_once()
 
     def test_get_quota_status_disabled_message_is_gemini_only(self) -> None:
         with (
