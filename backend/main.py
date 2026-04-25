@@ -2,10 +2,11 @@ import json
 import logging
 from datetime import date, datetime
 import math
+import os
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -75,6 +76,9 @@ from db import (
 )
 from xlsx_import import import_inventory_items_from_xlsx_content
 from google_sheets import ensure_google_oauth, is_google_sheets_configured, sync_requests_to_google_sheets
+from backup_service import list_sync_jobs, sync_supabase_tables_to_google_sheets
+from migration_service import get_migration_report, run_xlsx_to_supabase_migration
+from supabase_client import SupabaseConfigError
 from ai_recognition import (
     AIRecognitionError,
     get_quota_status,
@@ -460,6 +464,27 @@ class ImportResponse(BaseModel):
     created: int
     failed: int
     errors: list[ImportErrorDetail]
+
+
+class AdminMigrationRunRequest(BaseModel):
+    dry_run: bool = False
+
+
+class AdminMigrationRunResponse(BaseModel):
+    job_id: str
+    status: str
+    dry_run: bool
+    started_at: str
+    finished_at: str
+    errors: list[str] = Field(default_factory=list)
+
+
+class AdminBackupSyncResponse(BaseModel):
+    job_id: int | None = None
+    status: str
+    total_rows: int = 0
+    sheets_written: int = 0
+    error: str = ""
 
 
 class AiQuota(BaseModel):
@@ -1015,6 +1040,14 @@ def _log_ai_recognition_runtime_state() -> None:
         model,
         enabled,
     )
+
+
+def _ensure_admin_token(x_admin_token: str | None) -> None:
+    required_token = os.getenv("ADMIN_API_TOKEN", "").strip()
+    if not required_token:
+        raise HTTPException(status_code=503, detail="ADMIN_API_TOKEN is not configured")
+    if (x_admin_token or "").strip() != required_token:
+        raise HTTPException(status_code=401, detail="invalid admin token")
 
 
 @app.on_event("startup")
@@ -2339,6 +2372,71 @@ async def recognize_item_spec_batch_api(files: list[UploadFile] = File(...)):
         quota=AiQuota(**result.quota),
         warnings=result.warnings,
     )
+
+
+@app.post("/api/admin/migration/run", response_model=AdminMigrationRunResponse)
+def run_migration_api(
+    payload: AdminMigrationRunRequest,
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    try:
+        report = run_xlsx_to_supabase_migration(dry_run=payload.dry_run)
+    except SupabaseConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return AdminMigrationRunResponse(
+        job_id=_coerce_str(report.get("job_id")),
+        status=_coerce_str(report.get("status")),
+        dry_run=bool(report.get("dry_run")),
+        started_at=_coerce_str(report.get("started_at")),
+        finished_at=_coerce_str(report.get("finished_at")),
+        errors=[_coerce_str(value) for value in (report.get("errors") or [])],
+    )
+
+
+@app.get("/api/admin/migration/report/{job_id}")
+def get_migration_report_api(
+    job_id: str,
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    report = get_migration_report(job_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="migration report not found")
+    return report
+
+
+@app.post("/api/admin/backup/sheets/sync", response_model=AdminBackupSyncResponse)
+def sync_supabase_backup_api(
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    try:
+        result = sync_supabase_tables_to_google_sheets()
+    except SupabaseConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return AdminBackupSyncResponse(
+        job_id=(int(result["job_id"]) if result.get("job_id") is not None else None),
+        status=_coerce_str(result.get("status")),
+        total_rows=int(result.get("total_rows") or 0),
+        sheets_written=int(result.get("sheets_written") or 0),
+        error=_coerce_str(result.get("error")),
+    )
+
+
+@app.get("/api/admin/jobs/sync")
+def list_sync_jobs_api(
+    limit: int = Query(default=50, ge=1, le=200),
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    try:
+        return {"items": list_sync_jobs(limit=limit)}
+    except SupabaseConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/{full_path:path}")

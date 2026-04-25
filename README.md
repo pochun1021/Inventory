@@ -6,7 +6,7 @@
 
 - 前端：React 19 + TypeScript + Vite + TanStack Router + Tailwind CSS v4
 - 後端：FastAPI + Uvicorn
-- 資料儲存：XLSX（`backend/inventory.xlsx`，使用 `openpyxl` + `filelock`）
+- 資料儲存：XLSX（`backend/inventory.xlsx`，使用 `openpyxl` + `filelock`），並支援 Supabase 遷移/備份管理流程
 - 選配整合：Google Sheets 同步、Gemini 規格辨識
 
 ## 目前功能
@@ -112,6 +112,11 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
   - `GET /api/ai/spec-recognition/quota`
   - `POST /api/ai/spec-recognition`
   - `POST /api/ai/spec-recognition/batch`
+- 管理端點（需 `X-Admin-Token`）：
+  - `POST /api/admin/migration/run`
+  - `GET /api/admin/migration/report/{job_id}`
+  - `POST /api/admin/backup/sheets/sync`
+  - `GET /api/admin/jobs/sync`
 
 ## 交易規則（重點）
 

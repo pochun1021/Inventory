@@ -14,5 +14,6 @@ dependencies = [
     "pillow>=11.3.0",
     "pillow-heif>=1.1.0",
     "python-multipart>=0.0.22",
+    "supabase>=2.15.3",
     "uvicorn>=0.41.0",
 ]

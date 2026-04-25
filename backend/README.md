@@ -1,6 +1,6 @@
 # Backend（FastAPI）
 
-本目錄提供 Inventory 後端 API，資料以 XLSX 儲存，涵蓋資產、交易流程（領用/借用/捐贈）、日誌查詢、批次上傳與 AI 規格辨識。
+本目錄提供 Inventory 後端 API。現況主流程仍可用 XLSX，並已加入 Supabase 遷移/備份管理端點，涵蓋資產、交易流程（領用/借用/捐贈）、日誌查詢、批次上傳與 AI 規格辨識。
 
 ## 技術棧
 
@@ -19,6 +19,10 @@ backend/
 ├─ xlsx_import.py     # 批次上傳驗證與轉換
 ├─ ai_recognition.py  # AI 規格辨識
 ├─ google_sheets.py   # Google Sheets 同步（選配）
+├─ supabase_client.py # Supabase client 與環境設定
+├─ migration_service.py # XLSX -> Supabase 遷移與報告
+├─ backup_service.py  # Supabase -> Google Sheets 全表備份
+├─ supabase_sql/schema.sql # Supabase schema 與索引
 ├─ tests/
 └─ pyproject.toml
 ```
@@ -114,6 +118,13 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/ai/spec-recognition`
 - `POST /api/ai/spec-recognition/batch`
 
+### 管理端點（需 `X-Admin-Token`）
+
+- `POST /api/admin/migration/run`
+- `GET /api/admin/migration/report/{job_id}`
+- `POST /api/admin/backup/sheets/sync`
+- `GET /api/admin/jobs/sync`
+
 `POST /api/ai/spec-recognition` 補充：
 
 - 上傳格式：`multipart/form-data`，欄位 `file`
@@ -172,5 +183,10 @@ uv run pytest
 - `GOOGLE_SHEETS_SPREADSHEET_TITLE`
 - `GOOGLE_SHEETS_ISSUE_SHEET_NAME`
 - `GOOGLE_SHEETS_BORROW_SHEET_NAME`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SCHEMA`（預設 `public`）
+- `USE_SUPABASE`（`true/false`）
+- `ADMIN_API_TOKEN`
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`（可選，預設 `gemini-2.0-flash`）
