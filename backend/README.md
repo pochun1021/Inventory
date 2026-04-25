@@ -22,7 +22,8 @@ backend/
 ├─ supabase_client.py # Supabase client 與環境設定
 ├─ migration_service.py # XLSX -> Supabase 遷移與報告
 ├─ backup_service.py  # Supabase -> Google Sheets 全表備份
-├─ supabase_sql/schema.sql # Supabase schema 與索引
+├─ supabase/migrations/ # Supabase migration（Schema 唯一來源）
+├─ supabase_sql/schema.sql # Supabase schema 快照（文件與比對用）
 ├─ tests/
 └─ pyproject.toml
 ```
@@ -80,6 +81,15 @@ EOF
 
 完成後以 `uv run --env-file .env.local ...` 啟動後端。
 
+建立新 migration（本機）：
+
+```bash
+cd backend
+supabase migration new <migration_name>
+```
+
+產生後把 SQL 寫入 `backend/supabase/migrations/<timestamp>_<migration_name>.sql`。
+
 ### 環境切換（Local / Cloud）
 
 建議同時保留兩份環境檔：
@@ -111,9 +121,26 @@ uv run --env-file .env.cloud uvicorn main:app --reload --host 0.0.0.0 --port 800
 
 `SUPABASE_SERVICE_ROLE_KEY` 僅可放後端環境，不可放前端。
 
-### 遷移到 Supabase Cloud
+### Schema 部署（GitHub Actions）
 
-若要把本地資料搬到 Supabase Cloud（含 Cloud 端必要設定、環境變數與 dry-run/正式遷移步驟），請依 `backend/supabase_sql/README.md` 操作。
+- `main` 分支變更 `backend/supabase/migrations/**` 後，會觸發 `.github/workflows/db-schema-deploy.yml`。
+- Workflow 會依序執行：`supabase db lint` -> `supabase db push --include-all`。
+- 需要設定 GitHub Secrets：
+  - `SUPABASE_ACCESS_TOKEN`
+  - `SUPABASE_PROJECT_REF`
+  - `SUPABASE_DB_PASSWORD`
+
+### 資料同步（GitHub Actions）
+
+- `.github/workflows/db-data-sync.yml` 每日排程執行，並可手動觸發。
+- 每次先跑 `dry_run=true`，成功後才會進行 `dry_run=false` 正式同步。
+- 需要設定 GitHub Secrets：
+  - `BACKEND_BASE_URL`
+  - `ADMIN_API_TOKEN`
+
+### 遷移到 Supabase Cloud（一次性/初始化）
+
+若要做第一次上雲初始化（Cloud 端必要設定、環境變數、dry-run/正式遷移），請依 `backend/supabase_sql/README.md` 操作。
 
 ## API 一覽
 

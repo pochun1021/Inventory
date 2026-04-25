@@ -1,91 +1,58 @@
-# Supabase Migration Workflow (Local -> Cloud)
+# Supabase Cloud Workflow (Schema + Data Sync)
 
-本文件用於「先接上 local，再遷移到 Supabase Cloud」。
+本文件說明目前正式流程：
 
-## 1) Supabase Cloud 先做的設定
+- Schema：使用 `backend/supabase/migrations/*.sql` + GitHub Actions 自動部署。
+- Data：使用後端管理 API + GitHub Actions 排程同步。
+- `backend/supabase_sql/schema.sql` 僅作快照與人工檢閱，不是部署唯一來源。
 
-1. 在 Supabase 建立 Cloud project（選區域、設定 DB 密碼）。
-2. 進入 Cloud project 的 SQL Editor，執行 `backend/supabase_sql/schema.sql`。
-3. 從 Project Settings 取得：
-   - Project URL（給 `SUPABASE_URL`）
-   - `service_role` key（給 `SUPABASE_SERVICE_ROLE_KEY`）
+## 1) Cloud 專案初始化（一次性）
 
-注意：
-- `SUPABASE_SERVICE_ROLE_KEY` 只能放後端環境，不可放前端。
-- `ADMIN_API_TOKEN` 請使用強隨機字串。
+1. 在 Supabase 建立 Cloud project（區域與 DB 密碼）。
+2. 於 GitHub repo 設定 Secrets：
+   - `SUPABASE_ACCESS_TOKEN`
+   - `SUPABASE_PROJECT_REF`
+   - `SUPABASE_DB_PASSWORD`
+   - `BACKEND_BASE_URL`
+   - `ADMIN_API_TOKEN`
+3. 確認後端部署環境可正確處理：
+   - `POST /api/admin/migration/run`
+   - `GET /api/admin/migration/report/{job_id}`
 
-## 2) 後端環境變數（遷移到 Cloud）
+## 2) Schema 變更流程（Migration-first）
 
-以 `backend/.env.cloud` 為例：
-
-```dotenv
-USE_SUPABASE=true
-SUPABASE_URL="https://<project-ref>.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY="<cloud-service-role-key>"
-SUPABASE_SCHEMA="public"
-ADMIN_API_TOKEN="<strong-admin-token>"
-```
-
-啟動後端：
+本機建立 migration：
 
 ```bash
 cd backend
-cp env.cloud.example .env.cloud  # first time only
-uv run --env-file .env.cloud uvicorn main:app --host 0.0.0.0 --port 8000
+supabase migration new <migration_name>
 ```
 
-## 3) 先做 dry-run
+將 SQL 寫入 `backend/supabase/migrations/<timestamp>_<migration_name>.sql`，並提交到 `main`。
 
-```bash
-cd backend
-set -a
-source .env.cloud
-set +a
+`main` 合併後會觸發 `.github/workflows/db-schema-deploy.yml`：
 
-curl -X POST http://localhost:8000/api/admin/migration/run \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
-  -d '{"dry_run": true}'
-```
+1. `supabase link`
+2. `supabase db lint`
+3. `supabase db push --include-all`
 
-## 4) 正式遷移到 Cloud
+## 3) 資料同步流程（CI 排程）
 
-```bash
-cd backend
-set -a
-source .env.cloud
-set +a
+`.github/workflows/db-data-sync.yml` 會：
 
-curl -X POST http://localhost:8000/api/admin/migration/run \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Token: $ADMIN_API_TOKEN" \
-  -d '{"dry_run": false}'
-```
+1. 呼叫 `POST /api/admin/migration/run` with `{"dry_run": true}`
+2. 成功後呼叫 `POST /api/admin/migration/run` with `{"dry_run": false}`
+3. 查詢 `GET /api/admin/migration/report/{job_id}`，並寫入 workflow summary
 
-## 5) 查報告與驗證
+可手動執行 `workflow_dispatch`：
 
-```bash
-cd backend
-set -a
-source .env.cloud
-set +a
+- `run_full_sync=false`：只做 dry-run
+- `run_full_sync=true`：dry-run 成功後做正式同步
 
-curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
-  http://localhost:8000/api/admin/migration/report/<job_id>
-```
+## 4) 緊急回復與驗證
 
-`<job_id>` 可由 `run` API 回傳值取得。預期：
-- `status=success`
-- 各 table 有合理 `migrated_rows` / `skipped_rows`
-
-## 6) （可選）觸發 Cloud 備份到 Google Sheets
-
-```bash
-cd backend
-set -a
-source .env.cloud
-set +a
-
-curl -X POST -H "X-Admin-Token: $ADMIN_API_TOKEN" \
-  http://localhost:8000/api/admin/backup/sheets/sync
-```
+- 若 schema deploy 失敗，先修 migration 再重新觸發 workflow，不要在 Cloud SQL Editor 直接改正式結構。
+- 若 data sync 失敗，先看 workflow summary 與 `report.errors`，修正後重新執行。
+- 每次同步後建議抽查：
+  - `status=success`
+  - 各 table 的 `migrated_rows` / `skipped_rows` 是否合理

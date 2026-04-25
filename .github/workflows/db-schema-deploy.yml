@@ -1,0 +1,48 @@
+name: db-schema-deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - backend/supabase/migrations/**
+      - backend/supabase/config.toml
+      - .github/workflows/db-schema-deploy.yml
+  workflow_dispatch:
+
+concurrency:
+  group: db-schema-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate required secrets
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          test -n "$SUPABASE_PROJECT_REF"
+          test -n "$SUPABASE_DB_PASSWORD"
+
+      - name: Link cloud project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Lint migrations
+        run: supabase db lint --linked --fail-on error --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Push migrations
+        run: supabase db push --linked --include-all --password "$SUPABASE_DB_PASSWORD"

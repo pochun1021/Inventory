@@ -1,0 +1,87 @@
+name: db-data-sync
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      run_full_sync:
+        description: 'Set true to run non-dry-run after dry-run success'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+concurrency:
+  group: db-data-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_API_TOKEN: ${{ secrets.ADMIN_API_TOKEN }}
+      BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
+    steps:
+      - name: Validate required secrets
+        run: |
+          test -n "$BACKEND_BASE_URL"
+          test -n "$ADMIN_API_TOKEN"
+
+      - name: Dry-run sync
+        id: dryrun
+        run: |
+          set -euo pipefail
+          response=$(curl -sS -X POST "$BACKEND_BASE_URL/api/admin/migration/run" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+            -d '{"dry_run": true}')
+          echo "response=$response" >> "$GITHUB_OUTPUT"
+          status=$(echo "$response" | jq -r '.status')
+          job_id=$(echo "$response" | jq -r '.job_id')
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
+          test "$status" = "success"
+          test -n "$job_id"
+
+      - name: Fetch dry-run report
+        run: |
+          set -euo pipefail
+          report=$(curl -sS "$BACKEND_BASE_URL/api/admin/migration/report/${{ steps.dryrun.outputs.job_id }}" \
+            -H "X-Admin-Token: $ADMIN_API_TOKEN")
+          echo "$report" | jq .
+          echo "### Dry-run Report" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "$report" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run full sync
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_sync == 'true')
+        id: fullsync
+        run: |
+          set -euo pipefail
+          response=$(curl -sS -X POST "$BACKEND_BASE_URL/api/admin/migration/run" \
+            -H "Content-Type: application/json" \
+            -H "X-Admin-Token: $ADMIN_API_TOKEN" \
+            -d '{"dry_run": false}')
+          echo "response=$response" >> "$GITHUB_OUTPUT"
+          status=$(echo "$response" | jq -r '.status')
+          job_id=$(echo "$response" | jq -r '.job_id')
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
+          test "$status" = "success"
+          test -n "$job_id"
+
+      - name: Fetch full-sync report
+        if: steps.fullsync.outputs.job_id != ''
+        run: |
+          set -euo pipefail
+          report=$(curl -sS "$BACKEND_BASE_URL/api/admin/migration/report/${{ steps.fullsync.outputs.job_id }}" \
+            -H "X-Admin-Token: $ADMIN_API_TOKEN")
+          echo "$report" | jq .
+          echo "### Full-sync Report" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "$report" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
