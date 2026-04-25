@@ -44,7 +44,7 @@ jobs:
       - name: Lint migrations
         run: |
           set -euo pipefail
-          supabase db lint --linked --schema public --fail-on error --password "$SUPABASE_DB_PASSWORD" --debug
+          supabase db lint --linked --schema public --fail-on error --debug
 
       - name: Push migrations
         run: supabase db push --linked --include-all --password "$SUPABASE_DB_PASSWORD"
