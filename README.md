@@ -6,7 +6,7 @@
 
 - 前端：React 19 + TypeScript + Vite + TanStack Router + Tailwind CSS v4
 - 後端：FastAPI + Uvicorn
-- 資料儲存：XLSX（`backend/inventory.xlsx`，使用 `openpyxl` + `filelock`）
+- 資料儲存：XLSX（`backend/inventory.xlsx`，使用 `openpyxl` + `filelock`），並支援 Supabase 遷移/備份管理流程
 - 選配整合：Google Sheets 同步、Gemini 規格辨識
 
 ## 目前功能
@@ -49,11 +49,14 @@ Inventory/
 ```bash
 cd backend
 uv sync
-uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cp env.local.example .env.local  # first time only
+uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger：`http://localhost:8000/docs`
 - OpenAPI：`http://localhost:8000/openapi.json`
+
+地端/雲端切換建議使用 `backend/.env.local` 與 `backend/.env.cloud`，啟動時用 `--env-file` 明確指定。完整步驟請見 `backend/README.md` 的「環境切換（Local / Cloud）」與 `backend/supabase_sql/README.md`。
 
 ### 2) 啟動前端
 
@@ -112,6 +115,11 @@ VITE_API_BASE_URL=http://localhost:8000 npm run dev
   - `GET /api/ai/spec-recognition/quota`
   - `POST /api/ai/spec-recognition`
   - `POST /api/ai/spec-recognition/batch`
+- 管理端點（需 `X-Admin-Token`）：
+  - `POST /api/admin/migration/run`
+  - `GET /api/admin/migration/report/{job_id}`
+  - `POST /api/admin/backup/sheets/sync`
+  - `GET /api/admin/jobs/sync`
 
 ## 交易規則（重點）
 

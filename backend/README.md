@@ -1,6 +1,6 @@
 # Backend（FastAPI）
 
-本目錄提供 Inventory 後端 API，資料以 XLSX 儲存，涵蓋資產、交易流程（領用/借用/捐贈）、日誌查詢、批次上傳與 AI 規格辨識。
+本目錄提供 Inventory 後端 API。現況主流程仍可用 XLSX，並已加入 Supabase 遷移/備份管理端點，涵蓋資產、交易流程（領用/借用/捐贈）、日誌查詢、批次上傳與 AI 規格辨識。
 
 ## 技術棧
 
@@ -19,6 +19,10 @@ backend/
 ├─ xlsx_import.py     # 批次上傳驗證與轉換
 ├─ ai_recognition.py  # AI 規格辨識
 ├─ google_sheets.py   # Google Sheets 同步（選配）
+├─ supabase_client.py # Supabase client 與環境設定
+├─ migration_service.py # XLSX -> Supabase 遷移與報告
+├─ backup_service.py  # Supabase -> Google Sheets 全表備份
+├─ supabase_sql/schema.sql # Supabase schema 與索引
 ├─ tests/
 └─ pyproject.toml
 ```
@@ -28,11 +32,88 @@ backend/
 ```bash
 cd backend
 uv sync
-uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cp env.local.example .env.local  # first time only
+uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger：`http://localhost:8000/docs`
 - OpenAPI：`http://localhost:8000/openapi.json`
+
+### Supabase local（已啟用時）
+
+請在 `backend/` 目錄操作 Supabase CLI，避免 project context 錯置：
+
+```bash
+cd backend
+supabase status
+```
+
+建立 `backend/.env.local`（本機使用，不要提交版控）：
+
+```dotenv
+USE_SUPABASE=true
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_SCHEMA=public
+ADMIN_API_TOKEN=local-admin-token
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` 可由 local CLI 取得：
+
+```bash
+cd backend
+supabase status -o env | rg '^SERVICE_ROLE_KEY='
+```
+
+若要連同 API URL 一起生成 `.env.local`，可直接執行：
+
+```bash
+cd backend
+cat > .env.local <<EOF
+USE_SUPABASE=true
+SUPABASE_URL=$(supabase status -o env | rg '^API_URL=' | cut -d'=' -f2- | tr -d '"')
+SUPABASE_SERVICE_ROLE_KEY=$(supabase status -o env | rg '^SERVICE_ROLE_KEY=' | cut -d'=' -f2- | tr -d '"')
+SUPABASE_SCHEMA=public
+ADMIN_API_TOKEN=local-admin-token
+EOF
+```
+
+完成後以 `uv run --env-file .env.local ...` 啟動後端。
+
+### 環境切換（Local / Cloud）
+
+建議同時保留兩份環境檔：
+
+- `backend/.env.local`：連 Supabase local
+- `backend/.env.cloud`：連 Supabase Cloud
+
+兩份模板可用：
+
+```bash
+cd backend
+cp env.local.example .env.local
+cp env.cloud.example .env.cloud
+```
+
+啟動 local：
+
+```bash
+cd backend
+uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+啟動 cloud：
+
+```bash
+cd backend
+uv run --env-file .env.cloud uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` 僅可放後端環境，不可放前端。
+
+### 遷移到 Supabase Cloud
+
+若要把本地資料搬到 Supabase Cloud（含 Cloud 端必要設定、環境變數與 dry-run/正式遷移步驟），請依 `backend/supabase_sql/README.md` 操作。
 
 ## API 一覽
 
@@ -114,6 +195,13 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/ai/spec-recognition`
 - `POST /api/ai/spec-recognition/batch`
 
+### 管理端點（需 `X-Admin-Token`）
+
+- `POST /api/admin/migration/run`
+- `GET /api/admin/migration/report/{job_id}`
+- `POST /api/admin/backup/sheets/sync`
+- `GET /api/admin/jobs/sync`
+
 `POST /api/ai/spec-recognition` 補充：
 
 - 上傳格式：`multipart/form-data`，欄位 `file`
@@ -172,5 +260,10 @@ uv run pytest
 - `GOOGLE_SHEETS_SPREADSHEET_TITLE`
 - `GOOGLE_SHEETS_ISSUE_SHEET_NAME`
 - `GOOGLE_SHEETS_BORROW_SHEET_NAME`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SCHEMA`（預設 `public`）
+- `USE_SUPABASE`（`true/false`）
+- `ADMIN_API_TOKEN`
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`（可選，預設 `gemini-2.0-flash`）

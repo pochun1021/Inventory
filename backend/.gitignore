@@ -8,9 +8,16 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+.env.*
+.env.local
+.env.cloud
 
 # Sqlite
 *.db
+
+# Migration reports
+migration_reports/
 
 # Google Sheets OAuth
 client_secret.json
