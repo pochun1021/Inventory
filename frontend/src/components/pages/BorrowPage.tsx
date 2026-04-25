@@ -3,6 +3,7 @@ import Swal from 'sweetalert2'
 import { apiUrl } from '../../api'
 import { formatIsoDate, parseIsoDate } from '../../lib/date'
 import { Button } from '../ui/button'
+import { CameraScannerDialog } from '../ui/camera-scanner-dialog'
 import { DatePicker } from '../ui/date-picker'
 import { Dialog } from '../ui/dialog'
 import { Input } from '../ui/input'
@@ -117,6 +118,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
   const [pickupSelections, setPickupSelections] = useState<Record<number, number[]>>({})
   const [scanInputValue, setScanInputValue] = useState('')
   const [scanFeedback, setScanFeedback] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null)
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
 
   const [borrower, setBorrower] = useState('')
   const [department, setDepartment] = useState('')
@@ -483,6 +485,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
       setScanInputValue('')
       setScanFeedback(null)
       scanBufferRef.current = { value: '', lastTs: 0 }
+      setCameraScannerOpen(false)
       setPickupDialogOpen(true)
       await loadPickupLineCandidates(payload[0].line_id, '', 1)
     } catch (error) {
@@ -581,6 +584,7 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
     setScanInputValue('')
     setScanFeedback(null)
     scanBufferRef.current = { value: '', lastTs: 0 }
+    setCameraScannerOpen(false)
   }
 
   const handleSubmit = async () => {
@@ -920,8 +924,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         onClose={closePickupDialog}
         title="確認借出編號"
         description="可分批領取。大量清單可先掃碼，再按列檢查；每個編號只能使用一次。"
-        panelClassName="max-w-6xl h-[85vh] flex flex-col"
-        bodyClassName="min-h-0 flex-1 overflow-hidden"
+        panelClassName="max-w-6xl max-h-[85vh]"
+        bodyClassName="min-h-0 flex-1"
         actions={
           <>
             <Button type="button" variant="secondary" onClick={closePickupDialog} disabled={submitting}>
@@ -976,6 +980,9 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
                 />
                 <Button type="button" variant="secondary" onClick={() => void applyScanCode(scanInputValue)} disabled={submitting || !scanInputValue.trim()}>
                   加入
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => setCameraScannerOpen(true)} disabled={submitting}>
+                  相機掃描
                 </Button>
               </div>
               {scanFeedback ? (
@@ -1090,6 +1097,15 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
           </div>
         </div>
       </Dialog>
+      <CameraScannerDialog
+        open={cameraScannerOpen}
+        onClose={() => setCameraScannerOpen(false)}
+        onDetected={(code) => {
+          void applyScanCode(code)
+        }}
+        title="借用條碼相機掃描"
+        description="掃到條碼後，會直接套用到借用領取清單。"
+      />
     </div>
   )
 }
