@@ -53,7 +53,7 @@ describe('InventoryFormPage AI recognition', () => {
           provider: 'gemini',
           model: 'gemini-2.0-flash',
           quota: { status: 'unknown' },
-          message: 'Gemini token not configured',
+          message: 'Gemini token 尚未設定，AI 規格辨識功能未啟用。',
         })
       }
       throw new Error(`Unhandled URL: ${url}`)
@@ -61,12 +61,13 @@ describe('InventoryFormPage AI recognition', () => {
 
     render(<InventoryFormPage />)
 
-    await screen.findByText('Gemini token not configured')
+    await screen.findByText('Gemini token 尚未設定，AI 規格辨識功能未啟用。')
 
     const runButton = screen.getByRole('button', { name: '執行 AI 辨識' })
     const fileInput = screen.getByLabelText('辨識圖片')
     expect(runButton).toBeDisabled()
     expect(fileInput).toBeDisabled()
+    expect(fileInput).toHaveAttribute('accept', 'image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif')
   })
 
   it('fills and restores fields after recognition', async () => {

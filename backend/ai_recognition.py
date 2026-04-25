@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import base64
 import json
-import os
 import re
 from dataclasses import dataclass
 from io import BytesIO
@@ -9,13 +9,31 @@ from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-import pytesseract
 from PIL import Image
 from db import get_gemini_api_token_setting, get_gemini_model_setting
 
+try:
+    from pillow_heif import register_heif_opener as _register_heif_opener
+except Exception:
+    _register_heif_opener = None
+
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-SUPPORTED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+SUPPORTED_IMAGE_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+    "image/heic-sequence",
+    "image/heif-sequence",
+}
+HEIF_IMAGE_CONTENT_TYPES = {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"}
+HEIF_FILENAME_EXTENSIONS = (".heic", ".heif")
+HEIF_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heif", b"mif1", b"msf1"}
+SUPPORTED_IMAGE_FORMATS_MESSAGE = "只支援 JPEG、PNG、WEBP、HEIC、HEIF 圖片格式。"
+HEIF_DECODER_UNAVAILABLE_MESSAGE = "目前環境未啟用 HEIC/HEIF 解碼，請改上傳 JPEG、PNG 或 WEBP。"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 SUPPORTED_GEMINI_MODELS = (
     "gemini-2.5-flash",
@@ -26,6 +44,8 @@ GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/mode
 FIELD_NAMES = ("name", "model", "specification")
 
 _last_quota_snapshot: dict[str, Any] = {"status": "unknown"}
+_heif_decoder_checked = False
+_heif_decoder_available = False
 
 
 class AIRecognitionError(Exception):
@@ -84,7 +104,7 @@ def get_quota_status() -> dict[str, Any]:
         "quota": _last_quota_snapshot.copy(),
     }
     if not enabled:
-        payload["message"] = "Gemini token not configured"
+        payload["message"] = "Gemini token 尚未設定，AI 規格辨識功能未啟用。"
     return payload
 
 
@@ -96,7 +116,7 @@ def validate_gemini_token(token: str, *, model: str | None = None) -> dict[str, 
     if normalized_model and not is_supported_model(normalized_model):
         raise AIRecognitionError(code="invalid_model", message="Gemini model 不在可用清單。", status_code=400)
     _, quota = _call_gemini(
-        ocr_text="token validation",
+        parts=[{"text": "token validation"}],
         api_key_override=normalized_token,
         model_override=normalized_model or None,
     )
@@ -106,13 +126,20 @@ def validate_gemini_token(token: str, *, model: str | None = None) -> dict[str, 
 def recognize_spec_from_image(*, file_content: bytes, content_type: str, filename: str) -> AIRecognitionResult:
     if not is_feature_enabled():
         raise AIRecognitionError(code="feature_disabled", message="AI 規格辨識功能尚未啟用。", status_code=503)
-    _validate_image_input(file_content=file_content, content_type=content_type, filename=filename)
-    ocr_text = perform_ocr(file_content)
-    if not ocr_text.strip():
+    normalized_type = _validate_image_input(file_content=file_content, content_type=content_type, filename=filename)
+    image_mime_type, image_base64 = _prepare_image_for_gemini(
+        file_content=file_content,
+        content_type=normalized_type,
+        filename=filename,
+    )
+    fields, raw_text_excerpt, quota = extract_fields_with_gemini(
+        image_mime_type=image_mime_type,
+        image_base64=image_base64,
+    )
+    if not raw_text_excerpt.strip() and not any(fields.get(field, "").strip() for field in FIELD_NAMES):
         raise AIRecognitionError(code="ocr_failed", message="無法從圖片辨識出可用文字。", status_code=422)
-    fields, quota = extract_fields_with_gemini(ocr_text)
     warnings = [f"{field} not confidently extracted" for field in FIELD_NAMES if not fields.get(field, "").strip()]
-    raw_text_excerpt = re.sub(r"\s+", " ", ocr_text).strip()[:280]
+    raw_text_excerpt = re.sub(r"\s+", " ", raw_text_excerpt).strip()[:280]
     return AIRecognitionResult(
         recognized_fields={field: fields.get(field, "").strip() for field in FIELD_NAMES},
         raw_text_excerpt=raw_text_excerpt,
@@ -121,34 +148,100 @@ def recognize_spec_from_image(*, file_content: bytes, content_type: str, filenam
     )
 
 
-def _validate_image_input(*, file_content: bytes, content_type: str, filename: str) -> None:
-    normalized_type = (content_type or "").strip().lower()
+def _validate_image_input(*, file_content: bytes, content_type: str, filename: str) -> str:
+    normalized_type = _normalize_content_type(content_type)
     if normalized_type not in SUPPORTED_IMAGE_CONTENT_TYPES:
-        raise AIRecognitionError(code="invalid_image", message="只支援 JPEG、PNG、WEBP 圖片格式。", status_code=400)
+        if _is_heif_filename(filename) or _looks_like_heif(file_content):
+            normalized_type = "image/heic"
+        else:
+            raise AIRecognitionError(code="invalid_image", message=SUPPORTED_IMAGE_FORMATS_MESSAGE, status_code=400)
     if not file_content:
         raise AIRecognitionError(code="invalid_image", message="上傳圖片不可為空。", status_code=400)
     if len(file_content) > MAX_IMAGE_BYTES:
         raise AIRecognitionError(code="invalid_image", message="圖片大小不可超過 5MB。", status_code=400)
     if not filename:
         raise AIRecognitionError(code="invalid_image", message="缺少上傳檔名。", status_code=400)
+    if _is_heif_image(content_type=normalized_type, filename=filename) and not _ensure_heif_decoder_available():
+        raise AIRecognitionError(code="invalid_image", message=HEIF_DECODER_UNAVAILABLE_MESSAGE, status_code=400)
+    return normalized_type
 
 
-def perform_ocr(file_content: bytes) -> str:
-    tesseract_cmd = os.getenv("TESSERACT_CMD", "").strip()
-    if tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-    lang = os.getenv("TESSERACT_LANG", "").strip() or "eng"
+def _prepare_image_for_gemini(*, file_content: bytes, content_type: str, filename: str) -> tuple[str, str]:
     try:
+        if _is_heif_image(content_type=content_type, filename=filename) and not _ensure_heif_decoder_available():
+            raise AIRecognitionError(code="invalid_image", message=HEIF_DECODER_UNAVAILABLE_MESSAGE, status_code=400)
         image = Image.open(BytesIO(file_content))
-        return pytesseract.image_to_string(image, lang=lang)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        normalized = BytesIO()
+        image.save(normalized, format="JPEG", quality=90)
+        encoded = base64.b64encode(normalized.getvalue()).decode("ascii")
+        return "image/jpeg", encoded
     except AIRecognitionError:
         raise
     except Exception as exc:
-        raise AIRecognitionError(code="ocr_failed", message="OCR 辨識失敗，請確認影像內容與系統設定。", status_code=422) from exc
+        raise AIRecognitionError(code="invalid_image", message="圖片格式無法解析或轉換失敗。", status_code=400) from exc
 
 
-def extract_fields_with_gemini(ocr_text: str) -> tuple[dict[str, str], dict[str, Any]]:
-    response_payload, quota = _call_gemini(ocr_text)
+def _normalize_content_type(content_type: str) -> str:
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def _is_heif_filename(filename: str) -> bool:
+    normalized_name = (filename or "").strip().lower()
+    return any(normalized_name.endswith(ext) for ext in HEIF_FILENAME_EXTENSIONS)
+
+
+def _is_heif_image(*, content_type: str, filename: str) -> bool:
+    return _normalize_content_type(content_type) in HEIF_IMAGE_CONTENT_TYPES or _is_heif_filename(filename)
+
+
+def _looks_like_heif(file_content: bytes) -> bool:
+    if len(file_content) < 16:
+        return False
+    if file_content[4:8] != b"ftyp":
+        return False
+
+    brand_candidates = [file_content[8:12]]
+    compatible_brands = file_content[16:64]
+    for index in range(0, len(compatible_brands), 4):
+        chunk = compatible_brands[index : index + 4]
+        if len(chunk) == 4:
+            brand_candidates.append(chunk)
+    return any(brand in HEIF_BRANDS for brand in brand_candidates)
+
+
+def _ensure_heif_decoder_available() -> bool:
+    global _heif_decoder_checked
+    global _heif_decoder_available
+    if _heif_decoder_checked:
+        return _heif_decoder_available
+
+    _heif_decoder_checked = True
+    if _register_heif_opener is None:
+        _heif_decoder_available = False
+        return _heif_decoder_available
+
+    try:
+        _register_heif_opener()
+        _heif_decoder_available = True
+    except Exception:
+        _heif_decoder_available = False
+    return _heif_decoder_available
+
+
+def extract_fields_with_gemini(*, image_mime_type: str, image_base64: str) -> tuple[dict[str, str], str, dict[str, Any]]:
+    prompt = (
+        "You are extracting inventory item fields from an image.\n"
+        "Return JSON only with keys: name, model, specification, raw_text_excerpt.\n"
+        "Use empty string when uncertain.\n"
+    )
+    response_payload, quota = _call_gemini(
+        parts=[
+            {"text": prompt},
+            {"inlineData": {"mimeType": image_mime_type, "data": image_base64}},
+        ]
+    )
     parts = (
         response_payload.get("candidates", [{}])[0]
         .get("content", {})
@@ -167,25 +260,21 @@ def extract_fields_with_gemini(ocr_text: str) -> tuple[dict[str, str], dict[str,
     for field in FIELD_NAMES:
         value = parsed.get(field, "")
         normalized[field] = value.strip() if isinstance(value, str) else ""
-    return normalized, quota
+    raw_text_excerpt = parsed.get("raw_text_excerpt", "")
+    normalized_excerpt = raw_text_excerpt.strip() if isinstance(raw_text_excerpt, str) else ""
+    return normalized, normalized_excerpt, quota
 
 
 def _call_gemini(
-    ocr_text: str,
     *,
+    parts: list[dict[str, Any]],
     api_key_override: str | None = None,
     model_override: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     api_key = (api_key_override or "").strip() or get_api_key()
     model = (model_override or "").strip() or get_model_name()
-    prompt = (
-        "You are extracting inventory item fields from OCR text.\n"
-        "Return JSON only with keys: name, model, specification.\n"
-        "Use empty string when uncertain.\n"
-        f"OCR_TEXT:\n{ocr_text}\n"
-    )
     request_payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "responseMimeType": "application/json",
             "temperature": 0.1,

@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import date, datetime
 import math
 from pathlib import Path
@@ -88,6 +89,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_DIR.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -955,9 +957,23 @@ def _sync_requests_safe() -> None:
         )
 
 
+def _log_ai_recognition_runtime_state() -> None:
+    quota_status = get_quota_status()
+    provider = _coerce_str(quota_status.get("provider")).strip() or "gemini"
+    model = _coerce_str(quota_status.get("model")).strip()
+    enabled = bool(quota_status.get("enabled"))
+    logger.info(
+        "AI spec recognition runtime: provider=%s model=%s token_configured=%s",
+        provider,
+        model,
+        enabled,
+    )
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    _log_ai_recognition_runtime_state()
     purged_count = purge_soft_deleted_items()
     if purged_count > 0:
         log_inventory_action(

@@ -66,13 +66,39 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
                 'provider': 'gemini',
                 'model': 'gemini-2.0-flash',
                 'quota': {'status': 'unknown'},
-                'message': 'Gemini token not configured',
+                'message': 'Gemini token 尚未設定，AI 規格辨識功能未啟用。',
             },
         ):
             response = app_main.get_ai_spec_recognition_quota_api()
 
         self.assertFalse(response.enabled)
-        self.assertEqual(response.message, 'Gemini token not configured')
+        self.assertEqual(response.message, 'Gemini token 尚未設定，AI 規格辨識功能未啟用。')
+
+    def test_on_startup_logs_ai_runtime_state(self) -> None:
+        with (
+            patch.object(app_main, 'init_db'),
+            patch.object(app_main, 'purge_soft_deleted_items', return_value=0),
+            patch.object(app_main, 'is_google_sheets_configured', return_value=False),
+            patch.object(
+                app_main,
+                'get_quota_status',
+                return_value={
+                    'enabled': False,
+                    'provider': 'gemini',
+                    'model': 'gemini-2.5-flash',
+                    'quota': {'status': 'unknown'},
+                },
+            ),
+            patch.object(app_main.logger, 'info') as mock_info,
+        ):
+            app_main.on_startup()
+
+        mock_info.assert_called_once_with(
+            'AI spec recognition runtime: provider=%s model=%s token_configured=%s',
+            'gemini',
+            'gemini-2.5-flash',
+            False,
+        )
 
     def test_recognize_spec_success_response(self) -> None:
         mock_result = SimpleNamespace(
@@ -102,7 +128,7 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
         with patch.object(
             app_main,
             'recognize_spec_from_image',
-            side_effect=app_main.AIRecognitionError(code='invalid_image', message='只支援 JPEG、PNG、WEBP 圖片格式。', status_code=400),
+            side_effect=app_main.AIRecognitionError(code='invalid_image', message='只支援 JPEG、PNG、WEBP、HEIC、HEIF 圖片格式。', status_code=400),
         ):
             with self.assertRaises(HTTPException) as exc:
                 asyncio.run(
@@ -113,7 +139,7 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
 
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(exc.exception.detail['code'], 'invalid_image')
-        self.assertEqual(exc.exception.detail['message'], '只支援 JPEG、PNG、WEBP 圖片格式。')
+        self.assertEqual(exc.exception.detail['message'], '只支援 JPEG、PNG、WEBP、HEIC、HEIF 圖片格式。')
 
     def test_recognize_spec_returns_error_mapping_for_feature_disabled(self) -> None:
         with patch.object(
@@ -147,6 +173,27 @@ class AiSpecRecognitionApiTests(unittest.TestCase):
         self.assertEqual(exc.exception.status_code, 502)
         self.assertEqual(exc.exception.detail['code'], 'upstream_error')
         self.assertEqual(exc.exception.detail['message'], 'Gemini 服務連線失敗。')
+
+    def test_recognize_spec_returns_error_mapping_for_ocr_failed(self) -> None:
+        with patch.object(
+            app_main,
+            'recognize_spec_from_image',
+            side_effect=app_main.AIRecognitionError(
+                code='ocr_failed',
+                message='無法從圖片辨識出可用文字。',
+                status_code=422,
+            ),
+        ):
+            with self.assertRaises(HTTPException) as exc:
+                asyncio.run(
+                    app_main.recognize_item_spec_api(
+                        file=self._upload_file(filename='item.heic', content_type='image/heic'),
+                    )
+                )
+
+        self.assertEqual(exc.exception.status_code, 422)
+        self.assertEqual(exc.exception.detail['code'], 'ocr_failed')
+        self.assertEqual(exc.exception.detail['message'], '無法從圖片辨識出可用文字。')
 
 
 if __name__ == '__main__':
