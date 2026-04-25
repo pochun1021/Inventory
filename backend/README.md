@@ -47,7 +47,37 @@ cd backend
 supabase status
 ```
 
-後端 Supabase 連線參數建議放在 `backend/.env`，並以 `uv run --env-file .env ...` 啟動。
+建立 `backend/.env`（本機使用，不要提交版控）：
+
+```dotenv
+USE_SUPABASE=true
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_SCHEMA=public
+ADMIN_API_TOKEN=local-admin-token
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` 可由 local CLI 取得：
+
+```bash
+cd backend
+supabase status -o env | rg '^SERVICE_ROLE_KEY='
+```
+
+若要連同 API URL 一起生成 `.env`，可直接執行：
+
+```bash
+cd backend
+cat > .env <<EOF
+USE_SUPABASE=true
+SUPABASE_URL=$(supabase status -o env | rg '^API_URL=' | cut -d'=' -f2- | tr -d '"')
+SUPABASE_SERVICE_ROLE_KEY=$(supabase status -o env | rg '^SERVICE_ROLE_KEY=' | cut -d'=' -f2- | tr -d '"')
+SUPABASE_SCHEMA=public
+ADMIN_API_TOKEN=local-admin-token
+EOF
+```
+
+完成後以 `uv run --env-file .env ...` 啟動後端。
 
 ## API 一覽
 

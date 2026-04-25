@@ -49,11 +49,13 @@ Inventory/
 ```bash
 cd backend
 uv sync
-uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uv run --env-file .env uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger：`http://localhost:8000/docs`
 - OpenAPI：`http://localhost:8000/openapi.json`
+
+如需啟用 Supabase local，請先建立 `backend/.env`（`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`USE_SUPABASE` 等），詳細步驟請見 `backend/README.md` 的「Supabase local（已啟用時）」。
 
 ### 2) 啟動前端
 
