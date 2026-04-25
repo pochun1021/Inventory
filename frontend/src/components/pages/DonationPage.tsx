@@ -557,7 +557,6 @@ export function DonationPage({ requestId }: DonationPageProps) {
         open={cameraScannerOpen}
         onClose={() => setCameraScannerOpen(false)}
         onDetected={(code) => {
-          setCameraScannerOpen(false)
           void applyScanCode(code)
         }}
         title="捐贈條碼相機掃描"

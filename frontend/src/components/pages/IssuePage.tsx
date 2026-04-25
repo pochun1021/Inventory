@@ -544,7 +544,6 @@ export function IssuePage({ requestId }: IssuePageProps) {
         open={cameraScannerOpen}
         onClose={() => setCameraScannerOpen(false)}
         onDetected={(code) => {
-          setCameraScannerOpen(false)
           void applyScanCode(code)
         }}
         title="領用條碼相機掃描"

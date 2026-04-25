@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Html5Qrcode, Html5QrcodeScannerState, Html5QrcodeSupportedFormats } from 'html5-qrcode'
 
 import { Button } from './button'
 import { Dialog } from './dialog'
+import { Label } from './label'
+import { Select } from './select'
+
+type ScanMode = 'single' | 'continuous'
+type CameraDevice = {
+  id: string
+  label: string
+}
 
 type CameraScannerDialogProps = {
   open: boolean
@@ -10,6 +18,9 @@ type CameraScannerDialogProps = {
   onDetected: (code: string) => Promise<void> | void
   title?: string
   description?: string
+  defaultMode?: ScanMode
+  allowModeSwitch?: boolean
+  preferAutoCamera?: boolean
 }
 
 const DETECTION_DEDUP_WINDOW_MS = 2000
@@ -33,6 +44,9 @@ function toErrorMessage(error: unknown): string {
   }
   if (normalized.includes('notfounderror') || normalized.includes('no camera') || normalized.includes('camera not found')) {
     return '找不到可用相機，請改用條碼槍或手動輸入。'
+  }
+  if (normalized.includes('notreadableerror') || normalized.includes('trackstarterror') || normalized.includes('could not start video source')) {
+    return '相機可能被其他程式占用，請關閉其他相機程式後重試。'
   }
   return '相機啟動失敗，請稍後重試或改用手動輸入。'
 }
@@ -62,103 +76,137 @@ export function CameraScannerDialog({
   onDetected,
   title = '相機掃描',
   description = '將條碼置於框內，辨識後會自動帶入現有掃碼流程。',
+  defaultMode = 'single',
+  allowModeSwitch = true,
+  preferAutoCamera = true,
 }: CameraScannerDialogProps) {
   const elementId = useMemo(() => `camera-scanner-${Math.random().toString(36).slice(2, 10)}`, [])
+  const [cameras, setCameras] = useState<CameraDevice[]>([])
+  const [selectedCameraId, setSelectedCameraId] = useState('')
   const [loading, setLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  const [scanMode, setScanMode] = useState<ScanMode>(defaultMode)
   const scannerRef = useRef<Html5Qrcode | null>(null)
   const lastDetectedRef = useRef<{ code: string; ts: number } | null>(null)
   const onDetectedRef = useRef(onDetected)
+  const scanModeRef = useRef<ScanMode>(defaultMode)
+  const sessionRef = useRef(0)
 
   useEffect(() => {
     onDetectedRef.current = onDetected
   }, [onDetected])
 
   useEffect(() => {
+    setScanMode(defaultMode)
+  }, [defaultMode, open])
+
+  useEffect(() => {
+    scanModeRef.current = scanMode
+  }, [scanMode])
+
+  const pickPreferredCameraId = useCallback((devices: CameraDevice[]) => {
+    const rearCamera = devices.find((device) => {
+      const label = device.label.toLowerCase()
+      return label.includes('back') || label.includes('rear') || label.includes('environment')
+    })
+    return (rearCamera ?? devices[0]).id
+  }, [])
+
+  const startScanner = useCallback(async ({
+    scanner,
+    devices,
+    explicitCameraId,
+  }: {
+    scanner: Html5Qrcode
+    devices: CameraDevice[]
+    explicitCameraId?: string
+  }) => {
+    const preferredId = explicitCameraId || pickPreferredCameraId(devices)
+    setSelectedCameraId(preferredId)
+
+    const onSuccess = (decodedText: string) => {
+      const code = decodedText.trim()
+      if (!code) {
+        return
+      }
+      const now = Date.now()
+      const last = lastDetectedRef.current
+      if (last && last.code === code && now - last.ts < DETECTION_DEDUP_WINDOW_MS) {
+        return
+      }
+      lastDetectedRef.current = { code, ts: now }
+      void Promise.resolve(onDetectedRef.current(code))
+      if (scanModeRef.current === 'single') {
+        onClose()
+      }
+    }
+
+    if (explicitCameraId) {
+      await scanner.start({ deviceId: { exact: explicitCameraId } }, READER_CONFIG, onSuccess, () => undefined)
+      return
+    }
+
+    if (preferAutoCamera && preferredId) {
+      await scanner.start({ deviceId: { exact: preferredId } }, READER_CONFIG, onSuccess, () => undefined)
+      return
+    }
+
+    try {
+      await scanner.start({ facingMode: 'environment' }, READER_CONFIG, onSuccess, () => undefined)
+    } catch {
+      await scanner.start({ deviceId: { exact: preferredId } }, READER_CONFIG, onSuccess, () => undefined)
+    }
+  }, [onClose, pickPreferredCameraId, preferAutoCamera])
+
+  const restartScanner = useCallback(async (explicitCameraId?: string) => {
+    const scanner = scannerRef.current
+    if (!scanner || !open) {
+      return
+    }
+    const currentSession = ++sessionRef.current
+    setLoading(true)
+    setErrorMessage('')
+    lastDetectedRef.current = null
+    try {
+      const devices = (await Html5Qrcode.getCameras()) as CameraDevice[]
+      if (currentSession !== sessionRef.current) {
+        return
+      }
+      if (!Array.isArray(devices) || devices.length === 0) {
+        throw new Error('camera not found')
+      }
+      setCameras(devices)
+      await stopScanner(scanner)
+      await startScanner({ scanner, devices, explicitCameraId })
+    } catch (error) {
+      if (currentSession === sessionRef.current) {
+        setErrorMessage(toErrorMessage(error))
+      }
+    } finally {
+      if (currentSession === sessionRef.current) {
+        setLoading(false)
+      }
+    }
+  }, [open, startScanner])
+
+  useEffect(() => {
     if (!open) {
       return
     }
 
-    let active = true
     const scanner = new Html5Qrcode(elementId)
     scannerRef.current = scanner
-    setLoading(true)
-    setErrorMessage('')
-    lastDetectedRef.current = null
-
-    const start = async () => {
-      try {
-        const cameras = await Html5Qrcode.getCameras()
-        if (!active) {
-          return
-        }
-        if (!Array.isArray(cameras) || cameras.length === 0) {
-          throw new Error('camera not found')
-        }
-
-        try {
-          await scanner.start(
-            { facingMode: 'environment' },
-            READER_CONFIG,
-            (decodedText) => {
-              const code = decodedText.trim()
-              if (!code) {
-                return
-              }
-              const now = Date.now()
-              const last = lastDetectedRef.current
-              if (last && last.code === code && now - last.ts < DETECTION_DEDUP_WINDOW_MS) {
-                return
-              }
-              lastDetectedRef.current = { code, ts: now }
-              void Promise.resolve(onDetectedRef.current(code))
-            },
-            () => undefined,
-          )
-        } catch (error) {
-          const raw = error instanceof Error ? error.message.toLowerCase() : String(error ?? '').toLowerCase()
-          if (raw.includes('notallowederror') || raw.includes('permission')) {
-            throw error
-          }
-          await scanner.start(
-            { deviceId: { exact: cameras[0].id } },
-            READER_CONFIG,
-            (decodedText) => {
-              const code = decodedText.trim()
-              if (!code) {
-                return
-              }
-              const now = Date.now()
-              const last = lastDetectedRef.current
-              if (last && last.code === code && now - last.ts < DETECTION_DEDUP_WINDOW_MS) {
-                return
-              }
-              lastDetectedRef.current = { code, ts: now }
-              void Promise.resolve(onDetectedRef.current(code))
-            },
-            () => undefined,
-          )
-        }
-      } catch (error) {
-        if (active) {
-          setErrorMessage(toErrorMessage(error))
-        }
-      } finally {
-        if (active) {
-          setLoading(false)
-        }
-      }
-    }
-
-    void start()
+    void restartScanner()
 
     return () => {
-      active = false
+      sessionRef.current += 1
+      setCameras([])
+      setSelectedCameraId('')
       const currentScanner = scannerRef.current
       scannerRef.current = null
       void stopScanner(currentScanner)
     }
-  }, [elementId, open])
+  }, [elementId, open, restartScanner])
 
   return (
     <Dialog
@@ -176,10 +224,53 @@ export function CameraScannerDialog({
       )}
     >
       <div className="grid gap-2">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${elementId}-camera-select`}>鏡頭來源</Label>
+            <Select
+              id={`${elementId}-camera-select`}
+              value={selectedCameraId}
+              disabled={loading || cameras.length === 0}
+              onChange={(event) => {
+                const cameraId = event.target.value
+                setSelectedCameraId(cameraId)
+                void restartScanner(cameraId)
+              }}
+            >
+              {cameras.length === 0 ? <option value="">無可用鏡頭</option> : null}
+              {cameras.map((camera, index) => (
+                <option key={camera.id} value={camera.id}>
+                  {camera.label || `鏡頭 ${index + 1}`}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`${elementId}-mode-select`}>掃描模式</Label>
+            <Select
+              id={`${elementId}-mode-select`}
+              value={scanMode}
+              disabled={!allowModeSwitch}
+              onChange={(event) => {
+                setScanMode(event.target.value as ScanMode)
+              }}
+            >
+              <option value="single">單次掃描（成功後關閉）</option>
+              <option value="continuous">連續掃描（保持開啟）</option>
+            </Select>
+          </div>
+        </div>
         <div id={elementId} className="min-h-[280px] overflow-hidden rounded-md border border-[hsl(var(--border))]" />
         {loading ? <p className="m-0 text-sm text-[hsl(var(--muted-foreground))]">相機啟動中...</p> : null}
         {errorMessage ? <p className="m-0 text-sm text-red-700">{errorMessage}</p> : null}
-        {!errorMessage ? <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">若無法啟動，請改用現有條碼輸入欄位。</p> : null}
+        <div className="flex items-center justify-between gap-2">
+          <p className="m-0 text-xs text-[hsl(var(--muted-foreground))]">
+            若無法啟動，請改用現有條碼輸入欄位。
+          </p>
+          <Button type="button" variant="secondary" onClick={() => void restartScanner(selectedCameraId || undefined)} disabled={loading}>
+            重新啟動相機
+          </Button>
+        </div>
       </div>
     </Dialog>
   )

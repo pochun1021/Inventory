@@ -924,8 +924,8 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         onClose={closePickupDialog}
         title="確認借出編號"
         description="可分批領取。大量清單可先掃碼，再按列檢查；每個編號只能使用一次。"
-        panelClassName="max-w-6xl h-[85vh] flex flex-col"
-        bodyClassName="min-h-0 flex-1 overflow-hidden"
+        panelClassName="max-w-6xl max-h-[85vh]"
+        bodyClassName="min-h-0 flex-1"
         actions={
           <>
             <Button type="button" variant="secondary" onClick={closePickupDialog} disabled={submitting}>
@@ -1101,7 +1101,6 @@ export function BorrowPage({ requestId }: BorrowPageProps) {
         open={cameraScannerOpen}
         onClose={() => setCameraScannerOpen(false)}
         onDetected={(code) => {
-          setCameraScannerOpen(false)
           void applyScanCode(code)
         }}
         title="借用條碼相機掃描"

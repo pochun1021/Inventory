@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -52,7 +52,12 @@ describe('CameraScannerDialog', () => {
     mocks.scannerGetStateMock.mockReturnValue(2)
     mocks.scannerStopMock.mockResolvedValue(undefined)
     mocks.scannerClearMock.mockImplementation(() => undefined)
-    mocks.scannerStartMock.mockResolvedValue(undefined)
+    mocks.scannerStartMock.mockImplementation(async (...args: unknown[]) => {
+      const onSuccess = args[2] as ((decodedText: string) => void) | undefined
+      if (onSuccess) {
+        mocks.successCallback = onSuccess
+      }
+    })
     mocks.getCamerasMock.mockResolvedValue([{ id: 'camera-1', label: 'Back Camera' }])
   })
 
@@ -63,18 +68,27 @@ describe('CameraScannerDialog', () => {
 
     await waitFor(() => {
       expect(mocks.scannerStartMock).toHaveBeenCalledTimes(1)
+      expect(mocks.scannerStartMock).toHaveBeenNthCalledWith(
+        1,
+        { deviceId: { exact: 'camera-1' } },
+        expect.anything(),
+        expect.any(Function),
+        expect.any(Function),
+      )
     })
 
     rerender(<CameraScannerDialog open={false} onClose={onClose} onDetected={onDetected} />)
 
     await waitFor(() => {
-      expect(mocks.scannerStopMock).toHaveBeenCalledTimes(1)
-      expect(mocks.scannerClearMock).toHaveBeenCalledTimes(1)
+      expect(mocks.scannerStopMock).toHaveBeenCalled()
+      expect(mocks.scannerClearMock).toHaveBeenCalled()
     })
   })
 
   it('shows permission error message when camera permission is denied', async () => {
-    mocks.scannerStartMock.mockRejectedValueOnce(new Error('NotAllowedError'))
+    mocks.scannerStartMock.mockImplementationOnce(async () => {
+      throw new Error('NotAllowedError')
+    })
 
     render(<CameraScannerDialog open={true} onClose={() => undefined} onDetected={() => undefined} />)
 
@@ -106,5 +120,66 @@ describe('CameraScannerDialog', () => {
     expect(onDetected).toHaveBeenCalledTimes(2)
 
     nowSpy.mockRestore()
+  })
+
+  it('supports manual camera switching with restart', async () => {
+    mocks.getCamerasMock.mockResolvedValue([
+      { id: 'cam-front', label: 'Front Camera' },
+      { id: 'cam-rear', label: 'Rear Camera' },
+    ])
+    render(<CameraScannerDialog open={true} onClose={() => undefined} onDetected={() => undefined} />)
+
+    await waitFor(() => {
+      expect(mocks.scannerStartMock).toHaveBeenCalledTimes(1)
+      expect(mocks.scannerStartMock).toHaveBeenNthCalledWith(
+        1,
+        { deviceId: { exact: 'cam-rear' } },
+        expect.anything(),
+        expect.any(Function),
+        expect.any(Function),
+      )
+    })
+
+    const cameraSelect = screen.getByLabelText('鏡頭來源')
+    fireEvent.change(cameraSelect, { target: { value: 'cam-front' } })
+
+    await waitFor(() => {
+      expect(mocks.scannerStopMock).toHaveBeenCalled()
+      expect(mocks.scannerStartMock).toHaveBeenCalledTimes(2)
+      expect(mocks.scannerStartMock).toHaveBeenNthCalledWith(
+        2,
+        { deviceId: { exact: 'cam-front' } },
+        expect.anything(),
+        expect.any(Function),
+        expect.any(Function),
+      )
+    })
+  })
+
+  it('auto closes on single mode but keeps open on continuous mode', async () => {
+    const onClose = vi.fn()
+    const onDetected = vi.fn()
+    const { rerender } = render(<CameraScannerDialog open={true} onClose={onClose} onDetected={onDetected} />)
+
+    await waitFor(() => {
+      expect(mocks.successCallback).not.toBeNull()
+    })
+
+    act(() => {
+      mocks.successCallback?.('ONE-001')
+    })
+    expect(onDetected).toHaveBeenCalledWith('ONE-001')
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    rerender(<CameraScannerDialog open={true} onClose={onClose} onDetected={onDetected} defaultMode="continuous" />)
+
+    const modeSelect = screen.getByLabelText('掃描模式')
+    fireEvent.change(modeSelect, { target: { value: 'continuous' } })
+
+    act(() => {
+      mocks.successCallback?.('TWO-002')
+    })
+    expect(onDetected).toHaveBeenCalledWith('TWO-002')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
