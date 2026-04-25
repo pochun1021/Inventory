@@ -16,7 +16,7 @@
 
 ## 2) 後端環境變數（遷移到 Cloud）
 
-以 `backend/.env` 為例：
+以 `backend/.env.cloud` 為例：
 
 ```dotenv
 USE_SUPABASE=true
@@ -30,12 +30,18 @@ ADMIN_API_TOKEN="<strong-admin-token>"
 
 ```bash
 cd backend
-uv run --env-file .env uvicorn main:app --host 0.0.0.0 --port 8000
+cp env.cloud.example .env.cloud  # first time only
+uv run --env-file .env.cloud uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ## 3) 先做 dry-run
 
 ```bash
+cd backend
+set -a
+source .env.cloud
+set +a
+
 curl -X POST http://localhost:8000/api/admin/migration/run \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: $ADMIN_API_TOKEN" \
@@ -45,6 +51,11 @@ curl -X POST http://localhost:8000/api/admin/migration/run \
 ## 4) 正式遷移到 Cloud
 
 ```bash
+cd backend
+set -a
+source .env.cloud
+set +a
+
 curl -X POST http://localhost:8000/api/admin/migration/run \
   -H "Content-Type: application/json" \
   -H "X-Admin-Token: $ADMIN_API_TOKEN" \
@@ -54,6 +65,11 @@ curl -X POST http://localhost:8000/api/admin/migration/run \
 ## 5) 查報告與驗證
 
 ```bash
+cd backend
+set -a
+source .env.cloud
+set +a
+
 curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
   http://localhost:8000/api/admin/migration/report/<job_id>
 ```
@@ -65,6 +81,11 @@ curl -H "X-Admin-Token: $ADMIN_API_TOKEN" \
 ## 6) （可選）觸發 Cloud 備份到 Google Sheets
 
 ```bash
+cd backend
+set -a
+source .env.cloud
+set +a
+
 curl -X POST -H "X-Admin-Token: $ADMIN_API_TOKEN" \
   http://localhost:8000/api/admin/backup/sheets/sync
 ```

@@ -32,7 +32,8 @@ backend/
 ```bash
 cd backend
 uv sync
-uv run --env-file .env uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cp env.local.example .env.local  # first time only
+uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger：`http://localhost:8000/docs`
@@ -47,7 +48,7 @@ cd backend
 supabase status
 ```
 
-建立 `backend/.env`（本機使用，不要提交版控）：
+建立 `backend/.env.local`（本機使用，不要提交版控）：
 
 ```dotenv
 USE_SUPABASE=true
@@ -64,11 +65,11 @@ cd backend
 supabase status -o env | rg '^SERVICE_ROLE_KEY='
 ```
 
-若要連同 API URL 一起生成 `.env`，可直接執行：
+若要連同 API URL 一起生成 `.env.local`，可直接執行：
 
 ```bash
 cd backend
-cat > .env <<EOF
+cat > .env.local <<EOF
 USE_SUPABASE=true
 SUPABASE_URL=$(supabase status -o env | rg '^API_URL=' | cut -d'=' -f2- | tr -d '"')
 SUPABASE_SERVICE_ROLE_KEY=$(supabase status -o env | rg '^SERVICE_ROLE_KEY=' | cut -d'=' -f2- | tr -d '"')
@@ -77,7 +78,38 @@ ADMIN_API_TOKEN=local-admin-token
 EOF
 ```
 
-完成後以 `uv run --env-file .env ...` 啟動後端。
+完成後以 `uv run --env-file .env.local ...` 啟動後端。
+
+### 環境切換（Local / Cloud）
+
+建議同時保留兩份環境檔：
+
+- `backend/.env.local`：連 Supabase local
+- `backend/.env.cloud`：連 Supabase Cloud
+
+兩份模板可用：
+
+```bash
+cd backend
+cp env.local.example .env.local
+cp env.cloud.example .env.cloud
+```
+
+啟動 local：
+
+```bash
+cd backend
+uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+啟動 cloud：
+
+```bash
+cd backend
+uv run --env-file .env.cloud uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+`SUPABASE_SERVICE_ROLE_KEY` 僅可放後端環境，不可放前端。
 
 ### 遷移到 Supabase Cloud
 

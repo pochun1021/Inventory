@@ -49,14 +49,14 @@ Inventory/
 ```bash
 cd backend
 uv sync
-uv run --env-file .env uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cp env.local.example .env.local  # first time only
+uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger：`http://localhost:8000/docs`
 - OpenAPI：`http://localhost:8000/openapi.json`
 
-如需啟用 Supabase local，請先建立 `backend/.env`（`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`USE_SUPABASE` 等），詳細步驟請見 `backend/README.md` 的「Supabase local（已啟用時）」。
-如需遷移到 Supabase Cloud，請參考 `backend/supabase_sql/README.md` 的 Local -> Cloud 流程與雲端設定清單。
+地端/雲端切換建議使用 `backend/.env.local` 與 `backend/.env.cloud`，啟動時用 `--env-file` 明確指定。完整步驟請見 `backend/README.md` 的「環境切換（Local / Cloud）」與 `backend/supabase_sql/README.md`。
 
 ### 2) 啟動前端
 
