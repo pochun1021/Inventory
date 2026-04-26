@@ -137,6 +137,8 @@ uv run --env-file .env.cloud uvicorn main:app --reload --host 0.0.0.0 --port 800
 - 需要設定 GitHub Secrets：
   - `BACKEND_BASE_URL`
   - `ADMIN_API_TOKEN`
+- `POST /api/admin/migration/run` 在失敗時仍回傳結構化 JSON（`status=failed`、`error_code`、`errors`），
+  workflow 會將 HTTP 狀態與錯誤摘要寫入 Step Summary 以利除錯。
 
 ### 遷移到 Supabase Cloud（一次性/初始化）
 

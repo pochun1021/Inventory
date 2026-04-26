@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -20,9 +21,12 @@ class AdminManagementApiTests(unittest.TestCase):
             os.environ["ADMIN_API_TOKEN"] = self._original_token
 
     def test_migration_api_requires_admin_token(self) -> None:
-        with self.assertRaises(HTTPException) as exc:
-            app_main.run_migration_api(app_main.AdminMigrationRunRequest(dry_run=True), x_admin_token="")
-        self.assertEqual(exc.exception.status_code, 401)
+        response = app_main.run_migration_api(app_main.AdminMigrationRunRequest(dry_run=True), x_admin_token="")
+        self.assertEqual(response.status_code, 401)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["error_code"], "invalid_admin_token")
+        self.assertTrue(payload["errors"])
 
     @patch("main.run_xlsx_to_supabase_migration")
     def test_migration_api_returns_report_payload(self, mock_run) -> None:
@@ -43,19 +47,21 @@ class AdminManagementApiTests(unittest.TestCase):
         self.assertEqual(response.job_id, "20260425170000")
         self.assertEqual(response.status, "success")
         self.assertTrue(response.dry_run)
+        self.assertEqual(response.error_code, "")
 
     @patch("main.run_xlsx_to_supabase_migration")
     def test_migration_api_handles_supabase_config_error(self, mock_run) -> None:
         mock_run.side_effect = SupabaseConfigError("SUPABASE_URL is required")
 
-        with self.assertRaises(HTTPException) as exc:
-            app_main.run_migration_api(
-                app_main.AdminMigrationRunRequest(dry_run=False),
-                x_admin_token="test-token",
-            )
-
-        self.assertEqual(exc.exception.status_code, 503)
-        self.assertEqual(exc.exception.detail, "SUPABASE_URL is required")
+        response = app_main.run_migration_api(
+            app_main.AdminMigrationRunRequest(dry_run=False),
+            x_admin_token="test-token",
+        )
+        self.assertEqual(response.status_code, 503)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["error_code"], "supabase_config_error")
+        self.assertEqual(payload["errors"], ["SUPABASE_URL is required"])
 
     @patch("main.get_migration_report")
     def test_get_migration_report_api_404_when_missing(self, mock_get_report) -> None:

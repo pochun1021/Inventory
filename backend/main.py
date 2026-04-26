@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from db import (
@@ -477,6 +477,7 @@ class AdminMigrationRunResponse(BaseModel):
     started_at: str
     finished_at: str
     errors: list[str] = Field(default_factory=list)
+    error_code: str = ""
 
 
 class AdminBackupSyncResponse(BaseModel):
@@ -2379,11 +2380,32 @@ def run_migration_api(
     payload: AdminMigrationRunRequest,
     x_admin_token: str | None = Header(default=None),
 ):
-    _ensure_admin_token(x_admin_token)
+    def _error_response(*, status_code: int, error_code: str, message: str) -> JSONResponse:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        response = AdminMigrationRunResponse(
+            job_id="",
+            status="failed",
+            dry_run=payload.dry_run,
+            started_at=timestamp,
+            finished_at=timestamp,
+            errors=[message] if message else [],
+            error_code=error_code,
+        )
+        return JSONResponse(status_code=status_code, content=response.model_dump())
+
+    try:
+        _ensure_admin_token(x_admin_token)
+    except HTTPException as exc:
+        error_code = "invalid_admin_token" if exc.status_code == 401 else "admin_token_not_configured"
+        return _error_response(status_code=exc.status_code, error_code=error_code, message=_coerce_str(exc.detail))
+
     try:
         report = run_xlsx_to_supabase_migration(dry_run=payload.dry_run)
     except SupabaseConfigError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return _error_response(status_code=503, error_code="supabase_config_error", message=str(exc))
+    except Exception as exc:  # pragma: no cover - unexpected runtime failure
+        logger.exception("migration run failed")
+        return _error_response(status_code=500, error_code="migration_run_error", message=str(exc))
     return AdminMigrationRunResponse(
         job_id=_coerce_str(report.get("job_id")),
         status=_coerce_str(report.get("status")),
@@ -2391,6 +2413,7 @@ def run_migration_api(
         started_at=_coerce_str(report.get("started_at")),
         finished_at=_coerce_str(report.get("finished_at")),
         errors=[_coerce_str(value) for value in (report.get("errors") or [])],
+        error_code="",
     )
 
 
