@@ -2381,6 +2381,7 @@ def run_migration_api(
     x_admin_token: str | None = Header(default=None),
 ):
     def _error_response(*, status_code: int, error_code: str, message: str) -> JSONResponse:
+        normalized_message = message.strip() or "migration request failed"
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         response = AdminMigrationRunResponse(
             job_id="",
@@ -2388,7 +2389,7 @@ def run_migration_api(
             dry_run=payload.dry_run,
             started_at=timestamp,
             finished_at=timestamp,
-            errors=[message] if message else [],
+            errors=[normalized_message],
             error_code=error_code,
         )
         return JSONResponse(status_code=status_code, content=response.model_dump())

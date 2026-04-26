@@ -30,12 +30,69 @@ jobs:
           test -n "$BACKEND_BASE_URL"
           test -n "$ADMIN_API_TOKEN"
 
+      - name: Backend health probe
+        run: |
+          set -euo pipefail
+          fail_with_context() {
+            local title="$1"
+            local http="$2"
+            local message="$3"
+            echo "::error::${title} | http=${http} | message=${message}"
+            echo "### ${title}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HTTP: $http" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Message: $message" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          response_file="$(mktemp)"
+          http_code=$(curl -sS -o "$response_file" -w "%{http_code}" \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 2 \
+            --retry-connrefused \
+            "$BACKEND_BASE_URL/api/data")
+          response=$(cat "$response_file")
+          rm -f "$response_file"
+
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            if jq -e . >/dev/null 2>&1 <<< "$response"; then
+              message=$(jq -r '.detail // .message // "backend probe failed"' <<< "$response")
+            else
+              message="$(echo "$response" | tr '\n' ' ' | cut -c1-500)"
+            fi
+            fail_with_context "Backend Health Probe Failed" "$http_code" "${message:-backend probe failed}"
+            exit 1
+          fi
+
       - name: Dry-run sync
         id: dryrun
         run: |
           set -euo pipefail
+          fail_with_context() {
+            local title="$1"
+            local http="$2"
+            local status="$3"
+            local code="$4"
+            local message="$5"
+            echo "::error::${title} | http=${http} | status=${status:-<empty>} | error_code=${code:-<empty>} | message=${message:-<empty>}"
+            echo "### ${title}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HTTP: $http" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Status: ${status:-<empty>}" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$code" ]; then
+              echo "- Error code: $code" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -n "$message" ]; then
+              echo "- Message: $message" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
           response_file="$(mktemp)"
           http_code=$(curl -sS -o "$response_file" -w "%{http_code}" -X POST "$BACKEND_BASE_URL/api/admin/migration/run" \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 2 \
+            --retry-connrefused \
             -H "Content-Type: application/json" \
             -H "X-Admin-Token: $ADMIN_API_TOKEN" \
             -d '{"dry_run": true}')
@@ -43,10 +100,8 @@ jobs:
           rm -f "$response_file"
 
           if ! jq -e . >/dev/null 2>&1 <<< "$response"; then
-            echo "### Dry-run Sync Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Message: backend returned non-JSON response" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Raw (first 500 chars): \`$(echo "$response" | tr '\n' ' ' | cut -c1-500)\`" >> "$GITHUB_STEP_SUMMARY"
+            raw="$(echo "$response" | tr '\n' ' ' | cut -c1-500)"
+            fail_with_context "Dry-run Sync Failed" "$http_code" "" "" "backend returned non-JSON response: $raw"
             exit 1
           fi
 
@@ -59,41 +114,44 @@ jobs:
           echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
 
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ] || [ "$status" != "success" ] || [ -z "$job_id" ]; then
-            echo "### Dry-run Sync Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Status: ${status:-<empty>}" >> "$GITHUB_STEP_SUMMARY"
-            if [ -n "$error_code" ]; then
-              echo "- Error code: $error_code" >> "$GITHUB_STEP_SUMMARY"
-            fi
-            if [ -n "$error_message" ]; then
-              echo "- Message: $error_message" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            fail_with_context "Dry-run Sync Failed" "$http_code" "$status" "$error_code" "$error_message"
             exit 1
           fi
 
       - name: Fetch dry-run report
         run: |
           set -euo pipefail
+          fail_with_context() {
+            local title="$1"
+            local http="$2"
+            local message="$3"
+            echo "::error::${title} | http=${http} | message=${message:-<empty>}"
+            echo "### ${title}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HTTP: $http" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$message" ]; then
+              echo "- Message: $message" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
           report_file="$(mktemp)"
           http_code=$(curl -sS -o "$report_file" -w "%{http_code}" "$BACKEND_BASE_URL/api/admin/migration/report/${{ steps.dryrun.outputs.job_id }}" \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 2 \
+            --retry-connrefused \
             -H "X-Admin-Token: $ADMIN_API_TOKEN")
           report=$(cat "$report_file")
           rm -f "$report_file"
 
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
             error_message=$(jq -r '.detail // ""' <<< "$report" 2>/dev/null || true)
-            echo "### Dry-run Report Fetch Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            if [ -n "$error_message" ]; then
-              echo "- Message: $error_message" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            fail_with_context "Dry-run Report Fetch Failed" "$http_code" "$error_message"
             exit 1
           fi
 
           if ! jq -e . >/dev/null 2>&1 <<< "$report"; then
-            echo "### Dry-run Report Fetch Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Message: backend returned non-JSON report response" >> "$GITHUB_STEP_SUMMARY"
+            fail_with_context "Dry-run Report Fetch Failed" "$http_code" "backend returned non-JSON report response"
             exit 1
           fi
 
@@ -108,8 +166,31 @@ jobs:
         id: fullsync
         run: |
           set -euo pipefail
+          fail_with_context() {
+            local title="$1"
+            local http="$2"
+            local status="$3"
+            local code="$4"
+            local message="$5"
+            echo "::error::${title} | http=${http} | status=${status:-<empty>} | error_code=${code:-<empty>} | message=${message:-<empty>}"
+            echo "### ${title}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HTTP: $http" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Status: ${status:-<empty>}" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$code" ]; then
+              echo "- Error code: $code" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -n "$message" ]; then
+              echo "- Message: $message" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
           response_file="$(mktemp)"
           http_code=$(curl -sS -o "$response_file" -w "%{http_code}" -X POST "$BACKEND_BASE_URL/api/admin/migration/run" \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 2 \
+            --retry-connrefused \
             -H "Content-Type: application/json" \
             -H "X-Admin-Token: $ADMIN_API_TOKEN" \
             -d '{"dry_run": false}')
@@ -117,10 +198,8 @@ jobs:
           rm -f "$response_file"
 
           if ! jq -e . >/dev/null 2>&1 <<< "$response"; then
-            echo "### Full Sync Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Message: backend returned non-JSON response" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Raw (first 500 chars): \`$(echo "$response" | tr '\n' ' ' | cut -c1-500)\`" >> "$GITHUB_STEP_SUMMARY"
+            raw="$(echo "$response" | tr '\n' ' ' | cut -c1-500)"
+            fail_with_context "Full Sync Failed" "$http_code" "" "" "backend returned non-JSON response: $raw"
             exit 1
           fi
 
@@ -133,15 +212,7 @@ jobs:
           echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
 
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ] || [ "$status" != "success" ] || [ -z "$job_id" ]; then
-            echo "### Full Sync Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Status: ${status:-<empty>}" >> "$GITHUB_STEP_SUMMARY"
-            if [ -n "$error_code" ]; then
-              echo "- Error code: $error_code" >> "$GITHUB_STEP_SUMMARY"
-            fi
-            if [ -n "$error_message" ]; then
-              echo "- Message: $error_message" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            fail_with_context "Full Sync Failed" "$http_code" "$status" "$error_code" "$error_message"
             exit 1
           fi
 
@@ -149,26 +220,37 @@ jobs:
         if: steps.fullsync.outputs.job_id != ''
         run: |
           set -euo pipefail
+          fail_with_context() {
+            local title="$1"
+            local http="$2"
+            local message="$3"
+            echo "::error::${title} | http=${http} | message=${message:-<empty>}"
+            echo "### ${title}" >> "$GITHUB_STEP_SUMMARY"
+            echo "- HTTP: $http" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$message" ]; then
+              echo "- Message: $message" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          }
+
           report_file="$(mktemp)"
           http_code=$(curl -sS -o "$report_file" -w "%{http_code}" "$BACKEND_BASE_URL/api/admin/migration/report/${{ steps.fullsync.outputs.job_id }}" \
+            --connect-timeout 10 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 2 \
+            --retry-connrefused \
             -H "X-Admin-Token: $ADMIN_API_TOKEN")
           report=$(cat "$report_file")
           rm -f "$report_file"
 
           if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
             error_message=$(jq -r '.detail // ""' <<< "$report" 2>/dev/null || true)
-            echo "### Full-sync Report Fetch Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            if [ -n "$error_message" ]; then
-              echo "- Message: $error_message" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            fail_with_context "Full-sync Report Fetch Failed" "$http_code" "$error_message"
             exit 1
           fi
 
           if ! jq -e . >/dev/null 2>&1 <<< "$report"; then
-            echo "### Full-sync Report Fetch Failed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- HTTP: $http_code" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Message: backend returned non-JSON report response" >> "$GITHUB_STEP_SUMMARY"
+            fail_with_context "Full-sync Report Fetch Failed" "$http_code" "backend returned non-JSON report response"
             exit 1
           fi
 
