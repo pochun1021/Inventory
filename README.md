@@ -149,3 +149,10 @@ npm run build
 ```
 
 前端輸出到 `frontend/dist`，後端會優先回傳該目錄靜態檔案。
+
+## CI 同步注意事項
+
+- `db-data-sync` workflow 的 `BACKEND_BASE_URL` 要填「後端 API 服務根網址」
+  例如 `https://your-service.onrender.com`。
+- 不可填 Supabase 專案網址（`https://<project-ref>.supabase.co`），
+  否則 `/api/admin/migration/run` 會回 404。

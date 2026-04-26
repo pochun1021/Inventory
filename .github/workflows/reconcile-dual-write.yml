@@ -1,0 +1,69 @@
+name: reconcile-dual-write
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      repair_on_mismatch:
+        description: 'Run repair sync when mismatch is found'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+concurrency:
+  group: reconcile-dual-write
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      USE_SUPABASE: "true"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_SCHEMA: public
+      ADMIN_API_TOKEN: ${{ secrets.ADMIN_API_TOKEN }}
+      UV_CACHE_DIR: /tmp/uv-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Validate required secrets
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Reconcile (check only)
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.repair_on_mismatch == 'false')
+        run: uv run python reconcile_dual_write.py
+
+      - name: Reconcile (with repair)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.repair_on_mismatch == 'true'
+        run: uv run python reconcile_dual_write.py --repair
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f migration_reports/reconcile-latest.json ]; then
+            echo "### Reconcile Report" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat migration_reports/reconcile-latest.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi

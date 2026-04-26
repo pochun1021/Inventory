@@ -29,6 +29,12 @@ jobs:
         run: |
           test -n "$BACKEND_BASE_URL"
           test -n "$ADMIN_API_TOKEN"
+          case "$BACKEND_BASE_URL" in
+            *supabase.co*)
+              echo "::error::BACKEND_BASE_URL must be your backend service URL (for example https://your-service.onrender.com), not a Supabase project URL."
+              exit 1
+              ;;
+          esac
 
       - name: Backend health probe
         run: |

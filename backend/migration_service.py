@@ -17,6 +17,8 @@ BATCH_SIZE = 500
 ID_COLUMNS: dict[str, set[str]] = {
     "inventory_items": {"id", "donation_request_id", "parent_item_id"},
     "asset_status_codes": set(),
+    "condition_status_code": set(),
+    "asset_category_name": set(),
     "issue_requests": {"id"},
     "issue_items": {"id", "request_id", "item_id", "quantity"},
     "borrow_requests": {"id"},
@@ -32,6 +34,8 @@ ID_COLUMNS: dict[str, set[str]] = {
 
 TARGET_TABLES: list[str] = [
     "asset_status_codes",
+    "condition_status_code",
+    "asset_category_name",
     "inventory_items",
     "issue_requests",
     "issue_items",

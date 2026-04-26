@@ -10,6 +10,8 @@ from supabase_client import get_supabase_client
 SYNC_TABLES: list[str] = [
     "inventory_items",
     "asset_status_codes",
+    "condition_status_code",
+    "asset_category_name",
     "issue_requests",
     "issue_items",
     "borrow_requests",

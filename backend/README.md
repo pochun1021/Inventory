@@ -137,8 +137,28 @@ uv run --env-file .env.cloud uvicorn main:app --reload --host 0.0.0.0 --port 800
 - 需要設定 GitHub Secrets：
   - `BACKEND_BASE_URL`
   - `ADMIN_API_TOKEN`
+- `BACKEND_BASE_URL` 必須是後端 API 服務根網址（例如 `https://your-service.onrender.com`），
+  不可填 Supabase 專案網址（`https://<project-ref>.supabase.co`）。
 - `POST /api/admin/migration/run` 在失敗時仍回傳結構化 JSON（`status=failed`、`error_code`、`errors`），
   workflow 會將 HTTP 狀態與錯誤摘要寫入 Step Summary 以利除錯。
+
+### Render 部署（無自有網域）
+
+可用 Render 免費子網域先把 backend 跑起來，供 `db-data-sync` workflow 呼叫：
+
+1. 在 Render 建立 `Web Service`，連接本 repo。
+2. 設定：
+   - Root Directory：`backend`
+   - Build Command：`pip install uv && uv sync`
+   - Start Command：`uv run --env-file .env.cloud uvicorn main:app --host 0.0.0.0 --port $PORT`
+3. 在 Render 環境變數設定至少：
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `ADMIN_API_TOKEN`
+4. Render 成功部署後，取得 `https://<service>.onrender.com`。
+5. 回到 GitHub Secrets：
+   - `BACKEND_BASE_URL=https://<service>.onrender.com`
+   - `ADMIN_API_TOKEN=<與 Render 相同>`
 
 ### 遷移到 Supabase Cloud（一次性/初始化）
 

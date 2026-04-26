@@ -43,6 +43,23 @@ create table if not exists asset_status_codes (
   updated_at text
 );
 
+create table if not exists condition_status_code (
+  condition_status text primary key,
+  description text,
+  created_at text,
+  updated_at text
+);
+
+create table if not exists asset_category_name (
+  name_code text not null,
+  asset_category_name text,
+  name_code2 text not null,
+  description text,
+  created_at text,
+  updated_at text,
+  primary key (name_code, name_code2)
+);
+
 create table if not exists issue_requests (
   id bigint primary key,
   requester text,
@@ -150,6 +167,8 @@ create table if not exists sync_job_log (
 
 create index if not exists idx_issue_items_request_id on issue_items(request_id);
 create index if not exists idx_issue_items_item_id on issue_items(item_id);
+create index if not exists idx_inventory_items_condition_status on inventory_items(condition_status);
+create index if not exists idx_inventory_items_category_pair on inventory_items(name_code, name_code2);
 create index if not exists idx_borrow_lines_request_id on borrow_request_lines(request_id);
 create index if not exists idx_borrow_allocations_request_id on borrow_allocations(request_id);
 create index if not exists idx_borrow_allocations_line_id on borrow_allocations(line_id);
@@ -162,6 +181,38 @@ create index if not exists idx_movement_item_id on movement_ledger(item_id);
 create index if not exists idx_operation_created_at on operation_logs(created_at);
 create index if not exists idx_operation_entity_entity_id on operation_logs(entity, entity_id);
 create index if not exists idx_sync_job_log_id_desc on sync_job_log(id desc);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'fk_inventory_items_condition_status_code'
+      and conrelid = 'inventory_items'::regclass
+  ) then
+    alter table inventory_items
+      add constraint fk_inventory_items_condition_status_code
+      foreign key (condition_status)
+      references condition_status_code(condition_status);
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'fk_inventory_items_asset_category_pair'
+      and conrelid = 'inventory_items'::regclass
+  ) then
+    alter table inventory_items
+      add constraint fk_inventory_items_asset_category_pair
+      foreign key (name_code, name_code2)
+      references asset_category_name(name_code, name_code2);
+  end if;
+end;
+$$;
 
 create or replace function admin_set_sequences()
 returns void

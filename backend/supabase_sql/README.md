@@ -56,3 +56,37 @@ supabase migration new <migration_name>
 - 每次同步後建議抽查：
   - `status=success`
   - 各 table 的 `migrated_rows` / `skipped_rows` 是否合理
+
+## 5) Render 讀 Supabase（Dual-Write + Supabase-Read）
+
+Render 後端若要直接讀 Supabase，請設定環境變數：
+
+- `USE_SUPABASE=true`
+- `DATA_BACKEND_MODE=dual_write_supabase_read`
+- `DUAL_WRITE_STRICT=true`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_SCHEMA=public`
+- `ADMIN_API_TOKEN`
+
+行為說明：
+
+- API 讀取優先走 Supabase。
+- API 寫入先更新 XLSX，再同步到 Supabase。
+- 同步失敗時會嘗試回復 XLSX 快照並再次同步，避免長時間分岐。
+
+## 6) 每日校正（Reconciliation）
+
+新增 workflow：`.github/workflows/reconcile-dual-write.yml`
+
+- 排程：每日執行比對 XLSX 與 Supabase（row count + digest）
+- 手動：可用 `repair_on_mismatch=true` 在發現差異時自動執行修補同步
+
+本機可手動執行：
+
+```bash
+cd backend
+UV_CACHE_DIR=/tmp/uv-cache uv sync
+UV_CACHE_DIR=/tmp/uv-cache uv run python reconcile_dual_write.py
+UV_CACHE_DIR=/tmp/uv-cache uv run python reconcile_dual_write.py --repair
+```
