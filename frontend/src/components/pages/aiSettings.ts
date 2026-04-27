@@ -1,4 +1,5 @@
 import { apiUrl } from '../../api'
+import { formatDeleteErrorMessage } from './deleteError'
 import type { ApiErrorDetail, GeminiTokenSettingsResponse, GeminiTokenUpsertPayload } from './types'
 
 async function parseApiError(response: Response, fallbackMessage: string): Promise<string> {
@@ -57,7 +58,8 @@ export async function upsertGeminiTokenSettings(payload: GeminiTokenUpsertPayloa
 export async function deleteGeminiTokenSettings(): Promise<boolean> {
   const response = await fetch(apiUrl('/api/settings/ai/gemini-token'), { method: 'DELETE' })
   if (!response.ok) {
-    throw new Error(await parseApiError(response, '解除 Gemini token 綁定失敗'))
+    const reason = await parseApiError(response, '請稍後再試。')
+    throw new Error(formatDeleteErrorMessage(reason, '請稍後再試。'))
   }
   const payload = (await response.json()) as { deleted?: boolean }
   return Boolean(payload.deleted)

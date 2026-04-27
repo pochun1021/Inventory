@@ -5,6 +5,7 @@ import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { SectionCard } from '../ui/section-card'
 import { deleteGeminiTokenSettings, fetchGeminiTokenSettings, upsertGeminiTokenSettings } from './aiSettings'
+import { formatDeleteErrorMessage, showDeleteErrorModal } from './deleteError'
 import type { GeminiTokenSettingsResponse } from './types'
 
 export function AiSettingsPage() {
@@ -89,7 +90,9 @@ export function AiSettingsPage() {
       )
       setActionMessage('Gemini token 已解除綁定。')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '解除 Gemini token 綁定失敗。')
+      const message =
+        error instanceof Error ? error.message : formatDeleteErrorMessage('請稍後再試。', '請稍後再試。')
+      await showDeleteErrorModal(message)
     } finally {
       setDeleting(false)
     }

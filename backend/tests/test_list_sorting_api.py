@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -207,6 +208,27 @@ class ListSortingApiTests(unittest.TestCase):
 
         payload = app_main.get_dashboard_data()
         self.assertGreaterEqual(payload.get("reservedBorrowCount", 0), 1)
+
+    def test_inventory_list_tolerates_invalid_purchase_date_and_logs_warning(self) -> None:
+        item_id = self._create_item(name="BadDateItem", key="INV-BAD-DATE")
+        with db._locked_workbook() as wb:
+            ws = wb["inventory_items"]
+            headers = [cell.value for cell in ws[1]]
+            purchase_date_index = headers.index("purchase_date") + 1
+            id_index = headers.index("id") + 1
+            for row in ws.iter_rows(min_row=2):
+                if str(row[id_index - 1].value or "").strip() == str(item_id):
+                    row[purchase_date_index - 1].value = "賴舒庭"
+                    break
+            wb.save(db.DB_PATH)
+
+        with patch.object(app_main.logger, "warning") as warning_mock:
+            response = app_main.get_inventory_items(page=1, page_size=100)
+
+        self.assertTrue(any(item.id == item_id for item in response.items))
+        warning_mock.assert_called_once()
+        logged_message = str(warning_mock.call_args.args[0])
+        self.assertIn("Invalid date values were ignored", logged_message)
 
 
 if __name__ == "__main__":

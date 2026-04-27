@@ -625,6 +625,41 @@ def _parse_purchase_date(value: str) -> date:
     raise ValueError(f"Invalid purchase_date format: {value}")
 
 
+def _parse_optional_purchase_date(
+    value: str,
+    *,
+    field_name: str,
+    invalid_date_stats: dict[str, dict[str, Any]] | None = None,
+) -> date | None:
+    if not value:
+        return None
+    try:
+        return _parse_purchase_date(value)
+    except ValueError:
+        if invalid_date_stats is not None:
+            field_stats = invalid_date_stats.setdefault(field_name, {"count": 0, "samples": []})
+            field_stats["count"] = int(field_stats.get("count") or 0) + 1
+            samples = field_stats.setdefault("samples", [])
+            if isinstance(samples, list) and value not in samples and len(samples) < 5:
+                samples.append(value)
+        return None
+
+
+def _log_invalid_date_stats(*, context: str, invalid_date_stats: dict[str, dict[str, Any]]) -> None:
+    if not invalid_date_stats:
+        return
+    normalized: dict[str, dict[str, Any]] = {}
+    for field_name, stats in invalid_date_stats.items():
+        count = int(stats.get("count") or 0)
+        samples = stats.get("samples") if isinstance(stats.get("samples"), list) else []
+        if count <= 0:
+            continue
+        normalized[field_name] = {"count": count, "samples": samples}
+    if not normalized:
+        return
+    logger.warning("Invalid date values were ignored while parsing inventory rows: context=%s detail=%s", context, normalized)
+
+
 def _parse_datetime(value: str) -> datetime | None:
     if not value:
         return None
@@ -832,13 +867,25 @@ def _paginate_rows[T](rows: list[T], page: int, page_size: int) -> tuple[list[T]
     return rows[start_index:end_index], total, total_pages
 
 
-def row_to_item(row) -> InventoryItem:
+def row_to_item(row, *, invalid_date_stats: dict[str, dict[str, Any]] | None = None) -> InventoryItem:
     purchase_date_value = _coerce_str(row.get("purchase_date"))
     due_date_value = _coerce_str(row.get("due_date"))
     return_date_value = _coerce_str(row.get("return_date"))
-    parsed_date = _parse_purchase_date(purchase_date_value) if purchase_date_value else None
-    parsed_due_date = _parse_purchase_date(due_date_value) if due_date_value else None
-    parsed_return_date = _parse_purchase_date(return_date_value) if return_date_value else None
+    parsed_date = _parse_optional_purchase_date(
+        purchase_date_value,
+        field_name="purchase_date",
+        invalid_date_stats=invalid_date_stats,
+    )
+    parsed_due_date = _parse_optional_purchase_date(
+        due_date_value,
+        field_name="due_date",
+        invalid_date_stats=invalid_date_stats,
+    )
+    parsed_return_date = _parse_optional_purchase_date(
+        return_date_value,
+        field_name="return_date",
+        invalid_date_stats=invalid_date_stats,
+    )
     donated_at_value = _coerce_str(row.get("donated_at"))
     donation_request_id_raw = row.get("donation_request_id")
     try:
@@ -890,7 +937,11 @@ def row_to_item(row) -> InventoryItem:
         memo2=_coerce_str(row.get("memo2")),
         keeper=_coerce_str(row.get("keeper")),
         borrower=_coerce_str(row.get("borrower")),
-        start_date=_parse_purchase_date(_coerce_str(row.get("start_date"))) if _coerce_str(row.get("start_date")) else None,
+        start_date=_parse_optional_purchase_date(
+            _coerce_str(row.get("start_date")),
+            field_name="start_date",
+            invalid_date_stats=invalid_date_stats,
+        ),
         create_at=_parse_datetime(_coerce_str(row.get("create_at"))),
         create_by=_coerce_str(row.get("create_by")),
         created_at=_parse_datetime(_coerce_str(row.get("created_at"))),
@@ -1067,6 +1118,25 @@ def _sync_requests_safe() -> None:
             entity="google_sheets",
             status="failed",
             detail={"target": "requests", "error": str(exc)},
+        )
+
+
+def _log_inventory_action_non_blocking(
+    *,
+    action: str,
+    entity: str,
+    entity_id: int | None = None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    try:
+        log_inventory_action(action=action, entity=entity, entity_id=entity_id, detail=detail)
+    except Exception as exc:  # pragma: no cover - non-critical logging should not break main response
+        logger.warning(
+            "Non-blocking inventory action log failed: action=%s entity=%s entity_id=%s error=%s",
+            action,
+            entity,
+            entity_id,
+            exc,
         )
 
 
@@ -1308,10 +1378,12 @@ def get_inventory_items(
 ):
     page, page_size = _normalize_pagination(page, page_size)
     normalized_sort_dir = _normalize_sort_direction(sort_dir)
+    invalid_date_stats: dict[str, dict[str, Any]] = {}
     try:
-        rows = [row_to_item(row) for row in list_items(include_donated=include_donated, deleted_scope=deleted_scope)]
+        rows = [row_to_item(row, invalid_date_stats=invalid_date_stats) for row in list_items(include_donated=include_donated, deleted_scope=deleted_scope)]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _log_invalid_date_stats(context="get_inventory_items", invalid_date_stats=invalid_date_stats)
 
     normalized_keyword = keyword.strip().lower()
     filtered_rows: list[InventoryItem] = []
@@ -1371,7 +1443,7 @@ def get_inventory_item_api(item_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    log_inventory_action(action="read", entity="inventory_item", entity_id=item_id, detail={"mode": "single"})
+    _log_inventory_action_non_blocking(action="read", entity="inventory_item", entity_id=item_id, detail={"mode": "single"})
     return row_to_item(row)
 
 
@@ -1597,7 +1669,7 @@ def get_issue_request_api(request_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail="Issue request not found")
     items = [row_to_issue_item(item) for item in list_issue_items(request_id)]
-    log_inventory_action(action="read", entity="issue_request", entity_id=request_id, detail={"mode": "single"})
+    _log_inventory_action_non_blocking(action="read", entity="issue_request", entity_id=request_id, detail={"mode": "single"})
     return issue_request_row_to_model(row, items)
 
 
@@ -1753,7 +1825,7 @@ def get_borrow_request_api(request_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail="Borrow request not found")
     request_lines = [row_to_borrow_item(item) for item in list_borrow_items(request_id)]
-    log_inventory_action(action="read", entity="borrow_request", entity_id=request_id, detail={"mode": "single"})
+    _log_inventory_action_non_blocking(action="read", entity="borrow_request", entity_id=request_id, detail={"mode": "single"})
     return borrow_request_row_to_model(row, request_lines)
 
 
@@ -1997,7 +2069,7 @@ def get_donation_request_api(request_id: int):
     if row is None:
         raise HTTPException(status_code=404, detail="Donation request not found")
     items = [row_to_donation_item(item) for item in list_donation_items(request_id)]
-    log_inventory_action(action="read", entity="donation_request", entity_id=request_id, detail={"mode": "single"})
+    _log_inventory_action_non_blocking(action="read", entity="donation_request", entity_id=request_id, detail={"mode": "single"})
     return donation_request_row_to_model(row, items)
 
 

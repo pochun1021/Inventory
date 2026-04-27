@@ -24,6 +24,7 @@ import {
   fetchConditionStatusOptions,
   updateConditionStatusOption,
 } from './conditionStatusLookup'
+import { formatDeleteErrorMessage, showDeleteErrorModal } from './deleteError'
 import type { AssetCategoryOption, AssetStatusOption, ConditionStatusOption } from './types'
 
 type AssetStatusDialogState = {
@@ -228,7 +229,9 @@ export function MasterDataPage() {
       setDeletingStatusCode(null)
       await loadAssetStatuses()
     } catch (error) {
-      setStatusActionError(error instanceof Error ? error.message : '刪除資產狀態失敗。')
+      const message =
+        error instanceof Error ? error.message : formatDeleteErrorMessage('請稍後再試。', '請稍後再試。')
+      await showDeleteErrorModal(message)
     } finally {
       setSavingStatus(false)
     }
@@ -305,7 +308,9 @@ export function MasterDataPage() {
       setDeletingConditionStatusCode(null)
       await loadConditionStatuses()
     } catch (error) {
-      setConditionStatusActionError(error instanceof Error ? error.message : '刪除物品狀況失敗。')
+      const message =
+        error instanceof Error ? error.message : formatDeleteErrorMessage('請稍後再試。', '請稍後再試。')
+      await showDeleteErrorModal(message)
     } finally {
       setSavingConditionStatus(false)
     }
@@ -400,7 +405,9 @@ export function MasterDataPage() {
       setDeletingCategory(null)
       await loadAssetCategories()
     } catch (error) {
-      setCategoryActionError(error instanceof Error ? error.message : '刪除資產分類失敗。')
+      const message =
+        error instanceof Error ? error.message : formatDeleteErrorMessage('請稍後再試。', '請稍後再試。')
+      await showDeleteErrorModal(message)
     } finally {
       setSavingCategory(false)
     }

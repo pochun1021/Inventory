@@ -14,6 +14,7 @@ import { Select } from '../ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table'
 import { fetchAssetCategoryOptions } from './assetCategoryLookup'
 import { buildAssetStatusLabelMap, fetchAssetStatusOptions, toAssetStatusLabel } from './assetStatusLookup'
+import { extractApiErrorMessage, formatDeleteErrorMessage, showDeleteErrorModal, toDeleteErrorMessage } from './deleteError'
 import type { InventoryItem, PaginatedResponse } from './types'
 
 const ASSET_TYPE_LABEL_MAP: Record<string, string> = {
@@ -80,22 +81,6 @@ function parseInventorySortKey(value: string | null, fallback: InventorySortKey)
 
 function parseDeletedScope(value: string | null, fallback: DeletedScope): DeletedScope {
   return value === 'deleted' || value === 'active' ? value : fallback
-}
-
-function toApiErrorMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === 'object') {
-    const detail = (payload as { detail?: unknown }).detail
-    if (typeof detail === 'string' && detail.trim()) {
-      return detail
-    }
-    if (detail && typeof detail === 'object') {
-      const nestedMessage = (detail as { message?: unknown }).message
-      if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
-        return nestedMessage
-      }
-    }
-  }
-  return fallback
 }
 
 function readInitialState() {
@@ -512,14 +497,16 @@ export function InventoryListPage() {
       })
 
       if (!response.ok) {
-        throw new Error('刪除失敗')
+        throw new Error(await toDeleteErrorMessage(response, '請稍後再試。'))
       }
 
       setActionMessage('財產資料已刪除。')
       setReloadKey((previous) => previous + 1)
       setConfirmDeleteItem(null)
-    } catch {
-      setLoadError('刪除財產資料失敗，請稍後再試。')
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : formatDeleteErrorMessage('請稍後再試。', '請稍後再試。')
+      await showDeleteErrorModal(message)
     } finally {
       setDeletingItemId(null)
     }
@@ -569,7 +556,7 @@ export function InventoryListPage() {
       })
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
-        throw new Error(toApiErrorMessage(payload, '拆卸零件失敗'))
+        throw new Error(extractApiErrorMessage(payload, '拆卸零件失敗'))
       }
       setDetachTargetItem(null)
       setActionMessage('拆卸零件成功。')

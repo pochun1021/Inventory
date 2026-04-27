@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 from dataclasses import dataclass
 from io import BytesIO
@@ -47,6 +48,7 @@ MAX_BATCH_IMAGE_FILES = 5
 _last_quota_snapshot: dict[str, Any] = {"status": "unknown"}
 _heif_decoder_checked = False
 _heif_decoder_available = False
+logger = logging.getLogger(__name__)
 
 
 class AIRecognitionError(Exception):
@@ -89,19 +91,27 @@ def is_supported_model(model: str) -> bool:
     return model in SUPPORTED_GEMINI_MODELS
 
 
+def _read_setting_value_safely(getter: Any, *, setting_name: str) -> tuple[str, str]:
+    try:
+        setting = getter()
+    except Exception as exc:  # pragma: no cover - storage layer failure path
+        logger.warning("Failed to read system setting %s: %s", setting_name, exc)
+        return "", str(exc)
+    if not setting:
+        return "", ""
+    return str(setting.get("value", "")).strip(), ""
+
+
 def get_model_name() -> str:
-    setting = get_gemini_model_setting()
-    configured_model = (str(setting.get("value", "")).strip() if setting else "")
+    configured_model, _ = _read_setting_value_safely(get_gemini_model_setting, setting_name="gemini_model")
     if configured_model and is_supported_model(configured_model):
         return configured_model
     return DEFAULT_GEMINI_MODEL
 
 
 def get_api_key() -> str:
-    setting = get_gemini_api_token_setting()
-    if not setting:
-        return ""
-    return str(setting.get("value", "")).strip()
+    value, _ = _read_setting_value_safely(get_gemini_api_token_setting, setting_name="gemini_api_token")
+    return value
 
 
 def is_feature_enabled() -> bool:
@@ -109,14 +119,20 @@ def is_feature_enabled() -> bool:
 
 
 def get_quota_status() -> dict[str, Any]:
-    enabled = is_feature_enabled()
+    api_key, api_key_error = _read_setting_value_safely(get_gemini_api_token_setting, setting_name="gemini_api_token")
+    configured_model, model_error = _read_setting_value_safely(get_gemini_model_setting, setting_name="gemini_model")
+    model_name = configured_model if configured_model and is_supported_model(configured_model) else DEFAULT_GEMINI_MODEL
+    settings_degraded = bool(api_key_error or model_error)
+    enabled = bool(api_key) and not settings_degraded
     payload: dict[str, Any] = {
         "enabled": enabled,
         "provider": get_provider_name(),
-        "model": get_model_name(),
+        "model": model_name,
         "quota": _last_quota_snapshot.copy(),
     }
-    if not enabled:
+    if settings_degraded:
+        payload["message"] = "系統設定儲存目前無法讀取，AI 規格辨識暫時停用。"
+    elif not enabled:
         payload["message"] = "Gemini token 尚未設定，AI 規格辨識功能未啟用。"
     return payload
 

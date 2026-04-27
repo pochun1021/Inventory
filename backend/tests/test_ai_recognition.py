@@ -210,15 +210,27 @@ class AIRecognitionTests(unittest.TestCase):
 
     def test_get_quota_status_disabled_message_is_gemini_only(self) -> None:
         with (
-            patch.object(ai_recognition, 'is_feature_enabled', return_value=False),
+            patch.object(ai_recognition, 'get_gemini_api_token_setting', return_value=None),
+            patch.object(ai_recognition, 'get_gemini_model_setting', return_value=None),
             patch.object(ai_recognition, 'get_provider_name', return_value='gemini'),
-            patch.object(ai_recognition, 'get_model_name', return_value='gemini-2.5-flash'),
         ):
             payload = ai_recognition.get_quota_status()
 
         self.assertFalse(payload['enabled'])
         self.assertEqual(payload['message'], 'Gemini token 尚未設定，AI 規格辨識功能未啟用。')
         self.assertNotIn('tesseract', payload['message'].lower())
+
+    def test_get_quota_status_returns_degraded_payload_when_settings_read_fails(self) -> None:
+        with (
+            patch.object(ai_recognition, 'get_gemini_api_token_setting', side_effect=RuntimeError('bad xlsx')),
+            patch.object(ai_recognition, 'get_gemini_model_setting', side_effect=RuntimeError('bad xlsx')),
+            patch.object(ai_recognition, 'get_provider_name', return_value='gemini'),
+        ):
+            payload = ai_recognition.get_quota_status()
+
+        self.assertFalse(payload['enabled'])
+        self.assertEqual(payload['model'], 'gemini-2.5-flash')
+        self.assertEqual(payload['message'], '系統設定儲存目前無法讀取，AI 規格辨識暫時停用。')
 
     def test_ai_recognition_module_has_no_tesseract_dependency_strings(self) -> None:
         module_path = Path(ai_recognition.__file__).resolve()

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
@@ -99,6 +100,25 @@ class ConditionStatusLookupApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as exc:
             app_main.delete_condition_status_code_api("1")
         self.assertEqual(exc.exception.status_code, 409)
+
+    def test_get_inventory_item_succeeds_when_read_log_fails(self) -> None:
+        created = app_main.create_inventory_item_api(
+            app_main.InventoryItemCreate(
+                asset_type="A1",
+                asset_status="0",
+                condition_status="1",
+                name="測試品項",
+                model="M1",
+                name_code="01",
+                name_code2="01",
+                count=1,
+            )
+        )
+
+        with patch.object(app_main, "log_inventory_action", side_effect=RuntimeError("sync failed")):
+            fetched = app_main.get_inventory_item_api(created.id)
+
+        self.assertEqual(fetched.id, created.id)
 
 
 if __name__ == "__main__":

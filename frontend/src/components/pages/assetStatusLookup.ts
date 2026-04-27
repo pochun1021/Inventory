@@ -1,4 +1,5 @@
 import { apiUrl } from '../../api'
+import { toDeleteErrorMessage } from './deleteError'
 import type { AssetStatusOption } from './types'
 
 type AssetStatusCreatePayload = {
@@ -55,7 +56,7 @@ export async function deleteAssetStatusOption(code: string): Promise<void> {
     method: 'DELETE',
   })
   if (!response.ok) {
-    throw new Error(await toApiErrorMessage(response, '刪除資產狀態失敗'))
+    throw new Error(await toDeleteErrorMessage(response, '請稍後再試。'))
   }
 }
 

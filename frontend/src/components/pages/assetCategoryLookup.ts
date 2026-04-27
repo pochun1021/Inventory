@@ -1,4 +1,5 @@
 import { apiUrl } from '../../api'
+import { toDeleteErrorMessage } from './deleteError'
 import type { AssetCategoryOption } from './types'
 
 type AssetCategoryCreatePayload = {
@@ -66,6 +67,6 @@ export async function deleteAssetCategoryOption(nameCode: string, nameCode2: str
     method: 'DELETE',
   })
   if (!response.ok) {
-    throw new Error(await toApiErrorMessage(response, '刪除資產分類失敗'))
+    throw new Error(await toDeleteErrorMessage(response, '請稍後再試。'))
   }
 }

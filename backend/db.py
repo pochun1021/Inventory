@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 import json
+import os
 import re
+import tempfile
+import zipfile
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -18,6 +22,7 @@ HOT_LOG_RETENTION_DAYS = 90
 MAX_BORROW_RESERVATION_DAYS = 30
 BORROW_RESERVATION_CANCEL_AFTER_DAYS = 3
 ARCHIVE_FILE_PATTERN = re.compile(r"^logs_(\d{6})\.xlsx$")
+logger = logging.getLogger(__name__)
 
 SHEETS: dict[str, list[str]] = {
     "inventory_items": [
@@ -804,16 +809,59 @@ def _ensure_workbook(wb: Workbook) -> bool:
     return changed
 
 
+def _save_workbook(wb: Workbook) -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=f"{DB_PATH.stem}.tmp-",
+        suffix=DB_PATH.suffix or ".xlsx",
+        dir=str(DB_PATH.parent),
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_path_str)
+    try:
+        wb.save(tmp_path)
+        os.replace(tmp_path, DB_PATH)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _backup_corrupted_workbook(*, reason: Exception) -> Path | None:
+    if not DB_PATH.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    backup_path = DB_PATH.with_name(f"{DB_PATH.stem}.corrupt-{timestamp}{DB_PATH.suffix}")
+    suffix = 1
+    while backup_path.exists():
+        backup_path = DB_PATH.with_name(f"{DB_PATH.stem}.corrupt-{timestamp}-{suffix}{DB_PATH.suffix}")
+        suffix += 1
+    os.replace(DB_PATH, backup_path)
+    logger.warning(
+        "Workbook at %s is corrupted (%s). Moved to %s and rebuilding a fresh workbook.",
+        DB_PATH,
+        reason,
+        backup_path,
+    )
+    return backup_path
+
+
 def _load_workbook() -> Workbook:
     if not DB_PATH.exists():
         wb = _create_workbook()
         _refresh_valid_name_code_pairs(wb)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return wb
 
-    wb = load_workbook(DB_PATH)
+    try:
+        wb = load_workbook(DB_PATH)
+    except (zipfile.BadZipFile, OSError, ValueError, KeyError) as exc:
+        _backup_corrupted_workbook(reason=exc)
+        wb = _create_workbook()
+        _refresh_valid_name_code_pairs(wb)
+        _save_workbook(wb)
+        return wb
     if _ensure_workbook(wb):
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     _refresh_valid_name_code_pairs(wb)
     return wb
 
@@ -882,7 +930,7 @@ def _next_id(rows: list[dict[str, Any]]) -> int:
 def init_db() -> None:
     with _locked_workbook() as wb:
         if _ensure_workbook(wb):
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         _refresh_valid_name_code_pairs(wb)
 
 
@@ -942,7 +990,7 @@ def upsert_system_setting(key: str, value: str) -> dict[str, Any]:
             target_row["value"] = normalized_value
             target_row["updated_at"] = updated_at
         _write_rows(ws, SHEETS["system_settings"], rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return {"key": normalized_key, "value": normalized_value, "updated_at": updated_at}
 
 
@@ -958,7 +1006,7 @@ def delete_system_setting(key: str) -> bool:
         deleted = len(remaining_rows) != len(rows)
         if deleted:
             _write_rows(ws, SHEETS["system_settings"], remaining_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
     return deleted
 
 
@@ -1105,7 +1153,7 @@ def create_asset_category(name_code: str, category_name: str, name_code2: str, d
         )
         _write_rows(ws, SHEETS["asset_category_name"], rows)
         _refresh_valid_name_code_pairs(wb)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return {
         "name_code": normalized_code,
         "asset_category_name": normalized_category_name,
@@ -1179,7 +1227,7 @@ def update_asset_category(
         _write_rows(category_ws, SHEETS["asset_category_name"], category_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _refresh_valid_name_code_pairs(wb)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
 
     return {
         "name_code": normalized_next_code,
@@ -1229,7 +1277,7 @@ def delete_asset_category(name_code: str, name_code2: str) -> None:
 
         _write_rows(category_ws, SHEETS["asset_category_name"], remaining_rows)
         _refresh_valid_name_code_pairs(wb)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
 
 
 def create_asset_status_code(code: str, description: str) -> dict[str, Any]:
@@ -1257,7 +1305,7 @@ def create_asset_status_code(code: str, description: str) -> dict[str, Any]:
             }
         )
         _write_rows(ws, SHEETS["asset_status_codes"], rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return {"code": normalized_code, "description": normalized_description}
 
 
@@ -1305,7 +1353,7 @@ def update_asset_status_code(code: str, next_code: str, description: str) -> dic
 
         _write_rows(code_ws, SHEETS["asset_status_codes"], code_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return {"code": normalized_next_code, "description": normalized_description}
 
 
@@ -1333,7 +1381,7 @@ def delete_asset_status_code(code: str) -> bool:
             raise ValueError("asset_status code is in use")
 
         _write_rows(code_ws, SHEETS["asset_status_codes"], remaining_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return True
 
 
@@ -1359,7 +1407,7 @@ def create_condition_status_code(code: str, description: str) -> dict[str, Any]:
             }
         )
         _write_rows(ws, SHEETS["condition_status_code"], rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return {"code": normalized_code, "description": normalized_description}
 
 
@@ -1406,7 +1454,7 @@ def update_condition_status_code(code: str, next_code: str, description: str) ->
 
         _write_rows(code_ws, SHEETS["condition_status_code"], code_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return {"code": normalized_next_code, "description": normalized_description}
 
 
@@ -1434,7 +1482,7 @@ def delete_condition_status_code(code: str) -> bool:
             raise ValueError("condition_status code is in use")
 
         _write_rows(code_ws, SHEETS["condition_status_code"], remaining_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
     return True
 
 
@@ -1679,7 +1727,7 @@ def create_item(item_data: dict[str, Any]) -> int:
         new_id = _next_id(rows)
         rows.append(_to_inventory_create_row(new_id, item_data, property_number))
         _write_rows(ws, SHEETS["inventory_items"], rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return new_id
 
 
@@ -1765,7 +1813,7 @@ def detach_item(parent_item_id: int, detach_data: dict[str, Any]) -> int:
 
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return next_id
 
 
@@ -1818,7 +1866,7 @@ def create_items_bulk(items: list[dict[str, Any]]) -> int:
 
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(order_ws, SHEETS["order_sn"], list(order_map.values()))
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return created
 
 
@@ -1892,7 +1940,7 @@ def update_item(item_id: int, item_data: dict[str, Any]) -> bool:
                 break
         if updated:
             _write_rows(ws, SHEETS["inventory_items"], rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         return updated
 
 
@@ -1912,7 +1960,7 @@ def delete_item(item_id: int) -> bool:
                 break
         if deleted:
             _write_rows(ws, SHEETS["inventory_items"], rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         return deleted
 
 
@@ -1937,7 +1985,7 @@ def restore_item(item_id: int) -> dict[str, str] | None:
             break
         if restored_meta is not None:
             _write_rows(ws, SHEETS["inventory_items"], rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         return restored_meta
 
 
@@ -1964,7 +2012,7 @@ def purge_soft_deleted_items() -> int:
                 kept.append(row)
         if deleted_count:
             _write_rows(ws, SHEETS["inventory_items"], kept)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         return deleted_count
 
 
@@ -1993,7 +2041,7 @@ def log_inventory_action(
             }
         )
         _write_rows(ws, SHEETS["operation_logs"], rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
 
 
 def _append_operation_log_entry(
@@ -2233,7 +2281,7 @@ def archive_old_logs(*, retention_days: int = HOT_LOG_RETENTION_DAYS) -> dict[st
         if movement_archived:
             _write_rows(wb["movement_ledger"], SHEETS["movement_ledger"], kept_movements)
         if operation_archived or movement_archived:
-            wb.save(DB_PATH)
+            _save_workbook(wb)
 
     for month_key, rows in archived_operations_by_month.items():
         _append_rows_to_archive("operation_logs", rows, month_key)
@@ -2384,7 +2432,7 @@ def get_order_sn(name: str) -> dict[str, Any] | None:
                 row["current_value"] = current_value
                 tmp_no = f"tmp-{_date_sn()}-{current_value:04d}"
                 _write_rows(ws, SHEETS["order_sn"], rows)
-                wb.save(DB_PATH)
+                _save_workbook(wb)
                 return {"tmp_no": tmp_no}
         return None
 
@@ -2547,7 +2595,7 @@ def create_issue_request(request_data: dict[str, Any], items: list[dict[str, Any
         _write_rows(item_ws, SHEETS["issue_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return request_id
 
 
@@ -2694,7 +2742,7 @@ def update_issue_request(request_id: int, request_data: dict[str, Any], items: l
         _write_rows(item_ws, SHEETS["issue_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -2731,7 +2779,7 @@ def delete_issue_request(request_id: int) -> bool:
         _write_rows(item_ws, SHEETS["issue_items"], remaining_items)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -2789,7 +2837,7 @@ def create_donation_request(request_data: dict[str, Any], items: list[dict[str, 
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return request_id
 
 
@@ -2929,7 +2977,7 @@ def update_donation_request(request_id: int, request_data: dict[str, Any], items
         _write_rows(item_ws, SHEETS["donation_items"], item_rows)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -2969,7 +3017,7 @@ def delete_donation_request(request_id: int) -> bool:
         _write_rows(item_ws, SHEETS["donation_items"], remaining_items)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -3384,7 +3432,7 @@ def create_borrow_request(request_data: dict[str, Any], request_lines: list[dict
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         if status_changed:
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return request_id
 
 
@@ -3407,7 +3455,7 @@ def list_borrow_requests() -> list[dict[str, Any]]:
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
     request_allocations, _ = _build_borrow_allocation_stats(
         allocation_rows=allocation_rows,
         legacy_item_rows=legacy_item_rows,
@@ -3454,7 +3502,7 @@ def get_borrow_request(request_id: int) -> dict[str, Any] | None:
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
     if target_row is None:
         return None
     request_allocations, _ = _build_borrow_allocation_stats(
@@ -3602,7 +3650,7 @@ def list_borrow_pickup_lines(request_id: int) -> list[dict[str, Any]] | None:
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -3667,7 +3715,7 @@ def list_borrow_pickup_line_candidates(
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -3755,7 +3803,7 @@ def resolve_borrow_pickup_scan(request_id: int, code: str) -> dict[str, Any] | N
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -3832,7 +3880,7 @@ def list_borrow_pickup_candidates(request_id: int) -> list[dict[str, Any]] | Non
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
         request_row, request_lines = _validate_pickup_request_context(
             request_id=request_id,
             request_rows=request_rows,
@@ -3902,7 +3950,7 @@ def list_borrow_reservation_options(*, exclude_request_id: int | None = None) ->
         if status_changed:
             _write_rows(request_ws, SHEETS["borrow_requests"], request_rows)
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-            wb.save(DB_PATH)
+            _save_workbook(wb)
     reserved_usage = _build_borrow_reservation_usage(
         request_rows=request_rows,
         line_rows=line_rows,
@@ -4023,7 +4071,7 @@ def update_borrow_request(request_id: int, request_data: dict[str, Any], request
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         if status_changed:
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -4170,7 +4218,7 @@ def pickup_borrow_request(request_id: int, selections_data: list[dict[str, Any]]
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         if status_changed:
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -4239,7 +4287,7 @@ def return_borrow_request(request_id: int, *, return_date_value: Any = None) -> 
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
         if status_changed:
             _write_rows(operation_ws, SHEETS["operation_logs"], operation_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 
@@ -4308,7 +4356,7 @@ def delete_borrow_request(request_id: int) -> bool:
         _write_rows(allocation_ws, SHEETS["borrow_allocations"], remaining_allocations)
         _write_rows(inventory_ws, SHEETS["inventory_items"], inventory_rows)
         _write_rows(movement_ws, SHEETS["movement_ledger"], movement_rows)
-        wb.save(DB_PATH)
+        _save_workbook(wb)
         return True
 
 

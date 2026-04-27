@@ -3,6 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AiSettingsPage } from './AiSettingsPage'
 
+const { swalFireMock } = vi.hoisted(() => ({
+  swalFireMock: vi.fn(),
+}))
+
+vi.mock('sweetalert2', () => ({
+  default: {
+    fire: swalFireMock,
+  },
+}))
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -22,6 +32,8 @@ function setupFetchMock(handler: (url: string, init?: RequestInit) => Response |
 describe('AiSettingsPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    swalFireMock.mockReset()
+    swalFireMock.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -151,5 +163,39 @@ describe('AiSettingsPage', () => {
 
     await screen.findByText('Gemini 配額不足，請先確認方案與 billing 後再綁定。')
     expect(screen.getByText('目前綁定：未綁定')).toBeInTheDocument()
+  })
+
+  it('shows delete error in modal', async () => {
+    setupFetchMock((url, init) => {
+      if (url.endsWith('/api/settings/ai/gemini-token') && (!init?.method || init.method === 'GET')) {
+        return jsonResponse({
+          bound: true,
+          masked_token: 'AIza******7890',
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          available_models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+          updated_at: '2026-04-24 16:00:00',
+        })
+      }
+      if (url.endsWith('/api/settings/ai/gemini-token') && init?.method === 'DELETE') {
+        return jsonResponse({ detail: 'token currently locked by policy' }, 409)
+      }
+      throw new Error(`Unhandled URL: ${url}`)
+    })
+
+    render(<AiSettingsPage />)
+
+    await screen.findByText('目前綁定：已綁定')
+    fireEvent.click(screen.getByRole('button', { name: '解除綁定' }))
+
+    await waitFor(() => {
+      expect(swalFireMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          icon: 'error',
+          title: '刪除失敗',
+          text: '無法刪除：token currently locked by policy',
+        }),
+      )
+    })
   })
 })

@@ -1,4 +1,5 @@
 import { apiUrl } from '../../api'
+import { toDeleteErrorMessage } from './deleteError'
 import type { ConditionStatusOption } from './types'
 
 type ConditionStatusCreatePayload = {
@@ -58,6 +59,6 @@ export async function deleteConditionStatusOption(code: string): Promise<void> {
     method: 'DELETE',
   })
   if (!response.ok) {
-    throw new Error(await toApiErrorMessage(response, '刪除物品狀況失敗'))
+    throw new Error(await toDeleteErrorMessage(response, '請稍後再試。'))
   }
 }
