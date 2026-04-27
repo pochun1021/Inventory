@@ -58,6 +58,7 @@ class MigrationServiceTests(unittest.TestCase):
     def _sheet_fixture(table: str) -> list[dict]:
         dataset: dict[str, list[dict]] = {
             "asset_status_codes": [{"code": "0", "description": "庫存", "created_at": "", "updated_at": ""}],
+            "asset_category_name": [{"name_code": "01", "asset_category_name": "筆電", "name_code2": "01"}],
             "inventory_items": [{"id": "1", "name": "item-a"}, {"id": "2", "name": "item-b"}],
             "issue_requests": [{"id": "10", "requester": "tester"}],
             "issue_items": [
@@ -116,6 +117,66 @@ class MigrationServiceTests(unittest.TestCase):
         issue_table = next(row for row in report["tables"] if row["table"] == "issue_items")
         self.assertEqual(issue_table["status"], "ok_with_skips")
         self.assertEqual(issue_table["skip_reason"], "orphan_item_id")
+
+    def test_replace_existing_truncates_before_upsert(self) -> None:
+        fake_client = _FakeSupabaseClient()
+
+        with (
+            patch("migration_service.get_supabase_client", return_value=fake_client),
+            patch("migration_service._read_sheet_rows", side_effect=self._sheet_fixture),
+        ):
+            report = migration_service.run_xlsx_to_supabase_migration(dry_run=False, replace_existing=True)
+
+        self.assertEqual(report["status"], "success")
+        self.assertGreater(len(fake_client.upserts.get("inventory_items", [])), 0)
+        self.assertEqual(
+            fake_client.rpc_calls[0],
+            ("admin_truncate_target_tables", {"selected_tables": migration_service.TARGET_TABLES}),
+        )
+        self.assertIn(("admin_set_sequences", {}), fake_client.rpc_calls)
+
+    def test_target_tables_repairs_only_selected_table(self) -> None:
+        fake_client = _FakeSupabaseClient()
+
+        with (
+            patch("migration_service.get_supabase_client", return_value=fake_client),
+            patch("migration_service._read_sheet_rows", side_effect=self._sheet_fixture),
+        ):
+            report = migration_service.run_xlsx_to_supabase_migration(
+                dry_run=False,
+                replace_existing=True,
+                target_tables=["asset_category_name"],
+            )
+
+        self.assertEqual(report["status"], "success")
+        self.assertEqual(
+            [row["table"] for row in report["tables"]],
+            [
+                "asset_category_name",
+                "inventory_items",
+                "issue_items",
+                "borrow_allocations",
+                "donation_items",
+                "movement_ledger",
+            ],
+        )
+        self.assertEqual(
+            fake_client.rpc_calls[0],
+            (
+                "admin_truncate_target_tables",
+                {
+                    "selected_tables": [
+                        "asset_category_name",
+                        "inventory_items",
+                        "issue_items",
+                        "borrow_allocations",
+                        "donation_items",
+                        "movement_ledger",
+                    ]
+                },
+            ),
+        )
+        self.assertEqual(set(fake_client.upserts.keys()), {"asset_category_name", "inventory_items", "issue_items", "donation_items"})
 
 
 if __name__ == "__main__":

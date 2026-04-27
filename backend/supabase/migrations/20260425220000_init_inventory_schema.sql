@@ -171,3 +171,53 @@ begin
   perform setval(pg_get_serial_sequence('sync_job_log', 'id'), coalesce((select max(id) from sync_job_log), 1), true);
 end;
 $$;
+
+create or replace function admin_truncate_target_tables(selected_tables text[] default null)
+returns void
+language plpgsql
+as $$
+declare
+  allowed_tables text[] := array[
+    'asset_status_codes',
+    'condition_status_code',
+    'asset_category_name',
+    'inventory_items',
+    'issue_requests',
+    'issue_items',
+    'borrow_requests',
+    'borrow_allocations',
+    'borrow_request_lines',
+    'donation_requests',
+    'donation_items',
+    'movement_ledger',
+    'operation_logs',
+    'order_sn'
+  ];
+  normalized_tables text[];
+  invalid_tables text[];
+  table_name text;
+begin
+  if selected_tables is null or coalesce(array_length(selected_tables, 1), 0) = 0 then
+    normalized_tables := allowed_tables;
+  else
+    select array_agg(distinct value)
+    into normalized_tables
+    from unnest(selected_tables) as value;
+  end if;
+
+  select array_agg(value)
+  into invalid_tables
+  from unnest(normalized_tables) as value
+  where value <> all(allowed_tables);
+
+  if invalid_tables is not null then
+    raise exception 'Unknown target tables: %', array_to_string(invalid_tables, ', ');
+  end if;
+
+  foreach table_name in array normalized_tables loop
+    if to_regclass(format('public.%I', table_name)) is not null then
+      execute format('truncate table public.%I restart identity cascade', table_name);
+    end if;
+  end loop;
+end;
+$$;

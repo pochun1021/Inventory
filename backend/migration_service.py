@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,32 @@ TARGET_TABLES: list[str] = [
 ORPHAN_ITEM_SKIP_RULES: dict[str, str] = {
     "issue_items": "item_id",
     "donation_items": "item_id",
+}
+UPSERT_KEY_COLUMNS: dict[str, tuple[str, ...]] = {
+    "asset_status_codes": ("code",),
+    "condition_status_code": ("condition_status",),
+    "asset_category_name": ("name_code", "name_code2"),
+    "inventory_items": ("id",),
+    "issue_requests": ("id",),
+    "issue_items": ("id",),
+    "borrow_requests": ("id",),
+    "borrow_request_lines": ("id",),
+    "borrow_allocations": ("id",),
+    "donation_requests": ("id",),
+    "donation_items": ("id",),
+    "movement_ledger": ("id",),
+    "operation_logs": ("id",),
+    "order_sn": ("name",),
+}
+# Tables that may be truncated implicitly when using TRUNCATE ... CASCADE.
+CASCADE_DEPENDENCIES: dict[str, set[str]] = {
+    "asset_category_name": {"inventory_items"},
+    "condition_status_code": {"inventory_items"},
+    "inventory_items": {"issue_items", "borrow_allocations", "donation_items", "movement_ledger"},
+    "issue_requests": {"issue_items"},
+    "borrow_requests": {"borrow_request_lines", "borrow_allocations"},
+    "borrow_request_lines": {"borrow_allocations"},
+    "donation_requests": {"donation_items"},
 }
 MAX_SKIPPED_SAMPLE_SIZE = 20
 
@@ -103,6 +129,12 @@ def _normalize_row(table: str, row: dict[str, Any]) -> dict[str, Any]:
             else:
                 normalized[key] = cleaned
             continue
+        if isinstance(value, datetime):
+            normalized[key] = value.strftime("%Y-%m-%d %H:%M:%S")
+            continue
+        if isinstance(value, date):
+            normalized[key] = value.strftime("%Y-%m-%d")
+            continue
         normalized[key] = value
     return normalized
 
@@ -123,7 +155,7 @@ def _read_sheet_rows(table: str) -> list[dict[str, Any]]:
 def _write_report(report: MigrationReport) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORT_DIR / f"{report.job_id}.json"
-    path.write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return path
 
 
@@ -138,6 +170,36 @@ def _adjust_sequences() -> None:
     client = get_supabase_client()
     # Requires schema function from backend/supabase_sql/schema.sql.
     client.rpc("admin_set_sequences", {}).execute()
+
+
+def _truncate_target_tables(*, target_tables: list[str] | None = None) -> None:
+    client = get_supabase_client()
+    # Requires schema function from backend/supabase_sql/schema.sql.
+    client.rpc("admin_truncate_target_tables", {"selected_tables": target_tables}).execute()
+
+
+def _resolve_target_tables(target_tables: list[str] | None) -> list[str]:
+    if target_tables is None:
+        return list(TARGET_TABLES)
+
+    unknown_tables = sorted(set(target_tables) - set(TARGET_TABLES))
+    if unknown_tables:
+        raise ValueError(f"Unknown target tables: {', '.join(unknown_tables)}")
+
+    selected = set(target_tables)
+    return [table for table in TARGET_TABLES if table in selected]
+
+
+def _expand_tables_for_replace(target_tables: list[str]) -> list[str]:
+    expanded = set(target_tables)
+    queue = list(target_tables)
+    while queue:
+        table = queue.pop(0)
+        for dependent_table in CASCADE_DEPENDENCIES.get(table, set()):
+            if dependent_table not in expanded:
+                expanded.add(dependent_table)
+                queue.append(dependent_table)
+    return [table for table in TARGET_TABLES if table in expanded]
 
 
 def _extract_valid_item_ids(rows: list[dict[str, Any]]) -> set[int]:
@@ -177,18 +239,69 @@ def _filter_orphan_item_rows(
     return kept_rows, skipped_count, skipped_samples, skip_reason
 
 
-def run_xlsx_to_supabase_migration(*, dry_run: bool) -> dict[str, Any]:
+def _deduplicate_rows_for_upsert(table: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    key_columns = UPSERT_KEY_COLUMNS.get(table, ())
+    if not key_columns:
+        return rows
+
+    deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
+    passthrough_rows: list[dict[str, Any]] = []
+    for row in rows:
+        key = tuple(row.get(column) for column in key_columns)
+        if any(value is None for value in key):
+            passthrough_rows.append(row)
+            continue
+        deduped[key] = row
+    return passthrough_rows + list(deduped.values())
+
+
+def _backfill_asset_category_rows(rows: list[dict[str, Any]], inventory_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    backfilled_rows: list[dict[str, Any]] = list(rows)
+    for inventory_row in inventory_rows:
+        name_code = inventory_row.get("name_code")
+        name_code2 = inventory_row.get("name_code2")
+        if name_code is None or name_code2 is None:
+            continue
+        backfilled_rows.append(
+            {
+                "name_code": name_code,
+                "asset_category_name": None,
+                "name_code2": name_code2,
+                "description": "backfilled from inventory_items during migration",
+                "created_at": "",
+                "updated_at": "",
+            }
+        )
+    return backfilled_rows
+
+
+def run_xlsx_to_supabase_migration(
+    *,
+    dry_run: bool,
+    replace_existing: bool = False,
+    target_tables: list[str] | None = None,
+) -> dict[str, Any]:
     job_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
     report = MigrationReport(job_id=job_id, started_at=_now_str(), dry_run=dry_run)
     client = get_supabase_client()
+    resolved_target_tables = _resolve_target_tables(target_tables)
+    migration_tables = _expand_tables_for_replace(resolved_target_tables) if replace_existing else resolved_target_tables
 
     try:
+        if not dry_run and replace_existing:
+            _truncate_target_tables(target_tables=migration_tables)
+
         valid_item_ids: set[int] = set()
-        for table in TARGET_TABLES:
+        for table in migration_tables:
             rows = _read_sheet_rows(table)
             normalized_rows = [_normalize_row(table, row) for row in rows]
             payload_rows = [row for row in normalized_rows if any(value is not None for value in row.values())]
             empty_skipped_rows = len(normalized_rows) - len(payload_rows)
+            if table == "asset_category_name" and "inventory_items" in migration_tables:
+                inventory_rows = _read_sheet_rows("inventory_items")
+                normalized_inventory_rows = [_normalize_row("inventory_items", row) for row in inventory_rows]
+                payload_rows = _backfill_asset_category_rows(payload_rows, normalized_inventory_rows)
+            payload_rows = _deduplicate_rows_for_upsert(table, payload_rows)
 
             payload_rows, orphan_skipped_rows, skipped_samples, skip_reason = _filter_orphan_item_rows(
                 table,

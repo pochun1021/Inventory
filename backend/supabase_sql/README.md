@@ -89,4 +89,10 @@ cd backend
 UV_CACHE_DIR=/tmp/uv-cache uv sync
 UV_CACHE_DIR=/tmp/uv-cache uv run python reconcile_dual_write.py
 UV_CACHE_DIR=/tmp/uv-cache uv run python reconcile_dual_write.py --repair
+UV_CACHE_DIR=/tmp/uv-cache uv run python reconcile_dual_write.py --repair-table asset_category_name
 ```
+
+`--repair` 會以 XLSX 作為權威來源，先清空 reconcile 目標表再全量回寫到 Supabase（具破壞性）。  
+若希望保留 Supabase 額外資料，請只執行 check-only 模式，不要啟用 `--repair`。
+
+`--repair-table` 可限制修復範圍到指定表（可重複指定），避免影響其他表。若僅指定 `asset_category_name`，只會重建該表。
