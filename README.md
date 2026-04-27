@@ -56,7 +56,7 @@ uv run --env-file .env.local uvicorn main:app --reload --host 0.0.0.0 --port 800
 - Swagger：`http://localhost:8000/docs`
 - OpenAPI：`http://localhost:8000/openapi.json`
 
-地端/雲端切換建議使用 `backend/.env.local` 與 `backend/.env.cloud`，啟動時用 `--env-file` 明確指定。完整步驟請見 `backend/README.md` 的「環境切換（Local / Cloud）」與 `backend/supabase_sql/README.md`。Schema 更新請以 `backend/supabase/migrations/*.sql` 為唯一來源，並透過 GitHub Actions 部署。
+地端/雲端切換建議使用 `backend/.env.local` 與 `backend/.env.cloud`，啟動時用 `--env-file` 明確指定（本機後端不再使用 `backend/.env`）。完整步驟請見 `backend/README.md` 的「環境切換（Local / Cloud）」與 `backend/supabase_sql/README.md`。Schema 更新請以 `backend/supabase/migrations/*.sql` 為唯一來源，並透過 GitHub Actions 部署。
 
 ### 2) 啟動前端
 

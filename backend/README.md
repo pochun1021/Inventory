@@ -49,7 +49,7 @@ cd backend
 supabase status
 ```
 
-建立 `backend/.env.local`（本機使用，不要提交版控）：
+建立 `backend/.env.local`（本機使用，不要提交版控；本專案不再使用 `backend/.env`）：
 
 ```dotenv
 USE_SUPABASE=true
