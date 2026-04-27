@@ -96,6 +96,60 @@ class AdminManagementApiTests(unittest.TestCase):
 
         self.assertEqual(response["items"][0]["id"], 2)
 
+    @patch("main.get_sync_status")
+    def test_admin_sync_status_api_returns_status(self, mock_get_sync_status) -> None:
+        mock_get_sync_status.return_value = {
+            "mode": "cloud_primary_with_offline_queue",
+            "supabase_enabled": True,
+            "cloud_primary_enabled": True,
+            "queue_depth": 3,
+            "oldest_pending_at": "2026-04-27T11:00:00",
+            "last_synced_at": "2026-04-27T10:59:00",
+            "last_attempt_at": "2026-04-27T11:01:00",
+            "last_error": "",
+            "consecutive_failures": 0,
+        }
+
+        response = app_main.get_admin_sync_status_api(x_admin_token="test-token")
+        self.assertEqual(response.mode, "cloud_primary_with_offline_queue")
+        self.assertEqual(response.queue_depth, 3)
+
+    @patch("main.replay_sync_outbox")
+    def test_admin_sync_replay_api_returns_result(self, mock_replay_sync_outbox) -> None:
+        mock_replay_sync_outbox.return_value = {
+            "status": "success",
+            "attempted": 5,
+            "synced": 5,
+            "remaining": 0,
+            "error": "",
+        }
+
+        response = app_main.replay_admin_sync_outbox_api(
+            app_main.AdminSyncReplayRequest(limit=10),
+            x_admin_token="test-token",
+        )
+        self.assertEqual(response.status, "success")
+        self.assertEqual(response.synced, 5)
+        self.assertEqual(response.remaining, 0)
+
+    @patch("main.list_sync_conflicts")
+    def test_admin_sync_conflicts_api_returns_items(self, mock_list_sync_conflicts) -> None:
+        mock_list_sync_conflicts.return_value = [
+            {
+                "id": 11,
+                "recorded_at": "2026-04-27T11:03:00",
+                "type": "sync_failed",
+                "decision": "queued_for_retry",
+                "operation": "update_item",
+                "message": "timeout",
+            }
+        ]
+
+        response = app_main.list_admin_sync_conflicts_api(limit=100, x_admin_token="test-token")
+        self.assertEqual(len(response.items), 1)
+        self.assertEqual(response.items[0].id, 11)
+        self.assertEqual(response.items[0].operation, "update_item")
+
 
 if __name__ == "__main__":
     unittest.main()

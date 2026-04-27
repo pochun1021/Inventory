@@ -159,7 +159,19 @@ def _collect_table_results() -> list[TableDiff]:
     return table_results
 
 
+def _ensure_xlsx_source() -> None:
+    if not db.DB_PATH.exists():
+        raise FileNotFoundError(f"XLSX source not found: {db.DB_PATH}")
+
+    wb = load_workbook(db.DB_PATH)
+    available_sheets = set(wb.sheetnames)
+    expected_sheets = set(TARGET_TABLES)
+    if not (available_sheets & expected_sheets):
+        raise RuntimeError("XLSX source does not contain any reconciliation target sheets")
+
+
 def reconcile(*, repair: bool, repair_tables: list[str] | None = None) -> dict[str, Any]:
+    _ensure_xlsx_source()
     table_results = _collect_table_results()
     mismatches = [item for item in table_results if item.status == "mismatch"]
     repaired = False

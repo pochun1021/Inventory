@@ -175,6 +175,9 @@ def _adjust_sequences() -> None:
 def _truncate_target_tables(*, target_tables: list[str] | None = None) -> None:
     client = get_supabase_client()
     # Requires schema function from backend/supabase_sql/schema.sql.
+    if target_tables is None:
+        client.rpc("admin_truncate_target_tables", {}).execute()
+        return
     client.rpc("admin_truncate_target_tables", {"selected_tables": target_tables}).execute()
 
 
@@ -289,7 +292,8 @@ def run_xlsx_to_supabase_migration(
 
     try:
         if not dry_run and replace_existing:
-            _truncate_target_tables(target_tables=migration_tables)
+            truncate_tables = None if target_tables is None else migration_tables
+            _truncate_target_tables(target_tables=truncate_tables)
 
         valid_item_ids: set[int] = set()
         for table in migration_tables:

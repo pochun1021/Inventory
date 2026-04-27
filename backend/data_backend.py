@@ -4,8 +4,12 @@ import os
 import shutil
 import tempfile
 from collections import defaultdict
+from contextvars import ContextVar
 from contextlib import contextmanager
+from datetime import datetime
+import json
 from pathlib import Path
+import threading
 from typing import Any, Callable, TypeVar, cast
 
 import db
@@ -16,14 +20,30 @@ T = TypeVar("T")
 
 _DATA_BACKEND_MODE = os.getenv("DATA_BACKEND_MODE", "dual_write_supabase_read").strip().lower()
 _DUAL_WRITE_STRICT = os.getenv("DUAL_WRITE_STRICT", "true").strip().lower() in {"1", "true", "yes"}
+_CLOUD_PRIMARY_MODES = {"cloud_primary_with_offline_queue"}
+_OUTBOX_LOCK = threading.Lock()
+_LAST_SYNC_STATE: ContextVar[str] = ContextVar("last_sync_state", default="local_only")
+
+_BACKEND_DIR = Path(__file__).resolve().parent
+_SYNC_OUTBOX_PATH = Path(os.getenv("SYNC_OUTBOX_PATH") or (_BACKEND_DIR / "sync_outbox.json"))
+_SYNC_CONFLICTS_PATH = Path(os.getenv("SYNC_CONFLICTS_PATH") or (_BACKEND_DIR / "sync_conflicts.json"))
+_SYNC_CONFLICTS_LIMIT = 500
 
 
 def _supabase_read_enabled() -> bool:
-    return is_supabase_enabled() and _DATA_BACKEND_MODE in {"dual_write_supabase_read", "supabase"}
+    return is_supabase_enabled() and _DATA_BACKEND_MODE in {
+        "dual_write_supabase_read",
+        "supabase",
+        *_CLOUD_PRIMARY_MODES,
+    }
 
 
 def _dual_write_enabled() -> bool:
     return is_supabase_enabled() and _DATA_BACKEND_MODE in {"dual_write_supabase_read", "dual_write"}
+
+
+def _cloud_primary_enabled() -> bool:
+    return is_supabase_enabled() and _DATA_BACKEND_MODE in _CLOUD_PRIMARY_MODES
 
 
 @contextmanager
@@ -60,14 +80,247 @@ def _sync_xlsx_to_supabase_or_raise() -> None:
         raise RuntimeError(message or "xlsx to supabase sync failed")
 
 
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _load_json_file(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def _save_json_file(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_outbox_store() -> dict[str, Any]:
+    payload = _load_json_file(_SYNC_OUTBOX_PATH, {"items": [], "meta": {}})
+    if not isinstance(payload, dict):
+        return {"items": [], "meta": {}}
+    items = payload.get("items")
+    meta = payload.get("meta")
+    if not isinstance(items, list):
+        items = []
+    if not isinstance(meta, dict):
+        meta = {}
+    return {"items": items, "meta": meta}
+
+
+def _save_outbox_store(store: dict[str, Any]) -> None:
+    _save_json_file(_SYNC_OUTBOX_PATH, store)
+
+
+def _stringify_payload(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _stringify_payload(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_stringify_payload(v) for v in value]
+    return repr(value)
+
+
+def _enqueue_outbox(*, operation: str, args: tuple[Any, ...], kwargs: dict[str, Any], error: str) -> int:
+    with _OUTBOX_LOCK:
+        store = _load_outbox_store()
+        items = cast(list[dict[str, Any]], store["items"])
+        item_id = max((int(item.get("id") or 0) for item in items), default=0) + 1
+        items.append(
+            {
+                "id": item_id,
+                "status": "pending",
+                "operation": operation,
+                "payload": {
+                    "args": _stringify_payload(list(args)),
+                    "kwargs": _stringify_payload(kwargs),
+                },
+                "last_error": error,
+                "enqueued_at": _now_iso(),
+                "updated_at": _now_iso(),
+                "retry_count": 0,
+                "idempotency_key": f"{operation}:{item_id}",
+            }
+        )
+        meta = cast(dict[str, Any], store["meta"])
+        meta["last_error"] = error
+        meta["last_attempt_at"] = _now_iso()
+        meta["consecutive_failures"] = int(meta.get("consecutive_failures") or 0) + 1
+        _save_outbox_store(store)
+        return item_id
+
+
+def _append_sync_conflict(detail: dict[str, Any]) -> None:
+    with _OUTBOX_LOCK:
+        items = _load_json_file(_SYNC_CONFLICTS_PATH, [])
+        if not isinstance(items, list):
+            items = []
+        next_id = max((int(item.get("id") or 0) for item in items if isinstance(item, dict)), default=0) + 1
+        entry = {"id": next_id, "recorded_at": _now_iso(), **detail}
+        items.append(entry)
+        if len(items) > _SYNC_CONFLICTS_LIMIT:
+            items = items[-_SYNC_CONFLICTS_LIMIT :]
+        _save_json_file(_SYNC_CONFLICTS_PATH, items)
+
+
+def _mark_last_sync_state(state: str) -> None:
+    _LAST_SYNC_STATE.set(state)
+
+
+def get_last_sync_state() -> str:
+    return _LAST_SYNC_STATE.get()
+
+
+def _try_dispatch_outbox(*, max_items: int | None = None) -> dict[str, Any]:
+    with _OUTBOX_LOCK:
+        store = _load_outbox_store()
+        items = cast(list[dict[str, Any]], store["items"])
+        pending = [item for item in items if str(item.get("status") or "") == "pending"]
+
+    if not pending:
+        return {"attempted": 0, "synced": 0, "remaining": 0, "status": "idle"}
+
+    attempted = len(pending) if max_items is None else min(len(pending), max_items)
+    try:
+        _sync_xlsx_to_supabase_or_raise()
+    except Exception as exc:
+        message = str(exc) or "xlsx to supabase sync failed"
+        with _OUTBOX_LOCK:
+            store = _load_outbox_store()
+            items = cast(list[dict[str, Any]], store["items"])
+            target_ids = {int(item.get("id") or 0) for item in pending[:attempted]}
+            for item in items:
+                if int(item.get("id") or 0) in target_ids and str(item.get("status") or "") == "pending":
+                    item["retry_count"] = int(item.get("retry_count") or 0) + 1
+                    item["last_error"] = message
+                    item["updated_at"] = _now_iso()
+            meta = cast(dict[str, Any], store["meta"])
+            meta["last_error"] = message
+            meta["last_attempt_at"] = _now_iso()
+            meta["consecutive_failures"] = int(meta.get("consecutive_failures") or 0) + 1
+            _save_outbox_store(store)
+        _append_sync_conflict(
+            {
+                "type": "sync_failed",
+                "decision": "queued_for_retry",
+                "message": message,
+                "attempted": attempted,
+            }
+        )
+        return {
+            "attempted": attempted,
+            "synced": 0,
+            "remaining": len(pending),
+            "status": "failed",
+            "error": message,
+        }
+
+    with _OUTBOX_LOCK:
+        store = _load_outbox_store()
+        items = cast(list[dict[str, Any]], store["items"])
+        target_ids = {int(item.get("id") or 0) for item in pending[:attempted]}
+        synced = 0
+        for item in items:
+            if int(item.get("id") or 0) in target_ids and str(item.get("status") or "") == "pending":
+                item["status"] = "synced"
+                item["updated_at"] = _now_iso()
+                item["last_error"] = ""
+                synced += 1
+        meta = cast(dict[str, Any], store["meta"])
+        meta["last_error"] = ""
+        meta["last_attempt_at"] = _now_iso()
+        meta["last_synced_at"] = _now_iso()
+        meta["consecutive_failures"] = 0
+        remaining = len([item for item in items if str(item.get("status") or "") == "pending"])
+        _save_outbox_store(store)
+    return {"attempted": attempted, "synced": synced, "remaining": remaining, "status": "success"}
+
+
+def get_sync_status() -> dict[str, Any]:
+    with _OUTBOX_LOCK:
+        store = _load_outbox_store()
+        items = cast(list[dict[str, Any]], store["items"])
+        pending = [item for item in items if str(item.get("status") or "") == "pending"]
+        meta = cast(dict[str, Any], store["meta"])
+
+    oldest_pending = ""
+    if pending:
+        oldest_pending = min(str(item.get("enqueued_at") or "") for item in pending)
+
+    return {
+        "mode": _DATA_BACKEND_MODE,
+        "supabase_enabled": is_supabase_enabled(),
+        "cloud_primary_enabled": _cloud_primary_enabled(),
+        "queue_depth": len(pending),
+        "oldest_pending_at": oldest_pending,
+        "last_synced_at": str(meta.get("last_synced_at") or ""),
+        "last_attempt_at": str(meta.get("last_attempt_at") or ""),
+        "last_error": str(meta.get("last_error") or ""),
+        "consecutive_failures": int(meta.get("consecutive_failures") or 0),
+    }
+
+
+def replay_sync_outbox(*, limit: int | None = None) -> dict[str, Any]:
+    if not is_supabase_enabled():
+        return {
+            "status": "disabled",
+            "attempted": 0,
+            "synced": 0,
+            "remaining": get_sync_status().get("queue_depth", 0),
+            "error": "supabase is not enabled",
+        }
+    result = _try_dispatch_outbox(max_items=limit)
+    if result.get("status") == "success":
+        _mark_last_sync_state("synced")
+    elif result.get("status") == "failed":
+        _mark_last_sync_state("queued")
+    return result
+
+
+def list_sync_conflicts(*, limit: int = 100) -> list[dict[str, Any]]:
+    rows = _load_json_file(_SYNC_CONFLICTS_PATH, [])
+    if not isinstance(rows, list):
+        return []
+    normalized = [row for row in rows if isinstance(row, dict)]
+    normalized.sort(key=lambda row: int(row.get("id") or 0), reverse=True)
+    return normalized[: max(1, limit)]
+
+
 def _execute_mutation(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    if _cloud_primary_enabled():
+        result = func(*args, **kwargs)
+        operation = getattr(func, "__name__", "mutation")
+        dispatch = _try_dispatch_outbox(max_items=1)
+        if dispatch.get("status") == "success":
+            _mark_last_sync_state("synced")
+            return result
+
+        message = str(dispatch.get("error") or "cloud sync failed")
+        _enqueue_outbox(operation=operation, args=args, kwargs=kwargs, error=message)
+        _append_sync_conflict(
+            {
+                "type": "cloud_primary_dispatch",
+                "decision": "lww_local_then_queue_retry",
+                "operation": operation,
+                "message": message,
+            }
+        )
+        _mark_last_sync_state("queued")
+        return result
+
     if not _dual_write_enabled():
+        _mark_last_sync_state("local_only")
         return func(*args, **kwargs)
 
     with _xlsx_snapshot() as snapshot_path:
         try:
             result = func(*args, **kwargs)
             _sync_xlsx_to_supabase_or_raise()
+            _mark_last_sync_state("synced")
             return result
         except Exception:
             if _DUAL_WRITE_STRICT:
@@ -76,6 +329,7 @@ def _execute_mutation(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
                     _sync_xlsx_to_supabase_or_raise()
                 except Exception:
                     pass
+            _mark_last_sync_state("failed")
             raise
 
 

@@ -250,6 +250,9 @@ uv run --env-file .env.cloud uvicorn main:app --reload --host 0.0.0.0 --port 800
 - `GET /api/admin/migration/report/{job_id}`
 - `POST /api/admin/backup/sheets/sync`
 - `GET /api/admin/jobs/sync`
+- `GET /api/admin/sync/status`
+- `POST /api/admin/sync/replay`
+- `GET /api/admin/sync/conflicts`
 
 `POST /api/ai/spec-recognition` 補充：
 

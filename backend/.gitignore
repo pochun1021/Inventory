@@ -18,6 +18,8 @@ wheels/
 
 # Migration reports
 migration_reports/
+sync_outbox.json
+sync_conflicts.json
 
 # Google Sheets OAuth
 client_secret.json

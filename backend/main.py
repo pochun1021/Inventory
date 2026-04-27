@@ -35,6 +35,7 @@ from data_backend import (
     get_donation_request,
     get_gemini_api_token_setting,
     get_gemini_model_setting,
+    get_sync_status,
     get_dashboard_snapshot,
     init_db,
     list_asset_categories,
@@ -56,10 +57,12 @@ from data_backend import (
     list_items,
     list_movement_ledger,
     list_operation_logs,
+    list_sync_conflicts,
     log_inventory_action,
     pickup_borrow_request,
     purge_soft_deleted_items,
     restore_item,
+    replay_sync_outbox,
     set_gemini_api_token,
     set_gemini_model,
     resolve_borrow_pickup_scan,
@@ -486,6 +489,43 @@ class AdminBackupSyncResponse(BaseModel):
     total_rows: int = 0
     sheets_written: int = 0
     error: str = ""
+
+
+class AdminSyncStatusResponse(BaseModel):
+    mode: str = ""
+    supabase_enabled: bool = False
+    cloud_primary_enabled: bool = False
+    queue_depth: int = 0
+    oldest_pending_at: str = ""
+    last_synced_at: str = ""
+    last_attempt_at: str = ""
+    last_error: str = ""
+    consecutive_failures: int = 0
+
+
+class AdminSyncReplayRequest(BaseModel):
+    limit: int = Field(default=200, ge=1, le=5000)
+
+
+class AdminSyncReplayResponse(BaseModel):
+    status: str
+    attempted: int = 0
+    synced: int = 0
+    remaining: int = 0
+    error: str = ""
+
+
+class AdminSyncConflictEntry(BaseModel):
+    id: int
+    recorded_at: str = ""
+    type: str = ""
+    decision: str = ""
+    operation: str = ""
+    message: str = ""
+
+
+class AdminSyncConflictsResponse(BaseModel):
+    items: list[AdminSyncConflictEntry] = Field(default_factory=list)
 
 
 class AiQuota(BaseModel):
@@ -2461,6 +2501,53 @@ def list_sync_jobs_api(
         return {"items": list_sync_jobs(limit=limit)}
     except SupabaseConfigError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/sync/status", response_model=AdminSyncStatusResponse)
+def get_admin_sync_status_api(
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    payload = get_sync_status()
+    return AdminSyncStatusResponse(**payload)
+
+
+@app.post("/api/admin/sync/replay", response_model=AdminSyncReplayResponse)
+def replay_admin_sync_outbox_api(
+    payload: AdminSyncReplayRequest,
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    result = replay_sync_outbox(limit=payload.limit)
+    return AdminSyncReplayResponse(
+        status=_coerce_str(result.get("status")) or "failed",
+        attempted=int(result.get("attempted") or 0),
+        synced=int(result.get("synced") or 0),
+        remaining=int(result.get("remaining") or 0),
+        error=_coerce_str(result.get("error")),
+    )
+
+
+@app.get("/api/admin/sync/conflicts", response_model=AdminSyncConflictsResponse)
+def list_admin_sync_conflicts_api(
+    limit: int = Query(default=100, ge=1, le=500),
+    x_admin_token: str | None = Header(default=None),
+):
+    _ensure_admin_token(x_admin_token)
+    rows = list_sync_conflicts(limit=limit)
+    return AdminSyncConflictsResponse(
+        items=[
+            AdminSyncConflictEntry(
+                id=int(row.get("id") or 0),
+                recorded_at=_coerce_str(row.get("recorded_at")),
+                type=_coerce_str(row.get("type")),
+                decision=_coerce_str(row.get("decision")),
+                operation=_coerce_str(row.get("operation")),
+                message=_coerce_str(row.get("message")),
+            )
+            for row in rows
+        ]
+    )
 
 
 @app.get("/{full_path:path}")

@@ -57,23 +57,25 @@ supabase migration new <migration_name>
   - `status=success`
   - 各 table 的 `migrated_rows` / `skipped_rows` 是否合理
 
-## 5) Render 讀 Supabase（Dual-Write + Supabase-Read）
+## 5) Render 讀 Supabase（Cloud Primary + Offline Queue）
 
 Render 後端若要直接讀 Supabase，請設定環境變數：
 
 - `USE_SUPABASE=true`
-- `DATA_BACKEND_MODE=dual_write_supabase_read`
+- `DATA_BACKEND_MODE=cloud_primary_with_offline_queue`
 - `DUAL_WRITE_STRICT=true`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_SCHEMA=public`
 - `ADMIN_API_TOKEN`
+- `SYNC_OUTBOX_PATH=sync_outbox.json`
+- `SYNC_CONFLICTS_PATH=sync_conflicts.json`
 
 行為說明：
 
 - API 讀取優先走 Supabase。
-- API 寫入先更新 XLSX，再同步到 Supabase。
-- 同步失敗時會嘗試回復 XLSX 快照並再次同步，避免長時間分岐。
+- API 寫入先更新地端資料，再同步到 Supabase。
+- 同步失敗時會進入本地 outbox queue，後續可由 `/api/admin/sync/replay` 重送。
 
 ## 6) 每日校正（Reconciliation）
 

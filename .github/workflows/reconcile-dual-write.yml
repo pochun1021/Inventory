@@ -47,6 +47,10 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
+      - name: Validate XLSX source
+        run: |
+          test -f inventory.xlsx
+
       - name: Install dependencies
         run: uv sync
 
