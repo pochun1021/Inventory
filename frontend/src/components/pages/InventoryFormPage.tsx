@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
 import { Button } from '../ui/button'
 import { DatePicker } from '../ui/date-picker'
@@ -128,6 +128,8 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   >([])
   const [assetCategoryLoadError, setAssetCategoryLoadError] = useState('')
   const [aiQuotaPayload, setAiQuotaPayload] = useState<AiRecognitionQuotaResponse | null>(null)
+  const [aiQuotaLoaded, setAiQuotaLoaded] = useState(false)
+  const [aiQuotaLoading, setAiQuotaLoading] = useState(false)
   const [aiQuotaLoadError, setAiQuotaLoadError] = useState('')
   const [aiFiles, setAiFiles] = useState<File[]>([])
   const [aiPending, setAiPending] = useState(false)
@@ -189,28 +191,28 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    const loadAiQuota = async () => {
-      try {
-        const payload = await fetchAiSpecRecognitionQuota()
-        if (cancelled) {
-          return
-        }
-        setAiQuotaPayload(payload)
-        setAiQuotaLoadError('')
-      } catch (error) {
-        if (!cancelled) {
-          setAiQuotaPayload(null)
-          setAiQuotaLoadError(error instanceof Error ? error.message : '無法讀取 AI 功能狀態，請稍後再試。')
-        }
-      }
+  const ensureAiQuotaLoaded = useCallback(async (): Promise<AiRecognitionQuotaResponse | null> => {
+    if (aiQuotaLoaded) {
+      return aiQuotaPayload
     }
-    void loadAiQuota()
-    return () => {
-      cancelled = true
+    if (aiQuotaLoading) {
+      return aiQuotaPayload
     }
-  }, [])
+    setAiQuotaLoading(true)
+    try {
+      const payload = await fetchAiSpecRecognitionQuota()
+      setAiQuotaPayload(payload)
+      setAiQuotaLoadError('')
+      return payload
+    } catch (error) {
+      setAiQuotaPayload(null)
+      setAiQuotaLoadError(error instanceof Error ? error.message : '無法讀取 AI 功能狀態，請稍後再試。')
+      return null
+    } finally {
+      setAiQuotaLoaded(true)
+      setAiQuotaLoading(false)
+    }
+  }, [aiQuotaLoaded, aiQuotaLoading, aiQuotaPayload])
 
   useEffect(() => {
     if (!isEditMode || !itemId) {
@@ -325,10 +327,14 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
     conditionStatusOptions.length > 0 && formData.condition_status && !hasConditionStatusOption
       ? '目前資料的物料狀況代碼已不存在於設定，請重新選擇可用狀況碼。'
       : ''
-  const aiEnabled = Boolean(aiQuotaPayload?.enabled)
+  const aiEnabled = aiQuotaLoaded ? Boolean(aiQuotaPayload?.enabled) : true
   const aiQuotaRemainingLabel =
-    aiQuotaPayload?.quota.remaining === null || aiQuotaPayload?.quota.remaining === undefined ? '未知' : String(aiQuotaPayload.quota.remaining)
-  const canRunAiRecognition = aiEnabled && aiFiles.length > 0 && !aiPending
+    !aiQuotaLoaded || aiQuotaPayload?.quota.remaining === null || aiQuotaPayload?.quota.remaining === undefined
+      ? aiQuotaLoaded
+        ? '未知'
+        : '尚未檢查'
+      : String(aiQuotaPayload.quota.remaining)
+  const canRunAiRecognition = aiEnabled && aiFiles.length > 0 && !aiPending && !aiQuotaLoading
 
   const handleNameCodeChange = (value: string) => {
     setFormData((previousData) => {
@@ -362,16 +368,21 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
   }
 
   const handleRecognizeSpec = async () => {
-    if (!canRunAiRecognition || aiFiles.length === 0) {
+    if (aiFiles.length === 0 || aiPending || aiQuotaLoading) {
       return
     }
-    setAiPending(true)
     setAiErrorMessage('')
     setAiMessage('')
     setAiRawTextExcerpts([])
     setAiFieldSources({ name: null, model: null, specification: null })
     setAiFailedFiles([])
 
+    const quotaPayload = aiQuotaLoaded ? aiQuotaPayload : await ensureAiQuotaLoaded()
+    if (!quotaPayload?.enabled) {
+      return
+    }
+
+    setAiPending(true)
     try {
       const response = await recognizeItemSpecFromImages(aiFiles)
       setRecognizedSnapshot({
@@ -600,7 +611,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                       multiple
                       accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                       onChange={handleAiFileChange}
-                      disabled={!aiEnabled || aiPending}
+                      disabled={aiPending || (aiQuotaLoaded && !aiEnabled)}
                     />
                   </div>
                   <Button
@@ -610,7 +621,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                     disabled={!canRunAiRecognition}
                     onClick={() => void handleRecognizeSpec()}
                   >
-                    {aiPending ? '辨識中...' : '執行 AI 辨識'}
+                    {aiPending ? '辨識中...' : aiQuotaLoading ? '檢查中...' : '執行 AI 辨識'}
                   </Button>
                   <Button
                     type="button"
@@ -629,7 +640,7 @@ export function InventoryFormPage({ itemId }: InventoryFormPageProps) {
                   </p>
                 ) : null}
                 {aiQuotaLoadError ? <p className="m-0 text-xs text-red-700">{aiQuotaLoadError}</p> : null}
-                {!aiEnabled && !aiQuotaLoadError ? (
+                {aiQuotaLoaded && !aiEnabled && !aiQuotaLoadError ? (
                   <p className="m-0 text-xs text-amber-700">{aiQuotaPayload?.message || 'AI 功能尚未啟用，請改用手動填寫。'}</p>
                 ) : null}
                 {aiMessage ? <p className="m-0 text-xs text-emerald-700">{aiMessage}</p> : null}

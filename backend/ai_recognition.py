@@ -11,7 +11,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from PIL import Image
-from db import get_gemini_api_token_setting, get_gemini_model_setting
+from db import get_gemini_settings_snapshot
 
 try:
     from pillow_heif import register_heif_opener as _register_heif_opener
@@ -91,38 +91,47 @@ def is_supported_model(model: str) -> bool:
     return model in SUPPORTED_GEMINI_MODELS
 
 
-def _read_setting_value_safely(getter: Any, *, setting_name: str) -> tuple[str, str]:
+def _read_gemini_settings_snapshot_safely() -> tuple[dict[str, dict[str, Any] | None], str]:
     try:
-        setting = getter()
+        return get_gemini_settings_snapshot(), ""
     except Exception as exc:  # pragma: no cover - storage layer failure path
-        logger.warning("Failed to read system setting %s: %s", setting_name, exc)
-        return "", str(exc)
+        logger.warning("Failed to read gemini settings snapshot: %s", exc)
+        return {"token_setting": None, "model_setting": None}, str(exc)
+
+
+def _extract_setting_value(snapshot: dict[str, dict[str, Any] | None], key: str) -> str:
+    setting = snapshot.get(key)
     if not setting:
-        return "", ""
-    return str(setting.get("value", "")).strip(), ""
+        return ""
+    return str(setting.get("value", "")).strip()
 
 
 def get_model_name() -> str:
-    configured_model, _ = _read_setting_value_safely(get_gemini_model_setting, setting_name="gemini_model")
+    settings_snapshot, _ = _read_gemini_settings_snapshot_safely()
+    configured_model = _extract_setting_value(settings_snapshot, "model_setting")
     if configured_model and is_supported_model(configured_model):
         return configured_model
     return DEFAULT_GEMINI_MODEL
 
 
 def get_api_key() -> str:
-    value, _ = _read_setting_value_safely(get_gemini_api_token_setting, setting_name="gemini_api_token")
-    return value
+    settings_snapshot, _ = _read_gemini_settings_snapshot_safely()
+    return _extract_setting_value(settings_snapshot, "token_setting")
 
 
 def is_feature_enabled() -> bool:
     return bool(get_api_key())
 
 
-def get_quota_status() -> dict[str, Any]:
-    api_key, api_key_error = _read_setting_value_safely(get_gemini_api_token_setting, setting_name="gemini_api_token")
-    configured_model, model_error = _read_setting_value_safely(get_gemini_model_setting, setting_name="gemini_model")
+def get_quota_status(*, settings_snapshot: dict[str, dict[str, Any] | None] | None = None) -> dict[str, Any]:
+    settings_error = ""
+    if settings_snapshot is None:
+        settings_snapshot, settings_error = _read_gemini_settings_snapshot_safely()
+
+    api_key = _extract_setting_value(settings_snapshot, "token_setting")
+    configured_model = _extract_setting_value(settings_snapshot, "model_setting")
     model_name = configured_model if configured_model and is_supported_model(configured_model) else DEFAULT_GEMINI_MODEL
-    settings_degraded = bool(api_key_error or model_error)
+    settings_degraded = bool(settings_error)
     enabled = bool(api_key) and not settings_degraded
     payload: dict[str, Any] = {
         "enabled": enabled,

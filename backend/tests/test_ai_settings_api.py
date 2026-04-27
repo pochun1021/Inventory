@@ -39,6 +39,32 @@ class AiSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.model, 'gemini-2.5-flash')
         self.assertGreater(len(response.available_models), 0)
 
+    def test_get_gemini_token_settings_uses_single_snapshot_for_quota(self) -> None:
+        settings_snapshot = {
+            'token_setting': {'value': 'AIza1234567890', 'updated_at': '2026-04-27 16:00:00'},
+            'model_setting': {'value': 'gemini-2.5-flash-lite', 'updated_at': '2026-04-27 16:01:00'},
+        }
+        with (
+            patch.object(app_main, 'get_gemini_settings_snapshot', return_value=settings_snapshot) as snapshot_mock,
+            patch.object(
+                app_main,
+                'get_quota_status',
+                return_value={
+                    'enabled': True,
+                    'provider': 'gemini',
+                    'model': 'gemini-2.5-flash-lite',
+                    'quota': {'status': 'unknown'},
+                },
+            ) as quota_mock,
+            patch.object(app_main, 'get_supported_models', return_value=['gemini-2.5-flash', 'gemini-2.5-flash-lite']),
+        ):
+            response = app_main.get_gemini_token_settings_api()
+
+        self.assertTrue(response.bound)
+        self.assertEqual(response.model, 'gemini-2.5-flash-lite')
+        snapshot_mock.assert_called_once_with()
+        quota_mock.assert_called_once_with(settings_snapshot=settings_snapshot)
+
     def test_put_gemini_token_settings_success(self) -> None:
         token = 'AIza1234567890'
         with patch.object(app_main, 'validate_gemini_token', return_value={'status': 'available'}):

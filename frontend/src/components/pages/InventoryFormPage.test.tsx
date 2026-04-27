@@ -42,7 +42,7 @@ describe('InventoryFormPage AI recognition', () => {
   })
 
   it('disables AI action when quota says feature disabled', async () => {
-    setupFetchMock((url) => {
+    const fetchMock = setupFetchMock((url) => {
       const common = withCommonLookups(url)
       if (common) {
         return common
@@ -61,10 +61,20 @@ describe('InventoryFormPage AI recognition', () => {
 
     render(<InventoryFormPage />)
 
+    const quotaCallsBeforeClick = fetchMock.mock.calls.filter(([input]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      return url.endsWith('/api/ai/spec-recognition/quota')
+    })
+    expect(quotaCallsBeforeClick).toHaveLength(0)
+
+    const fileInput = await screen.findByLabelText('辨識圖片')
+    const file = new File(['img'], 'item.png', { type: 'image/png' })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: '執行 AI 辨識' }))
+
     await screen.findByText('Gemini token 尚未設定，AI 規格辨識功能未啟用。')
 
     const runButton = screen.getByRole('button', { name: '執行 AI 辨識' })
-    const fileInput = screen.getByLabelText('辨識圖片')
     expect(runButton).toBeDisabled()
     expect(fileInput).toBeDisabled()
     expect(fileInput).toHaveAttribute('accept', 'image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif')

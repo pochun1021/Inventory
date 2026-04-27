@@ -1030,6 +1030,27 @@ def set_gemini_model(model: str) -> dict[str, Any]:
     return upsert_system_setting(GEMINI_MODEL_SETTING_KEY, model)
 
 
+def get_gemini_settings_snapshot() -> dict[str, dict[str, Any] | None]:
+    with _locked_workbook() as wb:
+        rows = _read_rows(wb["system_settings"])
+
+    token_setting: dict[str, Any] | None = None
+    model_setting: dict[str, Any] | None = None
+    for row in rows:
+        row_key = _normalize_system_setting_key(row.get("key"))
+        normalized_row = {
+            "key": row_key,
+            "value": _normalize_system_setting_value(row.get("value")),
+            "updated_at": _to_str(row.get("updated_at")).strip(),
+        }
+        if row_key == GEMINI_API_TOKEN_SETTING_KEY:
+            token_setting = normalized_row
+        elif row_key == GEMINI_MODEL_SETTING_KEY:
+            model_setting = normalized_row
+
+    return {"token_setting": token_setting, "model_setting": model_setting}
+
+
 def _normalize_asset_status_code(value: Any) -> str:
     return _to_str(value).strip()
 

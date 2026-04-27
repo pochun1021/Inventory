@@ -1107,5 +1107,9 @@ def get_gemini_model_setting() -> dict[str, Any] | None:
     return db.get_gemini_model_setting()
 
 
+def get_gemini_settings_snapshot() -> dict[str, dict[str, Any] | None]:
+    return db.get_gemini_settings_snapshot()
+
+
 def set_gemini_model(model: str) -> dict[str, Any]:
     return db.set_gemini_model(model)

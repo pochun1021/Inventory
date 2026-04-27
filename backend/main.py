@@ -33,8 +33,7 @@ from data_backend import (
     get_issue_request,
     get_borrow_request,
     get_donation_request,
-    get_gemini_api_token_setting,
-    get_gemini_model_setting,
+    get_gemini_settings_snapshot,
     get_sync_status,
     get_dashboard_snapshot,
     init_db,
@@ -769,11 +768,12 @@ def _mask_token(raw_token: str) -> str:
 
 
 def _build_gemini_token_settings_response() -> GeminiTokenSettingsResponse:
-    token_setting = get_gemini_api_token_setting()
-    model_setting = get_gemini_model_setting()
+    settings_snapshot = get_gemini_settings_snapshot()
+    token_setting = settings_snapshot.get("token_setting")
+    model_setting = settings_snapshot.get("model_setting")
     token = _coerce_str(token_setting.get("value")) if token_setting else ""
     normalized = token.strip()
-    quota_status = get_quota_status()
+    quota_status = get_quota_status(settings_snapshot=settings_snapshot)
     token_updated_at = _coerce_str(token_setting.get("updated_at")) if token_setting else ""
     model_updated_at = _coerce_str(model_setting.get("updated_at")) if model_setting else ""
     updated_at = max(token_updated_at, model_updated_at) or None
@@ -1442,8 +1442,6 @@ def get_inventory_item_api(item_id: int):
     row = get_item_by_id(item_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Item not found")
-
-    _log_inventory_action_non_blocking(action="read", entity="inventory_item", entity_id=item_id, detail={"mode": "single"})
     return row_to_item(row)
 
 

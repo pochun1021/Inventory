@@ -53,10 +53,14 @@ supabase status
 
 ```dotenv
 USE_SUPABASE=true
+DATA_BACKEND_MODE=cloud_primary_with_offline_queue
+DUAL_WRITE_STRICT=true
 SUPABASE_URL=http://127.0.0.1:54321
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
 SUPABASE_SCHEMA=public
 ADMIN_API_TOKEN=local-admin-token
+SYNC_OUTBOX_PATH=sync_outbox.json
+SYNC_CONFLICTS_PATH=sync_conflicts.json
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` 可由 local CLI 取得：
@@ -72,12 +76,18 @@ supabase status -o env | rg '^SERVICE_ROLE_KEY='
 cd backend
 cat > .env.local <<EOF
 USE_SUPABASE=true
+DATA_BACKEND_MODE=cloud_primary_with_offline_queue
+DUAL_WRITE_STRICT=true
 SUPABASE_URL=$(supabase status -o env | rg '^API_URL=' | cut -d'=' -f2- | tr -d '"')
 SUPABASE_SERVICE_ROLE_KEY=$(supabase status -o env | rg '^SERVICE_ROLE_KEY=' | cut -d'=' -f2- | tr -d '"')
 SUPABASE_SCHEMA=public
 ADMIN_API_TOKEN=local-admin-token
+SYNC_OUTBOX_PATH=sync_outbox.json
+SYNC_CONFLICTS_PATH=sync_conflicts.json
 EOF
 ```
+
+未設定 `DATA_BACKEND_MODE` 時，後端會回落到 `dual_write_supabase_read`；本機環境建議明確設為 `cloud_primary_with_offline_queue`，避免每次同步阻塞請求。
 
 完成後以 `uv run --env-file .env.local ...` 啟動後端。
 

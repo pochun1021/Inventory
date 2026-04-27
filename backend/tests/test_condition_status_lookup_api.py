@@ -101,7 +101,7 @@ class ConditionStatusLookupApiTests(unittest.TestCase):
             app_main.delete_condition_status_code_api("1")
         self.assertEqual(exc.exception.status_code, 409)
 
-    def test_get_inventory_item_succeeds_when_read_log_fails(self) -> None:
+    def test_get_inventory_item_does_not_write_read_log(self) -> None:
         created = app_main.create_inventory_item_api(
             app_main.InventoryItemCreate(
                 asset_type="A1",
@@ -115,10 +115,11 @@ class ConditionStatusLookupApiTests(unittest.TestCase):
             )
         )
 
-        with patch.object(app_main, "log_inventory_action", side_effect=RuntimeError("sync failed")):
+        with patch.object(app_main, "log_inventory_action", side_effect=RuntimeError("sync failed")) as mock_log:
             fetched = app_main.get_inventory_item_api(created.id)
 
         self.assertEqual(fetched.id, created.id)
+        mock_log.assert_not_called()
 
 
 if __name__ == "__main__":

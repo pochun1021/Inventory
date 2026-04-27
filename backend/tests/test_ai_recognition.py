@@ -210,8 +210,7 @@ class AIRecognitionTests(unittest.TestCase):
 
     def test_get_quota_status_disabled_message_is_gemini_only(self) -> None:
         with (
-            patch.object(ai_recognition, 'get_gemini_api_token_setting', return_value=None),
-            patch.object(ai_recognition, 'get_gemini_model_setting', return_value=None),
+            patch.object(ai_recognition, 'get_gemini_settings_snapshot', return_value={'token_setting': None, 'model_setting': None}),
             patch.object(ai_recognition, 'get_provider_name', return_value='gemini'),
         ):
             payload = ai_recognition.get_quota_status()
@@ -222,8 +221,7 @@ class AIRecognitionTests(unittest.TestCase):
 
     def test_get_quota_status_returns_degraded_payload_when_settings_read_fails(self) -> None:
         with (
-            patch.object(ai_recognition, 'get_gemini_api_token_setting', side_effect=RuntimeError('bad xlsx')),
-            patch.object(ai_recognition, 'get_gemini_model_setting', side_effect=RuntimeError('bad xlsx')),
+            patch.object(ai_recognition, 'get_gemini_settings_snapshot', side_effect=RuntimeError('bad xlsx')),
             patch.object(ai_recognition, 'get_provider_name', return_value='gemini'),
         ):
             payload = ai_recognition.get_quota_status()
