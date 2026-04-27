@@ -67,6 +67,14 @@ values
   ('2', '報廢', '', '')
 on conflict (condition_status) do nothing;
 
+insert into asset_category_name (name_code, asset_category_name, name_code2, description, created_at, updated_at)
+values
+  ('01', '筆記型電腦', '01', '商務系列', '', ''),
+  ('01', '筆記型電腦', '99', '', '', ''),
+  ('02', '桌上型電腦', '01', '一般用途', '', ''),
+  ('02', '桌上型電腦', '99', '', '', '')
+on conflict (name_code, name_code2) do nothing;
+
 update inventory_items
 set condition_status = null
 where condition_status is not null
@@ -81,6 +89,45 @@ update inventory_items
 set condition_status = '0'
 where condition_status is not null
   and condition_status not in ('0', '1', '2');
+
+update inventory_items
+set name_code = btrim(name_code)
+where name_code is not null
+  and name_code <> btrim(name_code);
+
+update inventory_items
+set name_code2 = btrim(name_code2)
+where name_code2 is not null
+  and name_code2 <> btrim(name_code2);
+
+update inventory_items
+set name_code = lpad(name_code, 2, '0')
+where name_code is not null
+  and name_code ~ '^\d{1,2}$';
+
+update inventory_items
+set name_code2 = lpad(name_code2, 2, '0')
+where name_code2 is not null
+  and name_code2 ~ '^\d{1,2}$';
+
+update inventory_items
+set name_code = null,
+    name_code2 = null
+where coalesce(name_code, '') = ''
+   or coalesce(name_code2, '') = '';
+
+insert into asset_category_name (name_code, asset_category_name, name_code2, description, created_at, updated_at)
+select distinct
+  name_code,
+  null,
+  name_code2,
+  'backfilled from inventory_items during FK migration',
+  '',
+  ''
+from inventory_items
+where name_code is not null
+  and name_code2 is not null
+on conflict (name_code, name_code2) do nothing;
 
 create table if not exists issue_requests (
   id bigint primary key,
