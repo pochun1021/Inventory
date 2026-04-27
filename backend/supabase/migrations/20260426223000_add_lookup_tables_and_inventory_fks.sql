@@ -15,6 +15,29 @@ create table if not exists asset_category_name (
   primary key (name_code, name_code2)
 );
 
+insert into condition_status_code (condition_status, description, created_at, updated_at)
+values
+  ('0', '良好', '', ''),
+  ('1', '損壞', '', ''),
+  ('2', '報廢', '', '')
+on conflict (condition_status) do nothing;
+
+-- Normalize legacy values before adding FK.
+update inventory_items
+set condition_status = null
+where condition_status is not null
+  and btrim(condition_status) = '';
+
+update inventory_items
+set condition_status = btrim(condition_status)
+where condition_status is not null
+  and condition_status <> btrim(condition_status);
+
+update inventory_items
+set condition_status = '0'
+where condition_status is not null
+  and condition_status not in ('0', '1', '2');
+
 create index if not exists idx_inventory_items_condition_status on inventory_items(condition_status);
 create index if not exists idx_inventory_items_category_pair on inventory_items(name_code, name_code2);
 
