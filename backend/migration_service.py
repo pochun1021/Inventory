@@ -175,10 +175,8 @@ def _adjust_sequences() -> None:
 def _truncate_target_tables(*, target_tables: list[str] | None = None) -> None:
     client = get_supabase_client()
     # Requires schema function from backend/supabase_sql/schema.sql.
-    if target_tables is None:
-        client.rpc("admin_truncate_target_tables", {}).execute()
-        return
-    client.rpc("admin_truncate_target_tables", {"selected_tables": target_tables}).execute()
+    selected_tables = list(TARGET_TABLES) if target_tables is None else target_tables
+    client.rpc("admin_truncate_target_tables", {"selected_tables": selected_tables}).execute()
 
 
 def _resolve_target_tables(target_tables: list[str] | None) -> list[str]:
@@ -258,24 +256,35 @@ def _deduplicate_rows_for_upsert(table: str, rows: list[dict[str, Any]]) -> list
     return passthrough_rows + list(deduped.values())
 
 
-def _backfill_asset_category_rows(rows: list[dict[str, Any]], inventory_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    backfilled_rows: list[dict[str, Any]] = list(rows)
-    for inventory_row in inventory_rows:
-        name_code = inventory_row.get("name_code")
-        name_code2 = inventory_row.get("name_code2")
-        if name_code is None or name_code2 is None:
+def _category_pairs(rows: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for row in rows:
+        name_code = row.get("name_code")
+        name_code2 = row.get("name_code2")
+        if not isinstance(name_code, str) or not isinstance(name_code2, str):
             continue
-        backfilled_rows.append(
-            {
-                "name_code": name_code,
-                "asset_category_name": None,
-                "name_code2": name_code2,
-                "description": "backfilled from inventory_items during migration",
-                "created_at": "",
-                "updated_at": "",
-            }
-        )
-    return backfilled_rows
+        code = name_code.strip()
+        code2 = name_code2.strip()
+        if not code or not code2:
+            continue
+        pairs.add((code, code2))
+    return pairs
+
+
+def _validate_inventory_category_pairs(
+    category_rows: list[dict[str, Any]],
+    inventory_rows: list[dict[str, Any]],
+) -> None:
+    valid_pairs = _category_pairs(category_rows)
+    inventory_pairs = _category_pairs(inventory_rows)
+    missing_pairs = sorted(inventory_pairs - valid_pairs)
+    if not missing_pairs:
+        return
+    preview = ", ".join(f"{name_code}/{name_code2}" for name_code, name_code2 in missing_pairs[:20])
+    raise ValueError(
+        "inventory_items contains undefined asset_category_name pair(s): "
+        f"{preview}. Add them to XLSX sheet asset_category_name first."
+    )
 
 
 def run_xlsx_to_supabase_migration(
@@ -304,7 +313,7 @@ def run_xlsx_to_supabase_migration(
             if table == "asset_category_name" and "inventory_items" in migration_tables:
                 inventory_rows = _read_sheet_rows("inventory_items")
                 normalized_inventory_rows = [_normalize_row("inventory_items", row) for row in inventory_rows]
-                payload_rows = _backfill_asset_category_rows(payload_rows, normalized_inventory_rows)
+                _validate_inventory_category_pairs(payload_rows, normalized_inventory_rows)
             payload_rows = _deduplicate_rows_for_upsert(table, payload_rows)
 
             payload_rows, orphan_skipped_rows, skipped_samples, skip_reason = _filter_orphan_item_rows(

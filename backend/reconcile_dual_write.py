@@ -51,23 +51,6 @@ def _xlsx_rows(table: str) -> list[dict[str, Any]]:
     if table not in wb.sheetnames:
         return []
     raw_rows = db._read_rows(wb[table])  # noqa: SLF001
-    if table == "asset_category_name" and "inventory_items" in wb.sheetnames:
-        inventory_rows = db._read_rows(wb["inventory_items"])  # noqa: SLF001
-        for row in inventory_rows:
-            name_code = _normalize_value(row.get("name_code"))
-            name_code2 = _normalize_value(row.get("name_code2"))
-            if name_code is None or name_code2 is None:
-                continue
-            raw_rows.append(
-                {
-                    "name_code": name_code,
-                    "asset_category_name": None,
-                    "name_code2": name_code2,
-                    "description": "backfilled from inventory_items during migration",
-                    "created_at": "",
-                    "updated_at": "",
-                }
-            )
     return _canonicalize_rows(table, raw_rows)
 
 

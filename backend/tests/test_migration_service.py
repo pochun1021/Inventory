@@ -178,6 +178,27 @@ class MigrationServiceTests(unittest.TestCase):
         )
         self.assertEqual(set(fake_client.upserts.keys()), {"asset_category_name", "inventory_items", "issue_items", "donation_items"})
 
+    def test_migration_fails_when_inventory_contains_undefined_category_pair(self) -> None:
+        fake_client = _FakeSupabaseClient()
+
+        def fixture_with_missing_pair(table: str) -> list[dict]:
+            if table == "asset_category_name":
+                return [{"name_code": "01", "asset_category_name": "筆電", "name_code2": "01"}]
+            if table == "inventory_items":
+                return [{"id": "1", "name_code": "99", "name_code2": "99", "name": "item-a"}]
+            return self._sheet_fixture(table)
+
+        with (
+            patch("migration_service.get_supabase_client", return_value=fake_client),
+            patch("migration_service._read_sheet_rows", side_effect=fixture_with_missing_pair),
+        ):
+            report = migration_service.run_xlsx_to_supabase_migration(dry_run=False)
+
+        self.assertEqual(report["status"], "failed")
+        self.assertTrue(report["errors"])
+        self.assertIn("undefined asset_category_name pair", report["errors"][0])
+        self.assertEqual(fake_client.upserts.get("asset_category_name"), None)
+
 
 if __name__ == "__main__":
     unittest.main()

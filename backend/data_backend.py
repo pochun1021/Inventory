@@ -350,6 +350,74 @@ def _fetch_all(table: str) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], rows)
 
 
+def _normalize_category_pair(name_code: Any, name_code2: Any) -> tuple[str, str]:
+    # Reuse XLSX normalization so Supabase pair comparison follows the same canonical key shape.
+    normalized_code = db._normalize_name_code_value(name_code)  # noqa: SLF001
+    normalized_code2 = db._normalize_name_code_value(name_code2)  # noqa: SLF001
+    return normalized_code, normalized_code2
+
+
+def _sync_asset_categories_to_supabase_or_raise() -> None:
+    xlsx_rows = db.list_asset_categories()
+    deduped_xlsx_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    xlsx_pairs: set[tuple[str, str]] = set()
+    for row in xlsx_rows:
+        name_code, name_code2 = _normalize_category_pair(row.get("name_code"), row.get("name_code2"))
+        if not name_code or not name_code2:
+            continue
+        deduped_xlsx_rows[(name_code, name_code2)] = {
+            "name_code": name_code,
+            "asset_category_name": str(row.get("asset_category_name") or "").strip(),
+            "name_code2": name_code2,
+            "description": str(row.get("description") or "").strip(),
+        }
+        xlsx_pairs.add((name_code, name_code2))
+    normalized_xlsx_rows = list(deduped_xlsx_rows.values())
+
+    client = get_supabase_client()
+
+    batch_size = 500
+    for offset in range(0, len(normalized_xlsx_rows), batch_size):
+        batch = normalized_xlsx_rows[offset : offset + batch_size]
+        if batch:
+            client.table("asset_category_name").upsert(batch).execute()
+
+    supabase_rows = _fetch_all("asset_category_name")
+    supabase_pairs: set[tuple[str, str]] = set()
+    for row in supabase_rows:
+        name_code, name_code2 = _normalize_category_pair(row.get("name_code"), row.get("name_code2"))
+        if not name_code or not name_code2:
+            continue
+        supabase_pairs.add((name_code, name_code2))
+
+    stale_pairs = sorted(
+        supabase_pairs - xlsx_pairs,
+        key=lambda pair: db._asset_category_sort_key(pair[0], pair[1]),  # noqa: SLF001
+    )
+    if not stale_pairs:
+        return
+
+    stale_pair_set = set(stale_pairs)
+    inventory_rows = _fetch_all("inventory_items")
+    referenced_stale_pairs = sorted(
+        {
+            pair
+            for row in inventory_rows
+            if (pair := _normalize_category_pair(row.get("name_code"), row.get("name_code2"))) in stale_pair_set
+        },
+        key=lambda pair: db._asset_category_sort_key(pair[0], pair[1]),  # noqa: SLF001
+    )
+    if referenced_stale_pairs:
+        preview = ", ".join(f"{name_code}/{name_code2}" for name_code, name_code2 in referenced_stale_pairs[:20])
+        raise RuntimeError(
+            "asset_category_name sync blocked: stale Supabase pair(s) still referenced by inventory_items: "
+            f"{preview}"
+        )
+
+    for name_code, name_code2 in stale_pairs:
+        client.table("asset_category_name").delete().eq("name_code", name_code).eq("name_code2", name_code2).execute()
+
+
 def _fetch_by_id(table: str, item_id: int) -> dict[str, Any] | None:
     client = get_supabase_client()
     response = client.table(table).select("*").eq("id", item_id).limit(1).execute()
@@ -837,6 +905,7 @@ def list_condition_status_codes() -> list[dict[str, Any]]:
 def list_asset_categories() -> list[dict[str, Any]]:
     if not _supabase_read_enabled():
         return db.list_asset_categories()
+    _sync_asset_categories_to_supabase_or_raise()
     rows = _fetch_all("asset_category_name")
     normalized: list[dict[str, Any]] = []
     for row in rows:

@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import reconcile_dual_write
@@ -63,6 +65,33 @@ class ReconcileDualWriteTests(unittest.TestCase):
             target_tables=["asset_category_name"],
         )
         self.assertEqual(report["status"], "repaired")
+
+    def test_xlsx_rows_asset_category_does_not_backfill_from_inventory(self) -> None:
+        fake_wb = type(
+            "FakeWorkbook",
+            (),
+            {
+                "sheetnames": ["asset_category_name", "inventory_items"],
+                "__getitem__": lambda self, key: key,
+            },
+        )()
+
+        with TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "inventory.xlsx"
+            db_path.write_text("x", encoding="utf-8")
+            with (
+                patch("reconcile_dual_write.db.DB_PATH", db_path),
+                patch("reconcile_dual_write.load_workbook", return_value=fake_wb),
+                patch(
+                    "reconcile_dual_write.db._read_rows",  # noqa: SLF001
+                    return_value=[{"name_code": "01", "name_code2": "01", "asset_category_name": "筆電"}],
+                ),
+            ):
+                rows = reconcile_dual_write._xlsx_rows("asset_category_name")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name_code"], "01")
+        self.assertEqual(rows[0]["name_code2"], "01")
 
 
 if __name__ == "__main__":
